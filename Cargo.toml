@@ -1,0 +1,14 @@
+[package]
+name = "sparko_graphql"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+display_json = "0.2.1"
+once_cell = "1.19.0"
+reqwest = { version = "0.12.7", features = ["json"] }
+serde = { version = "1.0.210", features = ["derive"], with = "iso8601"}
+serde_json = "1.0.128"
+time = { version = "0.3.36", features = ["serde", "parsing", "formatting"] }
