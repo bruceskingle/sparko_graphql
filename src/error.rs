@@ -35,7 +35,8 @@ pub enum Error {
     IOError(reqwest::Error),
     JsonError(serde_json::Error),
     HttpError(StatusCode),
-    InvalidInputError(Box<dyn StdError>)
+    InvalidInputError(Box<dyn StdError>),
+    InternalError(String)
 }
 
 impl Display for Error {
@@ -62,7 +63,8 @@ impl Display for Error {
             Error::IOError(err) => f.write_fmt(format_args!("IOError({})", err)),
             Error::JsonError(err) => f.write_fmt(format_args!("JsonError({})", err)),
             Error::HttpError(err) => f.write_fmt(format_args!("HttpError({})", err)),
-            Error::InvalidInputError(err) => f.write_fmt(format_args!("InvalidInputError({})", err))
+            Error::InvalidInputError(err) => f.write_fmt(format_args!("InvalidInputError({})", err)),
+            Error::InternalError(err) => f.write_fmt(format_args!("InternalError({})", err))
         }
     }
 }
