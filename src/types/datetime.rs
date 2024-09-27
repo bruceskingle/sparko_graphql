@@ -34,14 +34,22 @@ use time::format_description;
 
 use crate::Error;
 
+use super::Date;
+
 static FORMAT: format_description::well_known::Rfc3339 = format_description::well_known::Rfc3339;
 
 
 /// A GraphQL OffsetDateTime value
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DateTime(time::OffsetDateTime);
 
 impl DateTime {
+
+  pub fn to_date(&self) -> Date {
+    let (year, month, day) = self.0.to_calendar_date();
+    Date::from_calendar_date(year, month, day).unwrap()
+  }
+
   pub fn from_unix_timestamp(timestamp: i64) -> Result<DateTime, Error> {
       Ok(DateTime(time::OffsetDateTime::from_unix_timestamp(timestamp)?))
   }
@@ -50,9 +58,41 @@ impl DateTime {
     Ok(DateTime(time::OffsetDateTime::from_unix_timestamp_nanos(timestamp)?))
   }
 
-  // pub fn from_calendar_date(year: i32, month: time::Month, day: u8) -> Result<OffsetDateTime, Error> {
-  //   Ok(OffsetDateTime(time::OffsetDateTime: from_calendar_date(year, month, day)?))
-// }
+  pub fn from_calendar_date(year: i32, month: time::Month, day: u8) -> Result<DateTime, Error> {
+    Ok(DateTime(
+      time::OffsetDateTime::new_utc(
+        time::Date::from_calendar_date(year, month, day)?, 
+        time::Time::from_hms(0, 0, 0)?
+      )
+    ))
+  }
+
+  pub fn from_calendar_date_time(year: i32, month: time::Month, day: u8, hour: u8, minute: u8, second: u8) -> Result<DateTime, Error> {
+    Ok(DateTime(
+      time::OffsetDateTime::new_utc(
+        time::Date::from_calendar_date(year, month, day)?, 
+        time::Time::from_hms(hour, minute, second)?
+      )
+    ))
+  }
+
+  pub fn from_date_hms(date: time::Date, hour: u8, minute: u8, second: u8) -> Result<DateTime, Error> {
+    Ok(DateTime(
+      time::OffsetDateTime::new_utc(
+        date, 
+        time::Time::from_hms(hour, minute, second)?
+      )
+    ))
+  }
+
+  pub fn from_date_time(date: time::Date, time: time::Time) -> DateTime {
+    DateTime(
+      time::OffsetDateTime::new_utc(
+        date, 
+        time
+      )
+    )
+  }
 }
 
 impl Deref for DateTime {

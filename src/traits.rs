@@ -168,29 +168,6 @@ impl GraphQLQueryParams for NoParams {
     }
 }
 
-// pub trait GraphQLComponent<Q: GraphQLQueryParams> {
-//     fn get_query_part(params: &Q, prefix: &str) -> String;
-//     // fn get_params(&self) -> Q;
-// }
-
-// pub trait GraphQLElement {
-//     fn get_field_names() -> &'static str;
-//     // fn get_params(&self) -> Q;
-// }
-
-pub trait GraphQLQuery<Q: GraphQLQueryParams> {
-    fn get_query(request_name: &str, params: &Q) -> String;
-    //  {
-    //     format!(r#"
-    //         query {}{} {{
-    //             {}
-    //         }}
-    //     "#, request_name, params.get_formal(),
-    //         Self::get_query_part(params, "")
-    //     )
-    // }
-
-}
 
 pub trait GraphQLType<Q: GraphQLQueryParams> {
     fn get_query_part(params: &Q, prefix: &str) -> String {

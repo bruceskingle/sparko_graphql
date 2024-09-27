@@ -35,6 +35,8 @@ use once_cell::sync::Lazy;
 
 use crate::Error;
 
+use super::DateTime;
+
 
 // use std::{sync::Mutex, collections::HashMap};
 
@@ -59,6 +61,10 @@ pub struct Date(time::Date);
 impl Date {
     pub fn from_calendar_date(year: i32, month: time::Month, day: u8) -> Result<Date, Error> {
         Ok(Date(time::Date::from_calendar_date(year, month, day)?))
+    }
+
+    pub fn at_midnight(&self) -> DateTime {
+      DateTime::from_date_time(self.0, time::Time::MIDNIGHT)
     }
 }
 
