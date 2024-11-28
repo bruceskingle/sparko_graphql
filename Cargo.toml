@@ -12,3 +12,4 @@ reqwest = { version = "0.12.7", features = ["json"] }
 serde = { version = "1.0.210", features = ["derive"], with = "iso8601"}
 serde_json = "1.0.128"
 time = { version = "0.3.36", features = ["serde", "parsing", "formatting"] }
+sparko_graphql_derive = {veraion = "0.0.1", path = "../../git/sparko_graphql_derive" }

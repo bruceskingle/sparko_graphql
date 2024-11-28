@@ -23,11 +23,13 @@ SOFTWARE.
 ******************************************************************************/
 
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use display_json::DisplayAsJsonPretty;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Error;
+
+use crate::{AuthenticatedRequestManager, Client};
 
 pub struct ParamBuffer {
     buf: String
@@ -115,6 +117,77 @@ impl GraphQL {
     }
 }
 
+// pub trait GraphQLRoot<V: GraphQLVariables, E: GraphQLEntity<Q>> {
+
+//     async fn query(client: &crate::Client, params: Q) -> Result<E, crate::Error>;
+// }
+
+pub trait GraphQLVariables {
+    fn get_formal_part(&self, params: &mut ParamBuffer, prefix: &str);
+    fn get_actual_part(&self, params: &mut ParamBuffer, prefix: &str);
+    fn get_variables_part(&self, variables: &mut VariableBuffer, prefix: &str) -> Result<(), Error>;
+
+
+    fn get_formal(&self) -> String {
+        let mut params = ParamBuffer::new();
+        self.get_formal_part(&mut params, "");
+
+        params.consume()
+    }
+
+    fn get_actual(&self, prefix: &str) -> String {
+        let mut params = ParamBuffer::new();
+        self.get_actual_part(&mut params, prefix);
+
+        params.consume()
+    }
+
+    fn get_variables(&self) -> Result<String, Error> {
+        let mut variables = VariableBuffer::new();
+        self.get_variables_part(&mut variables, "")?;
+
+        variables.to_string()
+    }
+
+    fn get_variable_map(&self) -> Result<HashMap<String, serde_json::Value>, Error>  {
+        let mut variables = VariableBuffer::new();
+        self.get_variables_part(&mut variables, "")?;
+
+        Ok(variables.map)
+    }
+
+    
+}
+
+pub trait GraphQLQueryBuilder <V: GraphQLVariables> 
+{
+    fn build(self) -> V;
+}
+
+// #[derive(Serialize)]
+pub struct NoVariables;
+
+impl GraphQLVariables for NoVariables {
+
+    fn get_formal_part(&self, _params: &mut ParamBuffer, _prefix: &str) {
+    }
+
+    fn get_actual_part(&self, _params: &mut ParamBuffer, _prefix: &str) {
+    }
+
+    fn get_variables_part(&self, _variables: &mut VariableBuffer, _prefix: &str) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+pub struct NoQueryBuilder;
+
+impl GraphQLQueryBuilder<NoVariables> for NoQueryBuilder {
+    fn build(self) -> NoVariables {
+        NoVariables {}
+    }
+}
+
 pub trait GraphQLQueryParams {
     fn get_formal_part(&self, params: &mut ParamBuffer, prefix: &str);
     fn get_actual_part(&self, params: &mut ParamBuffer, prefix: &str);
@@ -195,3 +268,83 @@ pub trait GraphQLType<Q: GraphQLQueryParams> {
     // )
     // }
 }
+
+
+pub trait GraphQLEntity<V: GraphQLVariables>: DeserializeOwned {
+    fn get_query_part(params: &V, prefix: &str) -> String {
+        format!("{{ #get_query_part\n  {}\n}} #/get_query_part\n", Self::get_query_attributes(params, prefix))
+    }
+
+    fn get_query_attributes(params: &V, prefix: &str) -> String;
+
+    // fn get_request_name(&self) -> &'static str;
+    // fn get_query(&self) -> String ;
+    // fn get_query(&self) -> String {
+    //     format!(r#"
+    //     query {}{} {{
+    //         account{} {{
+    //             id
+    //             properties{} {{
+    //                 {}
+    //             }}
+    //         }}
+    //     }}
+    //     "#, self.get_request_name(), self.get_params().get_formal(),
+    //         self.get_params().get_actual(""),
+    //         self.get_params().properties.get_actual("properties_"),
+    //         PropertySimpleView::get_query_part()
+    // )
+    // }
+}
+
+
+pub trait TokenManager {
+    /*
+    use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+   --> src/lib.rs:547:5
+    |
+547 |     async fn get_authenticator(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
+    |     ^^^^^
+    |
+    = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+    = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+     */
+    // Returns a bearer token, which may be cached.
+    // async fn get_authenticator(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
+    fn get_authenticator(&mut self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
+
+    // Returns a fresh bearer token forcing a reauthentication
+    // async fn authenticate(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
+    fn authenticate(&mut self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
+}
+
+// pub struct GraphQLQuery<S: GraphQLVariables, V: GraphQLVariables> {
+//     pub operation_name: String,
+//     pub query_name: String,
+//     pub selector: S,
+//     pub variables: V,
+// }
+
+// impl<S: GraphQLVariables, V: GraphQLVariables, E: GraphQLEntity<V>> GraphQLQuery<S,V> {
+//     async fn query(&self, request_manager: &crate::RequestManager) -> Result<E, Error> {
+//         let query = format!(r#"
+//             query {}{}
+//                 #T::get_query_part(&params, "")
+//                 {}"#, 
+//             self.operation_name,
+//             self.selector.get_formal(),
+//             // query_name,
+//             // params.get_actual(""),
+//             E::get_query_part(&variables, "")
+//         );
+//     }
+// }
+
+// pub trait GraphQLQuery<S: GraphQLVariables, V: GraphQLVariables, E: GraphQLEntity<V>> {
+//     fn query(&self, request_manager: &crate::RequestManager) -> impl std::future::Future<Output = Result<E, Error>> + Send;
+// }
+
+// pub trait TRequestManager {
+//     fn query<V: GraphQLVariables, E: GraphQLEntity<V>>(&self, operation_name: &str, variables: V) -> impl std::future::Future<Output = Result<E, Error>> + Send; 
+// }

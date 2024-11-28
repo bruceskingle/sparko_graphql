@@ -40,5 +40,5 @@ pub use int::Int;
 pub mod float;
 pub use float::Float;
 
-pub mod page_info;
-pub use page_info::{ForwardPageInfo, ForwardPageOf};
+mod page_info;
+pub use page_info::*;

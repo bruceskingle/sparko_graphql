@@ -43,6 +43,18 @@ impl ID {
   }
 }
 
+impl From<String> for ID {
+    fn from(value: String) -> Self {
+      ID(value)
+    }
+}
+
+impl From<&str> for ID {
+    fn from(value: &str) -> Self {
+      ID(String::from(value))
+    }
+}
+
 impl Deref for ID {
     type Target = String;
 

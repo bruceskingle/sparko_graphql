@@ -24,7 +24,7 @@ SOFTWARE.
 
 pub mod error;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
@@ -35,8 +35,31 @@ pub use error::{Error, GraphQLJsonError};
 
 pub mod types;
 mod traits;
-pub use traits::{ParamBuffer,VariableBuffer,GraphQLQueryParams,GraphQLType, GraphQL, NoParams};
+pub use traits::{ParamBuffer,VariableBuffer,GraphQLQueryParams,GraphQLType,GraphQLEntity, GraphQLVariables, TokenManager, GraphQLQueryBuilder, NoVariables, GraphQL, NoParams};
+pub use sparko_graphql_derive::{GraphQLQueryParams, GraphQLType, GraphQLEntity, GraphQLVariables};
 
+mod request_manager;
+pub use request_manager::RequestManager;
+mod authenticated_request_manager;
+pub use authenticated_request_manager::AuthenticatedRequestManager;
+
+/* Start of going forward implementation */
+
+
+
+#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+#[serde(rename_all = "camelCase")]
+struct GraphQLResponse {
+   errors: Option<Vec<GraphQLJsonError>>,
+   data:   HashMap<String, serde_json::Value>,
+}
+
+
+
+
+
+
+/* End of going forward implementation - Everything after this is deprecated */
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
@@ -48,14 +71,6 @@ struct Request<'a, T>
     operation_name:  &'a str,
 }
 
-
-
-#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
-#[serde(rename_all = "camelCase")]
-struct GraphQLResponse {
-   errors: Option<Vec<GraphQLJsonError>>,
-   data:   HashMap<String, serde_json::Value>,
-}
 
 
 // #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
@@ -119,6 +134,105 @@ impl Client {
     }
     
      */
+
+//      pub async fn query<'h, T: GraphQLEntity<Q> + DeserializeOwned, Q: GraphQLParams>(&self, request_name: &str, query_name: &str, params: &Q, headers: Option<&'h HashMap<&'h str, &String>>) -> Result<T, Box<dyn pub trait Query<E: GraphQLEntity> {
+//     fn query(client: Client) -> Result<E, sparko_graphql::Error>;
+// }>> {
+//      }
+
+     pub async fn request<'h, T: GraphQLEntity<V> + DeserializeOwned, V: GraphQLVariables>(&self, request_name: &str, query_name: &str, params: &V, headers: Option<&'h HashMap<&'h str, &String>>) -> Result<T, Error> {
+        
+        
+        let query = //T::get_query(request_name, &params);
+
+        /*
+        #query_name
+                {}
+                #params.get_actual(""),
+                {} 
+         */
+        format!(r#"
+            query {}{}
+                #T::get_query_part(&params, "")
+                {}
+        "#, 
+            request_name,
+            params.get_formal(),
+            // query_name,
+            // params.get_actual(""),
+            T::get_query_part(&params, "")
+        );
+
+        let variables = params.get_variables()?;
+
+        let payload = Request {
+            query: &query,
+            variables: &variables,
+            operation_name: request_name,
+        };
+
+        let serialized = serde_json::to_string(&payload).unwrap();
+
+        println!("NEW payload {}", &serialized);
+        println!("NEW query {}", &query);
+        println!("NEW variables {}", &variables);
+
+// panic!("TEST");
+        let mut request = self.reqwest_client.post(&self.url)
+            .header("Content-Type", "application/json");
+
+        if let Some(map) = headers {
+            
+            for (key, value) in map {
+                request = request.header(*key, *value);
+            }
+        }
+        
+        let response = request
+            .body(serialized)
+            .send()
+            .await?;
+
+        println!("\nStatus:   {:?}", &response.status());
+
+        if &response.status() != &StatusCode::OK {
+            let status = response.status();
+            let text = &(response).text().await;
+            println!("ERROR {}", text.as_ref().expect("No Response Body"));
+            return Err(Error::HttpError(status));
+        }
+
+        let response_json: serde_json::Value = response.json().await?;
+
+        println!("response {}", serde_json::to_string_pretty(&response_json)?);
+
+        let mut graphql_response: GraphQLResponse = serde_json::from_value(response_json)?;
+
+
+
+
+
+        // let response_json = response.json().await?;
+
+        // println!("response {:?}", response_json);
+
+        // let graphql_response:  GraphQLResponse = response_json;
+
+        if let Some(errors) = graphql_response.errors {
+            
+            println!("\nerrors:   {:?}", serde_json::to_string_pretty(&errors)?);
+
+            return Err(Error::GraphQLError(errors));
+        }
+        
+        if let Some(response) = graphql_response.data.remove(query_name) {
+            let object: T = serde_json::from_value(response)?;
+            Ok(object)
+        }
+        else {
+            return Err(Error::InternalError(format!("No response found")))
+        }
+    }
 
     pub async fn new_call<'h, T: GraphQLType<Q> + DeserializeOwned, Q: GraphQLQueryParams>(&self, request_name: &str, query_name: &str, params: Q, headers: Option<&'h HashMap<&'h str, &String>>) -> Result<T, Error> {
         
