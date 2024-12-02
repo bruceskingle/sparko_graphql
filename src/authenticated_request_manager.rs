@@ -24,32 +24,41 @@ SOFTWARE.
 
 use std::sync::Arc;
 
-use crate::{GraphQLEntity, GraphQLVariables, TokenManager};
+use serde::de::DeserializeOwned;
 
-use crate::{RequestManager};
+use crate::{GraphQLType, GraphQLQueryParams, TokenManager};
+
+use crate::RequestManager;
 
 
 // #[derive(Debug)]
-pub struct AuthenticatedRequestManager<T: TokenManager> {
+pub struct AuthenticatedRequestManager<M: TokenManager> {
     request_manager: Arc<RequestManager>,
-    token_manager: T,
+    token_manager: M,
 }
 
-impl<T: TokenManager> AuthenticatedRequestManager<T> {
-    pub fn new(request_manager: Arc<RequestManager>, token_manager: T) -> Result<AuthenticatedRequestManager<T>, Box<dyn std::error::Error>> {
+impl<M: TokenManager> AuthenticatedRequestManager<M> {
+    pub fn new(request_manager: Arc<RequestManager>, token_manager: M) -> Result<AuthenticatedRequestManager<M>, Box<dyn std::error::Error>> {
         Ok(AuthenticatedRequestManager {
             request_manager,
             token_manager,
         })
     }
 
+    pub async fn query<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&mut self, request_name: &str, query_name: &str, params: P) 
+    -> Result<T, Box<dyn std::error::Error>> {
+        // let x = self.request_manager.call::<P,T>(request_name, query_name, params, Some(&self.token_manager.get_authenticator().await?)).await?;
 
-    pub async fn call<V: GraphQLVariables, E: GraphQLEntity<V>>(&mut self, operation_name: &str, variables: V) 
-    -> Result<E, Box<dyn std::error::Error>> {
         let token = &self.token_manager.get_authenticator().await?;
 
         eprintln!("AuthenticatedRequestManager token=<{}>", token);
-        let result = self.request_manager.do_call::<V,E>(operation_name, variables, Some(token)).await;
+
+        // let request_manager = *self.request_manager;
+
+        let result = self.request_manager.do_query::<P,T>(request_name, query_name, params, Some(token)).await;
+        
+        
+        //.call::<P,T>(operation_name, variables, Some(token)).await;
 
         if let Err(e) = &result {
             eprintln!("Result {:?}", e);
@@ -60,17 +69,66 @@ impl<T: TokenManager> AuthenticatedRequestManager<T> {
         // }
         
         result
-
-        // if let Some(data) = response.data {
-        //     Ok(data)
-        // }
-        // else {
-        //     if let Some(errors) = response.errors {
-        //         Err(Box::new(Error::UserError(serde_json::to_string(&errors)?)))
-        //     }
-        //     else {
-        //         Err(Box::new(Error::InternalError(format!("No result found"))))
-        //     }
-        // }
     }
+
+    pub async fn mutation<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&mut self, request_name: &str, query_name: &str, params: P) 
+    -> Result<T, Box<dyn std::error::Error>> {
+        // let x = self.request_manager.call::<P,T>(request_name, query_name, params, Some(&self.token_manager.get_authenticator().await?)).await?;
+
+        let token = &self.token_manager.get_authenticator().await?;
+
+        eprintln!("AuthenticatedRequestManager token=<{}>", token);
+
+        // let request_manager = *self.request_manager;
+
+        let result = self.request_manager.do_mutation::<P,T>(request_name, query_name, params, Some(token)).await;
+        
+        
+        //.call::<P,T>(operation_name, variables, Some(token)).await;
+
+        if let Err(e) = &result {
+            eprintln!("Result {:?}", e);
+        }
+
+        // if let Ok(v) = &result {
+        //     eprintln!("Result {:?}", v);
+        // }
+        
+        result
+    }
+
+    // pub async fn mutation<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_name: &str, query_name: &str, params: P, token: Option<&Arc<String>>) 
+    // -> Result<T, Box<dyn std::error::Error>> {
+    //     self.request_manager.mutation("mutation", request_name, query_name, params, token)
+    // }
+
+    // async fn call<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_type: &str, request_name: &str, query_name: &str, params: P, token: Option<&Arc<String>>) 
+    // -> Result<T, Box<dyn std::error::Error>> {
+    //     let token = &self.token_manager.get_authenticator().await?;
+
+    //     eprintln!("AuthenticatedRequestManager token=<{}>", token);
+    //     let result = self.request_manager.do_call::<V,E>(operation_name, variables, Some(token)).await;
+
+    //     if let Err(e) = &result {
+    //         eprintln!("Result {:?}", e);
+    //     }
+
+    //     // if let Ok(v) = &result {
+    //     //     eprintln!("Result {:?}", v);
+    //     // }
+        
+    //     result
+
+    //     // if let Some(data) = response.data {
+    //     //     Ok(data)
+    //     // }
+    //     // else {
+    //     //     if let Some(errors) = response.errors {
+    //     //         Err(Box::new(Error::UserError(serde_json::to_string(&errors)?)))
+    //     //     }
+    //     //     else {
+    //     //         Err(Box::new(Error::InternalError(format!("No result found"))))
+    //     //     }
+    //     // }
+    // }
 }

@@ -27,9 +27,9 @@ use std::sync::Arc;
 
 use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{Error, GraphQLEntity,  GraphQLResponse, GraphQLVariables};
+use crate::{Error, GraphQLType,  GraphQLResponse, GraphQLQueryParams};
 
 #[derive(Serialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
@@ -63,38 +63,64 @@ impl RequestManager {
         })
     }
 
+    pub async fn query<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_name: &str, query_name: &str, params: P) 
+    -> Result<T, Box<dyn std::error::Error>> {
+        self.do_query( request_name, query_name, params, None).await
+    }
 
-    // pub async fn call<V: GraphQLVariables, E: GraphQLEntity<V>>(&self, query: GraphQLQuery<V,E>) 
-    // -> Result<E, Box<dyn std::error::Error>> {
-    //     self.do_call::<V,E>(operation_name, variables, None).await
-    // }
+    pub async fn mutation<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_name: &str, query_name: &str, params: P) 
+    -> Result<T, Box<dyn std::error::Error>> {
+        self.do_mutation(request_name, query_name, params, None).await
+    }
 
-    pub async fn do_call<V: GraphQLVariables, E: GraphQLEntity<V>>(&self, operation_name: &str, variables: V, token: Option<&Arc<String>>) 
-    -> Result<E, Box<dyn std::error::Error>> {
+    pub async fn do_query<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_name: &str, query_name: &str, params: P, token: Option<&Arc<String>>) 
+    -> Result<T, Box<dyn std::error::Error>> {
+        self.do_call("query", request_name, query_name, params, token).await
+    }
+
+    pub async fn do_mutation<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_name: &str, query_name: &str, params: P, token: Option<&Arc<String>>) 
+    -> Result<T, Box<dyn std::error::Error>> {
+        self.do_call("mutation", request_name, query_name, params, token).await
+    }
+
+    async fn do_call<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_type: &str, request_name: &str, operation_name: &str, params: P, token: Option<&Arc<String>>) 
+    -> Result<T, Box<dyn std::error::Error>> {
 
         let query = format!(r#"
-            query {}{}
-                #T::get_query_part(&params, "")
-                {}"#, 
+            {} {}{} {{
+                {}{} {}
+            }}
+        "#, 
+            request_type,
+            request_name,
+            params.get_formal(),
             operation_name,
-            variables.get_formal(),
-            // query_name,
-            // params.get_actual(""),
-            E::get_query_part(&variables, "")
+            params.get_actual(""),
+            T::get_query_part(&params, "")
         );
+        // let query = format!(r#"
+        //     query {}{}
+        //         #T::get_query_part(&params, "")
+        //         {}"#, 
+        //     operation_name,
+        //     variables.get_formal(),
+        //     // query_name,
+        //     // params.get_actual(""),
+        //     E::get_query_part(&variables, "")
+        // );
 
 
         println!("NEW query {}", &query);
 
         let payload = Request {
             query: query,
-            variables: variables.get_variables()?,
+            variables: params.get_variables()?,
             operation_name,
         };
         let serialized = serde_json::to_string(&payload).unwrap();
 
         println!("NEW payload {}", &serialized);
-        println!("NEW variables {}", variables.get_variables()?);
+        println!("NEW variables {}", params.get_variables()?);
                
 
         let mut request = self.reqwest_client.post(&self.url.clone());
@@ -140,7 +166,7 @@ impl RequestManager {
         }
         
         if let Some(response) = graphql_response.data.remove("query_name") {
-            let object: E = serde_json::from_value(response)?;
+            let object: T = serde_json::from_value(response)?;
             Ok(object)
         }
         else {
