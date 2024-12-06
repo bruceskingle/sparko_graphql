@@ -35,7 +35,7 @@ pub use error::{Error, GraphQLJsonError};
 
 pub mod types;
 mod traits;
-pub use traits::{ParamBuffer,VariableBuffer,GraphQLQueryParams,GraphQLType,GraphQLEntity, GraphQLVariables, TokenManager, GraphQLQueryBuilder, NoVariables, GraphQL, NoParams};
+pub use traits::{ParamBuffer,GraphQLQueryParams,GraphQLType,GraphQLEntity, GraphQLVariables, TokenManager, GraphQLQueryBuilder, NoVariables, GraphQL, NoParams};
 pub use sparko_graphql_derive::{GraphQLQueryParams, GraphQLType, GraphQLEntity, GraphQLVariables};
 
 mod request_manager;

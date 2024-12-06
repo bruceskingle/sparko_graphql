@@ -76,6 +76,49 @@ impl ParamBuffer {
     }
 }
 
+// pub struct VariableBuffer {
+//     pub map: serde_json::Map<String, serde_json::Value>
+// }
+
+// impl VariableBuffer {
+//     pub fn new() -> VariableBuffer {
+//         VariableBuffer {
+//             map: serde_json::Map::new()
+//         }
+//     }
+
+//     pub fn push_variable<T: Serialize>(&mut self, prefix: &str, name: &str, value: &T) -> Result<(), Error> {
+//        self.map.insert(format!("{}{}", prefix, name), serde_json::to_value(value)?);
+//        Ok(())
+//     }
+
+//     pub fn to_string(self) -> Result<String, Error> {
+//         serde_json::to_string_pretty(&self.map)
+//     }
+// }
+
+const EMPTY_STRING: String = String::new();
+
+pub struct GraphQL;
+
+impl GraphQL {
+    pub fn prefix(a: &str, b: &str) -> String {
+        if b.len() == 0 {
+            a.to_string()
+        }
+        else {
+            if a.len() == 0 {
+                format!("{}_", b)
+            }
+            else {
+                format!("{}{}_", a, b)
+            }
+        }
+    }
+}
+
+
+/*
 pub struct VariableBuffer {
     map: HashMap<String, serde_json::Value>
 }
@@ -117,6 +160,60 @@ impl GraphQL {
     }
 }
 
+*/
+
+/*
+
+pub struct VariableBuffer<'a> {
+    // map: HashMap<String, serde_json::Value>,
+    root: serde_json::Map<String, serde_json::Value>,
+    stack: Vec<&'a mut serde_json::Map<String, serde_json::Value>>,
+}
+
+impl<'a> VariableBuffer<'a> {
+    pub fn new() -> VariableBuffer<'a> {
+        let mut buf = VariableBuffer {
+            // map: HashMap::new(),
+            root: serde_json::Map::new(),
+            stack: Vec::new(),
+        };
+        buf.stack.push(&mut buf.root);
+
+        buf
+    }
+
+    pub fn push_variable<T: Serialize>(&mut self, prefix: &str, name: &str, value: &T) -> Result<(), Error> {
+       let mut top = self.stack.pop().unwrap();
+       top.insert(format!("{}{}", prefix, name), serde_json::to_value(value)?);
+       self.stack.push(top);
+       
+    //    let x = &self.stack;
+    //    let y = x.last().unwrap();
+       
+    //    x.last().unwrap()
+    //    //self.map
+    //    .insert(format!("{}{}", prefix, name), serde_json::to_value(value)?);
+       Ok(())
+    }
+
+    pub fn push_object(&mut self, prefix: &str, name: &str) {
+        let mut new = serde_json::Map::new();
+        let mut top = self.stack.pop().unwrap();
+        top.insert(format!("{}{}", prefix, name), serde_json::Value::Object(new));
+        self.stack.push(top);
+        self.stack.push(&mut new);
+    }
+
+    pub fn to_string(self) -> Result<String, Error> {
+        serde_json::to_string_pretty(&self
+            // .map
+            .stack.last().unwrap()
+        )
+    }
+}
+
+*/
+
 // pub trait GraphQLRoot<V: GraphQLVariables, E: GraphQLEntity<Q>> {
 
 //     async fn query(client: &crate::Client, params: Q) -> Result<E, crate::Error>;
@@ -125,7 +222,7 @@ impl GraphQL {
 pub trait GraphQLVariables {
     fn get_formal_part(&self, params: &mut ParamBuffer, prefix: &str);
     fn get_actual_part(&self, params: &mut ParamBuffer, prefix: &str);
-    fn get_variables_part(&self, variables: &mut VariableBuffer, prefix: &str) -> Result<(), Error>;
+    fn get_variables_part(&self, variables: &mut serde_json::Map<String, serde_json::Value>, prefix: &str) -> Result<(), Error>;
 
 
     fn get_formal(&self) -> String {
@@ -143,17 +240,14 @@ pub trait GraphQLVariables {
     }
 
     fn get_variables(&self) -> Result<String, Error> {
-        let mut variables = VariableBuffer::new();
-        self.get_variables_part(&mut variables, "")?;
-
-        variables.to_string()
+        serde_json::to_string_pretty(&self.get_variable_map()?)
     }
 
-    fn get_variable_map(&self) -> Result<HashMap<String, serde_json::Value>, Error>  {
-        let mut variables = VariableBuffer::new();
+    fn get_variable_map(&self) -> Result<serde_json::Map<String, serde_json::Value>, Error>  {
+        let mut variables: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
         self.get_variables_part(&mut variables, "")?;
 
-        Ok(variables.map)
+        Ok(variables)
     }
 
     
@@ -175,7 +269,7 @@ impl GraphQLVariables for NoVariables {
     fn get_actual_part(&self, _params: &mut ParamBuffer, _prefix: &str) {
     }
 
-    fn get_variables_part(&self, _variables: &mut VariableBuffer, _prefix: &str) -> Result<(), Error> {
+    fn get_variables_part(&self, _variables: &mut serde_json::Map<String, serde_json::Value>, _prefix: &str) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -191,7 +285,7 @@ impl GraphQLQueryBuilder<NoVariables> for NoQueryBuilder {
 pub trait GraphQLQueryParams {
     fn get_formal_part(&self, params: &mut ParamBuffer, prefix: &str);
     fn get_actual_part(&self, params: &mut ParamBuffer, prefix: &str);
-    fn get_variables_part(&self, variables: &mut VariableBuffer, prefix: &str) -> Result<(), Error>;
+    fn get_variables_part(&self, variables: &mut serde_json::Map<String, serde_json::Value>, prefix: &str) -> Result<(), Error>;
 
 
     fn get_formal(&self) -> String {
@@ -209,18 +303,29 @@ pub trait GraphQLQueryParams {
     }
 
     fn get_variables(&self) -> Result<String, Error> {
-        let mut variables = VariableBuffer::new();
-        self.get_variables_part(&mut variables, "")?;
-
-        variables.to_string()
+        serde_json::to_string_pretty(&self.get_variable_map()?)
     }
 
-    fn get_variable_map(&self) -> Result<HashMap<String, serde_json::Value>, Error>  {
-        let mut variables = VariableBuffer::new();
+    fn get_variable_map(&self) -> Result<serde_json::Map<String, serde_json::Value>, Error>  {
+        let mut variables: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
         self.get_variables_part(&mut variables, "")?;
 
-        Ok(variables.map)
+        Ok(variables)
     }
+
+    // fn get_variables(&self) -> Result<String, Error> {
+    //     let mut variables: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    //     self.get_variables_part(&mut variables, "")?;
+
+    //     variables.to_string()
+    // }
+
+    // fn get_variable_map(&self) -> Result<serde_json::Map<String, serde_json::Value>, Error>  {
+    //     let mut variables: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    //     self.get_variables_part(&mut variables, "")?;
+
+    //     Ok(variables.map)
+    // }
 
     
 }
@@ -236,7 +341,7 @@ impl GraphQLQueryParams for NoParams {
     fn get_actual_part(&self, _params: &mut ParamBuffer, _prefix: &str) {
     }
 
-    fn get_variables_part(&self, _variables: &mut VariableBuffer, _prefix: &str) -> Result<(), Error> {
+    fn get_variables_part(&self, _variables: &mut serde_json::Map<String, serde_json::Value>, _prefix: &str) -> Result<(), Error> {
         Ok(())
     }
 }

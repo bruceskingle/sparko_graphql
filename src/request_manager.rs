@@ -83,7 +83,7 @@ impl RequestManager {
         self.do_call("mutation", request_name, query_name, params, token).await
     }
 
-    async fn do_call<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_type: &str, request_name: &str, operation_name: &str, params: P, token: Option<&Arc<String>>) 
+    async fn do_call<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_type: &str, request_name: &str, query_name: &str, params: P, token: Option<&Arc<String>>) 
     -> Result<T, Box<dyn std::error::Error>> {
 
         let query = format!(r#"
@@ -94,7 +94,7 @@ impl RequestManager {
             request_type,
             request_name,
             params.get_formal(),
-            operation_name,
+            query_name,
             params.get_actual(""),
             T::get_query_part(&params, "")
         );
@@ -115,7 +115,7 @@ impl RequestManager {
         let payload = Request {
             query: query,
             variables: params.get_variables()?,
-            operation_name,
+            operation_name: request_name,
         };
         let serialized = serde_json::to_string(&payload).unwrap();
 
@@ -165,7 +165,7 @@ impl RequestManager {
             return Err(Box::new(Error::GraphQLError(errors)));
         }
         
-        if let Some(response) = graphql_response.data.remove("query_name") {
+        if let Some(response) = graphql_response.data.remove(query_name) {
             let object: T = serde_json::from_value(response)?;
             Ok(object)
         }
