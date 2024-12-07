@@ -22,15 +22,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ******************************************************************************/
 
-use std::collections::HashMap;
-
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{quote, quote_spanned};
-use syn::{DeriveInput, Data, Fields, Type};
+use syn::{DeriveInput, Data, Fields};
 use syn::spanned::Spanned;
 use inflections::case::to_camel_case;
 
-use crate::{SerdeDeriveAttributeParams, SerdeDeriveParams};
+use crate::SerdeDeriveParams;
 use crate::parsed_type::ParsedType;
 
 
@@ -189,7 +187,7 @@ deluxe::Result<(String, TokenStream)> {
     Ok((names, quote!{#(#args,)*}))
 }
 
-fn get_graphql_type_enum_parts(variants: &mut syn::punctuated::Punctuated<syn::Variant, syn::token::Comma>, struct_name: &Ident, derive_params: &crate::GraphQLDeriveParams, serde_derive_params: &SerdeDeriveParams) -> 
+fn get_graphql_type_enum_parts(variants: &mut syn::punctuated::Punctuated<syn::Variant, syn::token::Comma>, _struct_name: &Ident, derive_params: &crate::GraphQLDeriveParams, serde_derive_params: &SerdeDeriveParams) -> 
 deluxe::Result<(String, TokenStream)> {
     let mut names = String::new();
     let mut args: Vec<TokenStream> = Vec::new();
@@ -230,13 +228,13 @@ deluxe::Result<(String, TokenStream)> {
 
 
         match &mut v.fields {
-            Fields::Named(fields) => {
+            Fields::Named(_fields) => {
                 panic!("Named fields in enum not supported");
             }
             Fields::Unnamed(ref fields) => {
 
                 let mut i = 0;
-                for f in &fields.unnamed {
+                for _f in &fields.unnamed {
                     if i == 0 {
                         i = 1;
                     }

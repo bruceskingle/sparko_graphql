@@ -22,15 +22,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ******************************************************************************/
 
-use std::collections::HashMap;
-
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{quote, quote_spanned};
-use syn::{DeriveInput, Data, Fields, Type};
+use syn::{DeriveInput, Data, Fields};
 use syn::spanned::Spanned;
 use inflections::case::to_camel_case;
 
-use crate::{SerdeDeriveAttributeParams, SerdeDeriveParams};
 use crate::parsed_type::ParsedType;
 
 
@@ -42,9 +39,6 @@ pub fn derive_graphql_query_params2(item: proc_macro2::TokenStream) -> deluxe::R
     // Extract the attributes!
     let derive_params: crate::GraphQLDeriveQueryParams = deluxe::extract_attributes(&mut ast)?;
 
-    // Extract the attributes!
-    // let GraphQLDeriveParams { params } = deluxe::extract_attributes(&mut ast)?;
-    // let params_ident = Ident::new(&params, ast.span());
 
     // define impl variables
    
@@ -91,11 +85,11 @@ pub fn derive_graphql_query_params2(item: proc_macro2::TokenStream) -> deluxe::R
 
 
 
-fn get_graphql_query_params_enum_parts(variants: &syn::punctuated::Punctuated<syn::Variant, syn::token::Comma>)  -> 
+fn get_graphql_query_params_enum_parts(_variants: &syn::punctuated::Punctuated<syn::Variant, syn::token::Comma>)  -> 
     deluxe::Result<(TokenStream, TokenStream, TokenStream)> {
-    let mut formal: Vec<TokenStream> = Vec::new();
-    let mut actual: Vec<TokenStream> = Vec::new();
-    let mut variable: Vec<TokenStream> = Vec::new();
+    let formal: Vec<TokenStream> = Vec::new();
+    let actual: Vec<TokenStream> = Vec::new();
+    let variable: Vec<TokenStream> = Vec::new();
 
     Ok((quote!{#(#formal;)*}, quote!{#(#actual;)*}, quote!{#(#variable?;)*}))
 }
@@ -113,12 +107,6 @@ fn get_graphql_query_params_parts(struct_ident: &Ident, fields: &mut syn::punctu
 
     let type_name = Literal::string(&type_name_string);
     let camel_name = Literal::string("input");
-    // let camel_name = if let Some(rename) = attrs.rename {
-    //     Literal::string(&rename)
-    // }
-    // else {
-    //     Literal::string(&to_camel_case(&name))
-    // };
     
     if derive_params.as_object {
 
@@ -137,25 +125,6 @@ fn get_graphql_query_params_parts(struct_ident: &Ident, fields: &mut syn::punctu
         variable.push(quote_spanned! {fields.span()=>
             let mut variables = serde_json::Map::<String, serde_json::Value>::new();
         });
-
-
-        // actual.push(quote_spanned! {fields.span()=>
-        //     // params.push_actual(#camel_name, &GraphQL::prefix(prefix, #name));
-        //     // self.properties.get_formal_part(params, Self::prefix(prefix, #name))
-
-  
-        //     let name = Ident::from_str("input");
-        //     self.#data.ident.get_actual_part(params, &GraphQL::prefix(prefix, #name))
-        // });
-
-        // // formal.push(quote_spanned! {fields.span()=>
-        // //     self.#ident.get_formal_part(params, &sparko_graphql::GraphQL::prefix(prefix, #name))
-        // // });
-
-        // // variable.push(quote_spanned! {fields.span()=>
-        // //     self.#ident.get_variables_part(variables, &sparko_graphql::GraphQL::prefix(prefix, #name))
-        // //     // self.properties.get_formal_part(params, Self::prefix(prefix, #name))
-        // // });
     }
     else {
 
@@ -177,7 +146,6 @@ fn get_graphql_query_params_parts(struct_ident: &Ident, fields: &mut syn::punctu
         };
 
         let name = ident.to_string();
-        //let field_name: Literal = Literal::string(&name);
 
         let parsed_type = ParsedType::parse(&f.ty);
         if let Some(parsed_type) = parsed_type {
@@ -217,16 +185,12 @@ fn get_graphql_query_params_parts(struct_ident: &Ident, fields: &mut syn::punctu
                     variable.push(quote_spanned! {f.span()=>
                         if let Some(_value) = &self.#ident {
                             variables.insert(format!("{}{}", prefix, #camel_name), serde_json::to_value(&self.#ident)?);
-                            //push_variable(prefix, #camel_name, &self.#ident)?
-                            // Variable
                         }
                     });
                 }
                 else {
                     variable.push(quote_spanned! {f.span()=>
                         variables.insert(format!("{}{}", prefix, #camel_name), serde_json::to_value(&self.#ident)?);
-                        //push_variable(prefix, #camel_name, &self.#ident)?
-                        // Variable
                     });
                 }
                 
@@ -235,9 +199,6 @@ fn get_graphql_query_params_parts(struct_ident: &Ident, fields: &mut syn::punctu
 
                 if !derive_params.as_object {
                     actual.push(quote_spanned! {f.span()=>
-                        // // params.push_actual(#camel_name, &GraphQL::prefix(prefix, #name));
-                        // // self.properties.get_formal_part(params, Self::prefix(prefix, #name))
-                        // self.#ident.get_actual_part(params, &GraphQL::prefix(prefix, #name))
                     });
 
                     formal.push(quote_spanned! {f.span()=>
@@ -247,7 +208,6 @@ fn get_graphql_query_params_parts(struct_ident: &Ident, fields: &mut syn::punctu
                 
                 variable.push(quote_spanned! {f.span()=>
                     self.#ident.get_variables_part(variables, &sparko_graphql::GraphQL::prefix(prefix, #name))
-                    // self.properties.get_formal_part(params, Self::prefix(prefix, #name))
                 });
             }
         }
@@ -260,8 +220,6 @@ fn get_graphql_query_params_parts(struct_ident: &Ident, fields: &mut syn::punctu
 
         variable.push(quote_spanned! {fields.span()=>
             super_variables.insert(format! ("{}{}", prefix, #camel_name), serde_json::Value::Object(variables))
-
-            // Variable
         });
     }
     
@@ -270,11 +228,6 @@ fn get_graphql_query_params_parts(struct_ident: &Ident, fields: &mut syn::punctu
 
 
 fn impl_graphql_query_params(ident: &Ident, data: &mut Data, derive_params: &crate::GraphQLDeriveQueryParams) -> deluxe::Result<(TokenStream, TokenStream, TokenStream)> {
-
-//fn impl_graphql_query_params(ast: &mut DeriveInput, derive_params: &crate::GraphQLDeriveQueryParams) -> deluxe::Result<(TokenStream, TokenStream, TokenStream)> {
-    
-    // let x: &mut Data = &mut ast.data;
-    
     match data {
         Data::Struct(data) => {
             match &mut data.fields {

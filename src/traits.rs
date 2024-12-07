@@ -22,14 +22,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ******************************************************************************/
 
-
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use display_json::DisplayAsJsonPretty;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Error;
-
-use crate::{AuthenticatedRequestManager, Client};
 
 pub struct ParamBuffer {
     buf: String
@@ -76,29 +73,6 @@ impl ParamBuffer {
     }
 }
 
-// pub struct VariableBuffer {
-//     pub map: serde_json::Map<String, serde_json::Value>
-// }
-
-// impl VariableBuffer {
-//     pub fn new() -> VariableBuffer {
-//         VariableBuffer {
-//             map: serde_json::Map::new()
-//         }
-//     }
-
-//     pub fn push_variable<T: Serialize>(&mut self, prefix: &str, name: &str, value: &T) -> Result<(), Error> {
-//        self.map.insert(format!("{}{}", prefix, name), serde_json::to_value(value)?);
-//        Ok(())
-//     }
-
-//     pub fn to_string(self) -> Result<String, Error> {
-//         serde_json::to_string_pretty(&self.map)
-//     }
-// }
-
-const EMPTY_STRING: String = String::new();
-
 pub struct GraphQL;
 
 impl GraphQL {
@@ -118,169 +92,6 @@ impl GraphQL {
 }
 
 
-/*
-pub struct VariableBuffer {
-    map: HashMap<String, serde_json::Value>
-}
-
-impl VariableBuffer {
-    pub fn new() -> VariableBuffer {
-        VariableBuffer {
-            map: HashMap::new()
-        }
-    }
-
-    pub fn push_variable<T: Serialize>(&mut self, prefix: &str, name: &str, value: &T) -> Result<(), Error> {
-       self.map.insert(format!("{}{}", prefix, name), serde_json::to_value(value)?);
-       Ok(())
-    }
-
-    pub fn to_string(self) -> Result<String, Error> {
-        serde_json::to_string_pretty(&self.map)
-    }
-}
-
-const EMPTY_STRING: String = String::new();
-
-pub struct GraphQL;
-
-impl GraphQL {
-    pub fn prefix(a: &str, b: &str) -> String {
-        if b.len() == 0 {
-            a.to_string()
-        }
-        else {
-            if a.len() == 0 {
-                format!("{}_", b)
-            }
-            else {
-                format!("{}{}_", a, b)
-            }
-        }
-    }
-}
-
-*/
-
-/*
-
-pub struct VariableBuffer<'a> {
-    // map: HashMap<String, serde_json::Value>,
-    root: serde_json::Map<String, serde_json::Value>,
-    stack: Vec<&'a mut serde_json::Map<String, serde_json::Value>>,
-}
-
-impl<'a> VariableBuffer<'a> {
-    pub fn new() -> VariableBuffer<'a> {
-        let mut buf = VariableBuffer {
-            // map: HashMap::new(),
-            root: serde_json::Map::new(),
-            stack: Vec::new(),
-        };
-        buf.stack.push(&mut buf.root);
-
-        buf
-    }
-
-    pub fn push_variable<T: Serialize>(&mut self, prefix: &str, name: &str, value: &T) -> Result<(), Error> {
-       let mut top = self.stack.pop().unwrap();
-       top.insert(format!("{}{}", prefix, name), serde_json::to_value(value)?);
-       self.stack.push(top);
-       
-    //    let x = &self.stack;
-    //    let y = x.last().unwrap();
-       
-    //    x.last().unwrap()
-    //    //self.map
-    //    .insert(format!("{}{}", prefix, name), serde_json::to_value(value)?);
-       Ok(())
-    }
-
-    pub fn push_object(&mut self, prefix: &str, name: &str) {
-        let mut new = serde_json::Map::new();
-        let mut top = self.stack.pop().unwrap();
-        top.insert(format!("{}{}", prefix, name), serde_json::Value::Object(new));
-        self.stack.push(top);
-        self.stack.push(&mut new);
-    }
-
-    pub fn to_string(self) -> Result<String, Error> {
-        serde_json::to_string_pretty(&self
-            // .map
-            .stack.last().unwrap()
-        )
-    }
-}
-
-*/
-
-// pub trait GraphQLRoot<V: GraphQLVariables, E: GraphQLEntity<Q>> {
-
-//     async fn query(client: &crate::Client, params: Q) -> Result<E, crate::Error>;
-// }
-
-pub trait GraphQLVariables {
-    fn get_formal_part(&self, params: &mut ParamBuffer, prefix: &str);
-    fn get_actual_part(&self, params: &mut ParamBuffer, prefix: &str);
-    fn get_variables_part(&self, variables: &mut serde_json::Map<String, serde_json::Value>, prefix: &str) -> Result<(), Error>;
-
-
-    fn get_formal(&self) -> String {
-        let mut params = ParamBuffer::new();
-        self.get_formal_part(&mut params, "");
-
-        params.consume()
-    }
-
-    fn get_actual(&self, prefix: &str) -> String {
-        let mut params = ParamBuffer::new();
-        self.get_actual_part(&mut params, prefix);
-
-        params.consume()
-    }
-
-    fn get_variables(&self) -> Result<String, Error> {
-        serde_json::to_string_pretty(&self.get_variable_map()?)
-    }
-
-    fn get_variable_map(&self) -> Result<serde_json::Map<String, serde_json::Value>, Error>  {
-        let mut variables: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-        self.get_variables_part(&mut variables, "")?;
-
-        Ok(variables)
-    }
-
-    
-}
-
-pub trait GraphQLQueryBuilder <V: GraphQLVariables> 
-{
-    fn build(self) -> V;
-}
-
-// #[derive(Serialize)]
-pub struct NoVariables;
-
-impl GraphQLVariables for NoVariables {
-
-    fn get_formal_part(&self, _params: &mut ParamBuffer, _prefix: &str) {
-    }
-
-    fn get_actual_part(&self, _params: &mut ParamBuffer, _prefix: &str) {
-    }
-
-    fn get_variables_part(&self, _variables: &mut serde_json::Map<String, serde_json::Value>, _prefix: &str) -> Result<(), Error> {
-        Ok(())
-    }
-}
-
-pub struct NoQueryBuilder;
-
-impl GraphQLQueryBuilder<NoVariables> for NoQueryBuilder {
-    fn build(self) -> NoVariables {
-        NoVariables {}
-    }
-}
 
 pub trait GraphQLQueryParams {
     fn get_formal_part(&self, params: &mut ParamBuffer, prefix: &str);
@@ -311,23 +122,7 @@ pub trait GraphQLQueryParams {
         self.get_variables_part(&mut variables, "")?;
 
         Ok(variables)
-    }
-
-    // fn get_variables(&self) -> Result<String, Error> {
-    //     let mut variables: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-    //     self.get_variables_part(&mut variables, "")?;
-
-    //     variables.to_string()
-    // }
-
-    // fn get_variable_map(&self) -> Result<serde_json::Map<String, serde_json::Value>, Error>  {
-    //     let mut variables: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-    //     self.get_variables_part(&mut variables, "")?;
-
-    //     Ok(variables.map)
-    // }
-
-    
+    }    
 }
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
@@ -353,53 +148,6 @@ pub trait GraphQLType<Q: GraphQLQueryParams> {
     }
 
     fn get_query_attributes(params: &Q, prefix: &str) -> String;
-
-    // fn get_request_name(&self) -> &'static str;
-    // fn get_query(&self) -> String ;
-    // fn get_query(&self) -> String {
-    //     format!(r#"
-    //     query {}{} {{
-    //         account{} {{
-    //             id
-    //             properties{} {{
-    //                 {}
-    //             }}
-    //         }}
-    //     }}
-    //     "#, self.get_request_name(), self.get_params().get_formal(),
-    //         self.get_params().get_actual(""),
-    //         self.get_params().properties.get_actual("properties_"),
-    //         PropertySimpleView::get_query_part()
-    // )
-    // }
-}
-
-
-pub trait GraphQLEntity<V: GraphQLVariables>: DeserializeOwned {
-    fn get_query_part(params: &V, prefix: &str) -> String {
-        format!("{{ #get_query_part\n  {}\n}} #/get_query_part\n", Self::get_query_attributes(params, prefix))
-    }
-
-    fn get_query_attributes(params: &V, prefix: &str) -> String;
-
-    // fn get_request_name(&self) -> &'static str;
-    // fn get_query(&self) -> String ;
-    // fn get_query(&self) -> String {
-    //     format!(r#"
-    //     query {}{} {{
-    //         account{} {{
-    //             id
-    //             properties{} {{
-    //                 {}
-    //             }}
-    //         }}
-    //     }}
-    //     "#, self.get_request_name(), self.get_params().get_formal(),
-    //         self.get_params().get_actual(""),
-    //         self.get_params().properties.get_actual("properties_"),
-    //         PropertySimpleView::get_query_part()
-    // )
-    // }
 }
 
 
@@ -423,33 +171,3 @@ help: you can alternatively desugar to a normal `fn` that returns `impl Future` 
     // async fn authenticate(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
     fn authenticate(&mut self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
 }
-
-// pub struct GraphQLQuery<S: GraphQLVariables, V: GraphQLVariables> {
-//     pub operation_name: String,
-//     pub query_name: String,
-//     pub selector: S,
-//     pub variables: V,
-// }
-
-// impl<S: GraphQLVariables, V: GraphQLVariables, E: GraphQLEntity<V>> GraphQLQuery<S,V> {
-//     async fn query(&self, request_manager: &crate::RequestManager) -> Result<E, Error> {
-//         let query = format!(r#"
-//             query {}{}
-//                 #T::get_query_part(&params, "")
-//                 {}"#, 
-//             self.operation_name,
-//             self.selector.get_formal(),
-//             // query_name,
-//             // params.get_actual(""),
-//             E::get_query_part(&variables, "")
-//         );
-//     }
-// }
-
-// pub trait GraphQLQuery<S: GraphQLVariables, V: GraphQLVariables, E: GraphQLEntity<V>> {
-//     fn query(&self, request_manager: &crate::RequestManager) -> impl std::future::Future<Output = Result<E, Error>> + Send;
-// }
-
-// pub trait TRequestManager {
-//     fn query<V: GraphQLVariables, E: GraphQLEntity<V>>(&self, operation_name: &str, variables: V) -> impl std::future::Future<Output = Result<E, Error>> + Send; 
-// }

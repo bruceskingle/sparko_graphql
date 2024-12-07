@@ -22,23 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ******************************************************************************/
 
-/*
-use sparko_graphql::{, ParamBuffer};
-*/
-
-
-use std::collections::HashMap;
-
-use proc_macro2::{Ident, Literal, TokenStream};
-use quote::{quote, quote_spanned};
-use syn::{DeriveInput, Data, Fields, Type};
-use syn::spanned::Spanned;
-use inflections::case::to_camel_case;
 
 mod parsed_type;
-pub mod graph_ql_entity;
-pub mod graph_ql_variables;
-mod graph_ql_query;
 pub mod graph_ql_type;
 pub mod graph_ql_type_params;
 mod tests;
@@ -46,6 +31,7 @@ mod tests;
 
 #[derive(deluxe::ExtractAttributes)]
 #[deluxe(attributes(serde))]
+#[allow(dead_code)]
 struct SerdeDeriveParams {
     rename_all: Option<String>,
     rename_all_fields: Option<String>,
@@ -63,36 +49,6 @@ struct SerdeDeriveParams {
     // r#crate: Option<String>,
     expecting: Option<String>,
 }
-
-// #[proc_macro_derive(GraphQLEntity, attributes(graphql))]
-// pub fn derive_graphql_entity(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-
-//     graph_ql_entity::derive_graphql_entity2(item.into()).unwrap().into()
-// }
-
-// #[proc_macro_derive(GraphQLVariables, attributes(graphql))]
-// pub fn derive_graphql_variables(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-
-//     graph_ql_variables::derive_graphql_query2(item.into()).unwrap().into()
-// }
-
-// #[proc_macro_derive(GraphQLType, attributes(graphql))]
-// pub fn derive_graphql_type(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-
-//     graph_ql_type::derive_graphql_type2(item.into()).unwrap().into()
-// }
-
-
-
-// #[proc_macro_derive(GraphQLQueryParams, attributes(graphql))]
-// pub fn derive_graphql_query_params(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-
-//     graph_ql_type_params::derive_graphql_query_params2(item.into()).unwrap().into()
-// }
-
-
-
-
 
 
 
@@ -133,6 +89,7 @@ struct GraphQLDeriveAttributeParams {
 
 #[derive(deluxe::ExtractAttributes)]
 #[deluxe(attributes(serde))]
+#[allow(dead_code)]
 struct SerdeDeriveAttributeParams {
     #[deluxe(default = false)]
     flatten: bool,

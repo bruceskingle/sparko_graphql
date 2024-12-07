@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{Error, GraphQLType,  GraphQLResponse, GraphQLQueryParams};
 
@@ -91,7 +91,7 @@ impl RequestManager {
     async fn do_call<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_type: &str, request_name: &str, query_name: &str, params: P, token: Option<&Arc<String>>) 
     -> Result<T, Box<dyn std::error::Error>> {
 
-        let mut get_query = || {
+        let get_query = || {
         format!(r#"
             {} {}{} {{
                 {}{} {}
@@ -105,16 +105,6 @@ impl RequestManager {
             T::get_query_part(&params, "")
         )
         };
-        // let query = format!(r#"
-        //     query {}{}
-        //         #T::get_query_part(&params, "")
-        //         {}"#, 
-        //     operation_name,
-        //     variables.get_formal(),
-        //     // query_name,
-        //     // params.get_actual(""),
-        //     E::get_query_part(&variables, "")
-        // );
 
 
         // println!("NEW query {}", &query);

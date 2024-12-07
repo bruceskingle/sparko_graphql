@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{graph_ql_entity, graph_ql_type_params};
+use crate::{graph_ql_type, graph_ql_type_params};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::parse_file;
@@ -18,8 +18,8 @@ pub fn test_generation(output: TokenStream, expect: &str) {
     }
 }
 
-pub fn test_graph_ql_entity(input: TokenStream, expect: &str) {
-    test_generation(graph_ql_entity::derive_graphql_entity2(input).unwrap(), expect);
+pub fn test_graph_ql_type(input: TokenStream, expect: &str) {
+    test_generation(graph_ql_type::derive_graphql_type2(input).unwrap(), expect);
 }
 
 pub fn test_graph_ql_query_params(input: TokenStream, expect: &str) {
@@ -28,19 +28,19 @@ pub fn test_graph_ql_query_params(input: TokenStream, expect: &str) {
 
 #[test]
 fn test_entity() {
-    test_graph_ql_entity(quote! {
-        pub struct StatementTotalType {
-            pub net_total: Int,
-            pub tax_total: Int,
-            pub gross_total: Int,
-        }
+    test_graph_ql_type(quote! {
+#[derive(GraphQLType)]
+#[graphql(params = "NoParams")]
+#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+#[serde(rename_all = "camelCase")]
+pub struct StatementTotalType {
+    pub net_total: Int,
+    pub tax_total: Int,
+    pub gross_total: Int,
+}
     },
-r#"type StatementTotalTypeVariables = NoVariables;
-impl sparko_graphql::GraphQLEntity<StatementTotalTypeVariables> for StatementTotalType {
-    fn get_query_attributes(
-        params: &StatementTotalTypeVariables,
-        prefix: &str,
-    ) -> String {
+r#"impl sparko_graphql::GraphQLType<NoParams> for StatementTotalType {
+    fn get_query_attributes(params: &NoParams, prefix: &str) -> String {
         format!("netTotal\ntaxTotal\ngrossTotal\n",)
     }
 }
@@ -80,7 +80,7 @@ struct ObtainJSONWebTokenInput {
     },
 r#"impl sparko_graphql::GraphQLQueryParams for ObtainJSONWebTokenInput {
     fn get_formal_part(&self, params: &mut sparko_graphql::ParamBuffer, prefix: &str) {
-        params.push_formal(prefix, "apiKey", "String");
+        params.push_formal(prefix, "APIKey", "String");
         params.push_formal(prefix, "email", "String");
         params.push_formal(prefix, "organizationSecretKey", "String");
         params.push_formal(prefix, "password", "String");
@@ -88,7 +88,7 @@ r#"impl sparko_graphql::GraphQLQueryParams for ObtainJSONWebTokenInput {
         params.push_formal(prefix, "refreshToken", "String");
     }
     fn get_actual_part(&self, params: &mut sparko_graphql::ParamBuffer, prefix: &str) {
-        params.push_actual(prefix, "apiKey");
+        params.push_actual(prefix, "APIKey");
         params.push_actual(prefix, "email");
         params.push_actual(prefix, "organizationSecretKey");
         params.push_actual(prefix, "password");
@@ -97,20 +97,52 @@ r#"impl sparko_graphql::GraphQLQueryParams for ObtainJSONWebTokenInput {
     }
     fn get_variables_part(
         &self,
-        variables: &mut sparko_graphql::VariableBuffer,
+        super_variables: &mut serde_json::Map<String, serde_json::Value>,
         prefix: &str,
     ) -> Result<(), serde_json::Error> {
-        variables.push_variable(prefix, "apiKey", &self.api_key)?;
-        variables.push_variable(prefix, "email", &self.email)?;
-        variables
-            .push_variable(
-                prefix,
-                "organizationSecretKey",
-                &self.organization_secret_key,
-            )?;
-        variables.push_variable(prefix, "password", &self.password)?;
-        variables.push_variable(prefix, "preSignedKey", &self.pre_signed_key)?;
-        variables.push_variable(prefix, "refreshToken", &self.refresh_token)?;
+        let variables = super_variables;
+        if let Some(_value) = &self.api_key {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "APIKey"),
+                    serde_json::to_value(&self.api_key)?,
+                );
+        }
+        if let Some(_value) = &self.email {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "email"),
+                    serde_json::to_value(&self.email)?,
+                );
+        }
+        if let Some(_value) = &self.organization_secret_key {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "organizationSecretKey"),
+                    serde_json::to_value(&self.organization_secret_key)?,
+                );
+        }
+        if let Some(_value) = &self.password {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "password"),
+                    serde_json::to_value(&self.password)?,
+                );
+        }
+        if let Some(_value) = &self.pre_signed_key {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "preSignedKey"),
+                    serde_json::to_value(&self.pre_signed_key)?,
+                );
+        }
+        if let Some(_value) = &self.refresh_token {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "refreshToken"),
+                    serde_json::to_value(&self.refresh_token)?,
+                );
+        }
         Ok(())
     }
 }
@@ -146,13 +178,67 @@ struct ObtainJSONWebTokenInput {
     refresh_token: Option<String>,
 }
     },
-r#"type StatementTotalTypeVariables = NoVariables;
-impl sparko_graphql::GraphQLEntity<StatementTotalTypeVariables> for StatementTotalType {
-    fn get_query_attributes(
-        params: &StatementTotalTypeVariables,
+r#"impl sparko_graphql::GraphQLQueryParams for ObtainJSONWebTokenInput {
+    fn get_formal_part(&self, params: &mut sparko_graphql::ParamBuffer, prefix: &str) {
+        params.push_formal(prefix, "input", "ObtainJSONWebTokenInput");
+    }
+    fn get_actual_part(&self, params: &mut sparko_graphql::ParamBuffer, prefix: &str) {
+        params.push_actual(prefix, "input");
+    }
+    fn get_variables_part(
+        &self,
+        super_variables: &mut serde_json::Map<String, serde_json::Value>,
         prefix: &str,
-    ) -> String {
-        format!("netTotal\ntaxTotal\ngrossTotal\n",)
+    ) -> Result<(), serde_json::Error> {
+        let mut variables = serde_json::Map::<String, serde_json::Value>::new();
+        if let Some(_value) = &self.api_key {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "APIKey"),
+                    serde_json::to_value(&self.api_key)?,
+                );
+        }
+        if let Some(_value) = &self.email {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "email"),
+                    serde_json::to_value(&self.email)?,
+                );
+        }
+        if let Some(_value) = &self.organization_secret_key {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "organizationSecretKey"),
+                    serde_json::to_value(&self.organization_secret_key)?,
+                );
+        }
+        if let Some(_value) = &self.password {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "password"),
+                    serde_json::to_value(&self.password)?,
+                );
+        }
+        if let Some(_value) = &self.pre_signed_key {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "preSignedKey"),
+                    serde_json::to_value(&self.pre_signed_key)?,
+                );
+        }
+        if let Some(_value) = &self.refresh_token {
+            variables
+                .insert(
+                    format!("{}{}", prefix, "refreshToken"),
+                    serde_json::to_value(&self.refresh_token)?,
+                );
+        }
+        super_variables
+            .insert(
+                format!("{}{}", prefix, "input"),
+                serde_json::Value::Object(variables),
+            );
+        Ok(())
     }
 }
 "#);
