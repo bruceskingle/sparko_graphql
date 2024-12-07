@@ -22,11 +22,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ******************************************************************************/
 
-use std::collections::HashMap;
-
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{quote, quote_spanned};
-use syn::{DeriveInput, Data, Fields, Type};
+use syn::{DeriveInput, Data, Fields};
 use syn::spanned::Spanned;
 use inflections::case::to_camel_case;
 

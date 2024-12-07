@@ -51,18 +51,16 @@ impl<M: TokenManager> AuthenticatedRequestManager<M> {
 
         let token = &self.token_manager.get_authenticator().await?;
 
-        eprintln!("AuthenticatedRequestManager token=<{}>", token);
-
-        // let request_manager = *self.request_manager;
+        // eprintln!("AuthenticatedRequestManager token=<{}>", token);
 
         let result = self.request_manager.do_query::<P,T>(request_name, query_name, params, Some(token)).await;
         
         
         //.call::<P,T>(operation_name, variables, Some(token)).await;
 
-        if let Err(e) = &result {
-            eprintln!("Result {:?}", e);
-        }
+        // if let Err(e) = &result {
+        //     eprintln!("Result {:?}", e);
+        // }
 
         // if let Ok(v) = &result {
         //     eprintln!("Result {:?}", v);

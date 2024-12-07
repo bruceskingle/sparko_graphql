@@ -63,6 +63,11 @@ impl RequestManager {
         })
     }
 
+    fn report_error(message: &str) {
+
+        println!("\n\n\n{} =======================================================================================================================", message);
+    }
+
     pub async fn query<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_name: &str, query_name: &str, params: P) 
     -> Result<T, Box<dyn std::error::Error>> {
         self.do_query( request_name, query_name, params, None).await
@@ -86,7 +91,8 @@ impl RequestManager {
     async fn do_call<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_type: &str, request_name: &str, query_name: &str, params: P, token: Option<&Arc<String>>) 
     -> Result<T, Box<dyn std::error::Error>> {
 
-        let query = format!(r#"
+        let mut get_query = || {
+        format!(r#"
             {} {}{} {{
                 {}{} {}
             }}
@@ -97,7 +103,8 @@ impl RequestManager {
             query_name,
             params.get_actual(""),
             T::get_query_part(&params, "")
-        );
+        )
+        };
         // let query = format!(r#"
         //     query {}{}
         //         #T::get_query_part(&params, "")
@@ -110,17 +117,17 @@ impl RequestManager {
         // );
 
 
-        println!("NEW query {}", &query);
+        // println!("NEW query {}", &query);
 
         let payload = Request {
-            query: query,
+            query: get_query(),
             variables: params.get_variables()?,
             operation_name: request_name,
         };
-        let serialized = serde_json::to_string(&payload).unwrap();
+        // let serialized = serde_json::to_string(&payload).unwrap();
 
-        println!("NEW payload {}", &serialized);
-        println!("NEW variables {}", params.get_variables()?);
+        // println!("NEW payload {}", &serialized);
+        // println!("NEW variables {}", params.get_variables()?);
                
 
         let mut request = self.reqwest_client.post(&self.url.clone());
@@ -130,13 +137,23 @@ impl RequestManager {
         }
 
         let response = request
-            .body(serialized)
+            .body(serde_json::to_string(&payload).unwrap())
             .send().await?;
-
-        println!("\nStatus:   {:?}", &response.status());
 
         if &response.status() != &StatusCode::OK {
             let status = response.status();
+            Self::report_error("ERROR Request Failed");
+            println!("HTTP status {}", status);
+            
+            Self::report_error("Query");
+            println!("{}", &get_query());
+            
+            Self::report_error("Variables");
+            println!("{}", params.get_variables()?);
+            
+            Self::report_error("Payload");
+            println!("{}",  &serde_json::to_string(&payload).unwrap());
+
             let text = &(response).text().await;
             println!("ERROR {}", text.as_ref().expect("No Response Body"));
             return Err(Box::new(Error::HttpError(status)));
@@ -144,7 +161,7 @@ impl RequestManager {
 
         let response_json: serde_json::Value = response.json().await?;
 
-        println!("response {}", serde_json::to_string_pretty(&response_json)?);
+        // println!("response {}", serde_json::to_string_pretty(&response_json)?);
 
         let mut graphql_response: GraphQLResponse = serde_json::from_value(response_json)?;
 
@@ -160,7 +177,8 @@ impl RequestManager {
 
         if let Some(errors) = graphql_response.errors {
             
-            println!("\nerrors:   {:?}", serde_json::to_string_pretty(&errors)?);
+            Self::report_error("GraphQL Errors");
+            println!("{:?}", serde_json::to_string_pretty(&errors)?);
 
             return Err(Box::new(Error::GraphQLError(errors)));
         }
