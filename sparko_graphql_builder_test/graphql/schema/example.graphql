@@ -1,0 +1,78 @@
+type OneOfEverything {
+    # Required ID
+    id: ID!,
+
+    # Required date
+    date: Date!,
+
+    # Required DateTime
+    dateTime: DateTime!,
+
+    # Required String
+    string: String!,
+
+    # Required Int
+    amount: Int!,
+
+    # Required Float
+    float: Float!,
+
+    # Required Boolean
+    boolean: Boolean!,
+
+    # Optional ID
+    optionalId: ID,
+
+    # Optional date
+    optionalDate: Date,
+
+    # Optional DateTime
+    optionalDateTime: DateTime,
+
+    # Optional String
+    optionalString: String,
+
+    # Optional Int
+    optionalAmount: Int,
+
+    # Optional Float
+    optionalFloat: Float,
+
+    # Optional Boolean
+    optionalBoolean: Boolean,
+
+    # Array of Int
+    arrayOfInt: [Int],
+
+    # Array of Required Int
+    arrayOfRequiredInt: [Int!],
+}
+
+
+"""An object with an ID"""
+interface Node {
+  """The id of the object."""
+  id: ID!
+}
+
+"""A single film."""
+type Film implements Node {
+
+  """The ISO 8601 date format of the time that this resource was created."""
+  created: String
+
+  """The name of the director of this film."""
+  director: String
+
+  """The ISO 8601 date format of the time that this resource was edited."""
+  edited: String
+
+  """The episode number of this film."""
+  episodeID: Int
+
+  """The ID of an object"""
+  id: ID!
+
+  """The opening paragraphs at the beginning of this film."""
+  openingCrawl: String
+}

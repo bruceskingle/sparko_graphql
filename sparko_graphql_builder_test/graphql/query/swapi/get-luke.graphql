@@ -1,0 +1,6 @@
+query GetLuke {
+  person(id: "cGVvcGxlOjE=") {
+    name
+  	birthYear
+  }
+}

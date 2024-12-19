@@ -1,0 +1,15 @@
+[package]
+name = "sparko_graphql_builder_test"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+sparko_graphql_builder = { path = "../sparko_graphql_builder" }
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"], with = "iso8601"}
+serde_json = "1.0"
+display_json = "0.2.1"
+time = { version = "0.3.36", features = ["serde", "parsing", "formatting"] }
