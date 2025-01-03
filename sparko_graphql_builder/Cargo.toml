@@ -6,5 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-graphql-parser = "0.4.1"
+graphql-parser = { path = "../../graphql-parser" }
 inflections = "1.1.1"

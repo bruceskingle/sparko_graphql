@@ -29,12 +29,16 @@ use graphql_parser::Pos;
 
 #[derive(Debug)]
 pub enum GraphQLError {
-    SchemaSyntaxError(graphql_parser::schema::ParseError),
+    SyntaxError(graphql_parser::schema::ParseError),
+    UndefinedTypeError(Pos, String),
+    TypeMismatchError(Pos, String),
     MissingInterfaceError(Pos, String),
     MissingObjectError(Pos, String),
+    InvalidQueryError(Pos, String),
     UnsupportedError(Pos, String),
     DuplicateName(Pos, Pos, String),
     NoQueryDefinition,
+    ValidationError,
 }
 
 impl Display for GraphQLError {
@@ -49,6 +53,6 @@ impl StdError for GraphQLError {
 
 impl From<graphql_parser::schema::ParseError> for GraphQLError {
     fn from(err: graphql_parser::schema::ParseError) -> GraphQLError {
-        GraphQLError::SchemaSyntaxError(err)
+        GraphQLError::SyntaxError(err)
     }
 }

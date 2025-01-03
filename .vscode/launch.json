@@ -41,6 +41,26 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'test_build.rs'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=test_build",
+                    "--package=sparko_graphql_builder_test"
+                ],
+                "filter": {
+                    "name": "test_build",
+                    "kind": "bin"
+                }
+            },
+            "env": {
+                "OUT_DIR": "/tmp"
+            },
+            "cwd": "${workspaceFolder}/sparko_graphql_builder_test"
         }
     ]
 }

@@ -1,3 +1,7 @@
+type Query {
+  oneOfEverything: OneOfEverything
+}
+
 type OneOfEverything {
     # Required ID
     id: ID!,

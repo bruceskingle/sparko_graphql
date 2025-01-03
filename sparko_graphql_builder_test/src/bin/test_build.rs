@@ -1,28 +1,13 @@
 use std::error::Error;
 
-fn get_current_working_dir() -> String {
-    let res = std::env::current_dir();
-    match res {
-        Ok(path) => path.into_os_string().into_string().unwrap(),
-        Err(_) => "FAILED".to_string()
-    }
-}
-fn main() {
-    if let Err(error) = build() {
-        panic!("Build failed {}", error);
-    }
-}
-
 // Example custom build script.
-fn build()  -> Result<(), Box<dyn Error>> {
-    // panic!("Panic cwd={}", get_current_working_dir()); 
-
+fn main()  -> Result<(), Box<dyn Error>> {
+   
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed=graphql_builder/src/lib.rs");
 
     sparko_graphql_builder::builder("example")
         .with_schema("graphql/schema/example.graphql")
-        .with_query("graphql/query/example/get-luke.graphql")
         .build();
 
 

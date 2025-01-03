@@ -1,0 +1,6 @@
+query GetPerson($id: ID!) {
+  xperson(id: $id) {
+    name
+    hairColor?
+  }
+}

@@ -6,16 +6,87 @@ use std::fmt::Display;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
+use std::rc::Rc;
 use std::{env, fs};
 use std::io::Write;
 
-mod model;
+mod utils;
+mod parsed_model;
+mod validated_model;
 mod error;
 
-use model::{GraphQLQuerySet, GraphQlModel};
+struct Output<'a> {
+    base: &'a mut BaseOutput,
+    indent: usize,
+    start_of_line: bool,
+}
+
+impl Output<'_> {
+    pub fn indent(&mut self) -> Output {
+        Output {
+            base: self.base,
+            indent: self.indent + 1,
+            start_of_line: true,
+        }
+    }
+
+    pub fn error(&mut self, error: GraphQLError) {
+        self.base.error(error);
+    }
+
+    // pub fn warning(&mut self, error: GraphQLError) {
+    //     self.base.warning(error);
+    // }
+}
+
+impl Write for Output<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut nbytes: usize = 0;
+        let mut s = 0;
+
+        while s< buf.len() {
+            if self.start_of_line {
+                let mut t: usize = 0;
+
+                while t < self.indent {
+                    self.base.write(b"    ")?;
+                    t += 1;
+                }
+
+                self.start_of_line = false;
+            }
+            let mut e = s;
+            while e < buf.len() && buf[e] != b'\n' {
+                e += 1;
+            }
+
+            if e < buf.len() {
+                e += 1;
+                nbytes += self.base.write(&buf[s..e])?;
+
+                self.start_of_line = true;
+            }
+            else {
+                nbytes += self.base.write(&buf[s..e])?;
+            }
+            s = e;
+        }
+        Ok(nbytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.base.flush()
+    }
+}
+
+impl Display for Output<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.base.fmt(f)
+    }
+}
 
 #[cfg(test)]
-struct BufOutput {
+struct TestOutput {
     buf: Vec<u8>,
     errors: Vec<GraphQLError>,
     warnings: Vec<GraphQLError>,
@@ -27,13 +98,13 @@ struct FileOutput {
     warnings: Vec<GraphQLError>,
 }
 
-enum Output {
+enum BaseOutput {
     File(FileOutput),
     #[cfg(test)]
-    Buffer(BufOutput),
+    Buffer(TestOutput),
 }
 
-impl Display for Output {
+impl Display for BaseOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 
         fn fmt_errors(f: &mut std::fmt::Formatter<'_>, name: &str, errors: &Vec<GraphQLError>)  -> std::fmt::Result {
@@ -47,12 +118,12 @@ impl Display for Output {
         writeln!(f, "Output")?;
         
         match self {
-            Output::File(output) => {
+            BaseOutput::File(output) => {
                 fmt_errors(f, "Errors", &output.errors)?;
                 fmt_errors(f, "Warnings", &output.warnings)?;
             }
             #[cfg(test)]
-            Output::Buffer(output) => {
+            BaseOutput::Buffer(output) => {
                 fmt_errors(f, "Errors", &output.errors)?;
                 fmt_errors(f, "Warnings", &output.warnings)?;
                 writeln!(f, "    Output")?;
@@ -68,28 +139,28 @@ impl Display for Output {
     }
 }
 
-impl Write for Output {
+impl Write for BaseOutput {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            Output::File(output) => output.buf.write(buf),
+            BaseOutput::File(output) => output.buf.write(buf),
             #[cfg(test)]
-            Output::Buffer(output) => output.buf.write(buf),
+            BaseOutput::Buffer(output) => output.buf.write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         
         match self {
-            Output::File(output) => output.buf.flush(),
+            BaseOutput::File(output) => output.buf.flush(),
             #[cfg(test)]
-            Output::Buffer(output) => output.buf.flush(),
+            BaseOutput::Buffer(output) => output.buf.flush(),
         }
     }
 }
 
-impl From<File> for Output {
+impl From<File> for BaseOutput {
     fn from(value: File) -> Self {
-        Output::File(FileOutput {
+        BaseOutput::File(FileOutput {
             buf: BufWriter::new(value),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -97,21 +168,29 @@ impl From<File> for Output {
     }
 }
 
-impl Output {
+impl BaseOutput {
     pub fn has_errors(&self) -> bool {
         match self {
-            Output::File(output) => output.errors.len()>0,
+            BaseOutput::File(output) => output.errors.len()>0,
             #[cfg(test)]
-            Output::Buffer(output) => output.errors.len()>0,
+            BaseOutput::Buffer(output) => output.errors.len()>0,
         }
     }
     
 
     pub fn error(&mut self, error: GraphQLError) {
         match self {
-            Output::File(output) => output.errors.push(error),
+            BaseOutput::File(output) => output.errors.push(error),
             #[cfg(test)]
-            Output::Buffer(output) => output.errors.push(error),
+            BaseOutput::Buffer(output) => output.errors.push(error),
+        }
+    }
+
+    pub fn indent(&mut self) -> Output {
+        Output {
+            base: self,
+            indent: 0,
+            start_of_line: true,
         }
     }
 
@@ -126,9 +205,9 @@ impl Output {
 
 #[cfg(test)]
 
-impl Output {
-    pub fn new() -> Output {
-        Output::Buffer(BufOutput {
+impl BaseOutput {
+    pub fn new() -> BaseOutput {
+        BaseOutput::Buffer(TestOutput {
             buf: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -145,8 +224,8 @@ impl Output {
 
     fn expect_one(&self, error: bool) -> &GraphQLError {
         match self {
-            Output::File(output) => Self::do_check_one(error, &output.errors, &output.warnings),
-            Output::Buffer(output) => Self::do_check_one(error, &output.errors, &output.warnings),
+            BaseOutput::File(output) => Self::do_check_one(error, &output.errors, &output.warnings),
+            BaseOutput::Buffer(output) => Self::do_check_one(error, &output.errors, &output.warnings),
         }
     }
 
@@ -174,21 +253,24 @@ impl Output {
 
 pub struct Builder {
     model_name: String,
-    schemas: Vec<String>,
+    schema: Option<String>,
     queries: Vec<String>,
 }
 
 pub fn builder(model_name: impl Into<String>) -> Builder {
     Builder {
         model_name: model_name.into(),
-        schemas: Vec::new(),
+        schema: None,
         queries: Vec::new(),
     }
 }
 
 impl Builder {
     pub fn with_schema(&mut self, file_name: &str) -> &mut Builder {
-        self.schemas.push(file_name.to_string());
+        if let Some(schema) = &self.schema {
+            panic!("Multiple schemas defined ({} and {})", schema, file_name);
+        }
+        self.schema = Some(file_name.to_string());
 
         self
     }
@@ -213,8 +295,8 @@ impl Builder {
         let dest_path = Path::new(&out_dir).join(format!("{}.rs", self.model_name));
 
         let file = File::create(dest_path)?;
-        let mut out: Output = Output::from(file);
-
+        let mut base_out: BaseOutput = BaseOutput::from(file);
+        let mut out = base_out.indent();
         writeln!(out, 
             r#"
 use display_json::DisplayAsJsonPretty;
@@ -222,16 +304,19 @@ use serde::{{Deserialize, Serialize}};
 "#
         )?;
 
-        
-        for file_name in &self.schemas {
-            let schema: String = read_to_string(file_name)?;
+        let schema: String;
+        let schema = Rc::new(if let Some(file_name) = &self.schema {
+            schema = read_to_string(file_name)?;
                     
             // Tell Cargo that if the given file changes, to rerun this build script.
             println!("cargo::rerun-if-changed={}", file_name);
             writeln!(out, "// cargo::rerun-if-changed={}", file_name)?;
             
-            self.do_build_schema(&mut out, &schema)?;
+                self.do_build_schema(&mut out, &schema)?
         }
+        else {
+            panic!("No schema defined");
+        });
 
         for file_name in &self.queries {
             let query: String = read_to_string(file_name)?;
@@ -240,34 +325,56 @@ use serde::{{Deserialize, Serialize}};
             println!("cargo::rerun-if-changed={}", file_name);
             writeln!(out, "// cargo::rerun-if-changed={}", file_name)?;
             
-            self.do_build_query(&mut out, &query)?;
+            self.do_build_query(&mut out, &schema, &query)?;
         }
 
-        if out.has_errors() {
-            panic!("GraohQL Generation completed with errors: {}", out);
+        if base_out.has_errors() {
+            panic!("GraohQL Generation completed with errors: {}", base_out);
         }
         Ok(())
     }
 
-    fn do_build_schema(&self, out: &mut Output, schema: &str) -> Result<(), Box<dyn Error>> {
-        let ast = parse_schema::<String>(schema)?.to_owned();
+    fn do_build_schema<'p>(&'p self, out: &mut Output, schema: &'p str) -> Result<validated_model::Schema, Box<dyn Error>> {
+        let ast = parse_schema::<'p, String>(schema)?;
 
-        let mut model = GraphQlModel::new(out, ast.definitions)?;
+        let model = Rc::new(parsed_model::Schema::new(out, ast)?);
         
-        model.validate(out)?;
-        model.generate(out)?;
+        writeln!(out, "/* Parsed Model *********************************************************************************************")?;
+        model.print(out)?;
+        writeln!(out, " * *********************************************************************************************/")?;
 
-        Ok(())
+        let validated_model = validated_model::Schema::new(model, out)?;
+        // model.validate(out)?;
+
+        writeln!(out, "/* Validated Model *********************************************************************************************")?;
+        validated_model.print(out)?;
+        writeln!(out, " * *********************************************************************************************/")?;
+
+
+        validated_model.generate(out)?;
+
+        Ok(validated_model)
     }
 
-    fn do_build_query(&self, out: &mut Output, query: &str) -> Result<(), Box<dyn Error>> {
+    fn do_build_query(&self, out: &mut Output,  schema: &Rc<validated_model::Schema>, query: &str) -> Result<(), Box<dyn Error>> {
         let ast = parse_query::<String>(query)?.to_owned();
 
-        let mut model = GraphQLQuerySet::new(out, ast.definitions)?;
+        let model = parsed_model::Operations::new(out, schema, ast.definitions)?;
         
-        // model.validate(out)?;
-        // model.generate(out)?;
+        writeln!(out, "/* *********************************************************************************************")?;
+        model.print(out)?;
+        writeln!(out, " * *********************************************************************************************/")?;
 
+         let validated_model = validated_model::Operations::new(model, out, schema)?;
+
+
+
+        writeln!(out, "/* Validated Model *********************************************************************************************")?;
+        validated_model.print(out)?;
+        writeln!(out, " * *********************************************************************************************/")?;
+
+        validated_model.generate(out)?;
+        
         Ok(())
     }
 }
@@ -343,14 +450,15 @@ fn read_to_string(file_name: &str) -> Result<String, std::io::Error> {
 mod tests {
     use super::*;
 
-    fn test_schema(schema: &str) -> Result<Output, Box<dyn Error>> {
+    fn test_schema(schema: &str) -> Result<BaseOutput, Box<dyn Error>> {
 
-        let mut out = Output::new();
+        let mut base_out = BaseOutput::new();
+        let mut out = base_out.indent();
         let builder = builder("test");
         builder.do_build_schema(&mut out, schema)?;
         // let string = out.to_string();
 
-        Ok(out)
+        Ok(base_out)
     }
 
     #[test]
