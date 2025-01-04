@@ -7,6 +7,44 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug test_missing_mutation in library 'sparko_graphql_builder'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=sparko_graphql_builder"
+                ],
+                "filter": {
+                    "name": "sparko_graphql_builder",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'sparko_graphql_builder'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=sparko_graphql_builder"
+                ],
+                "filter": {
+                    "name": "sparko_graphql_builder",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug unit tests in library 'sparko_graphql_core'",
             "cargo": {
                 "args": [

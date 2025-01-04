@@ -524,7 +524,7 @@ impl Schema {
     }
 
 
-    fn get_object(out: &mut Output, name: &Option<String>, position: graphql_parser::Pos, defined_types: &HashMap<String, TypeDefinition>, missing_error: Option<String>) -> Option<Rc<Object>> {
+    fn get_object(out: &mut Output, name: &Option<String>, position: graphql_parser::Pos, defined_types: &HashMap<String, TypeDefinition>) -> Option<Rc<Object>> {
         if let Some(name) = name {
             if let Some(type_definition) = &defined_types.get(name) {
                 if let TypeDefinition::Object(object) = type_definition {
@@ -536,13 +536,31 @@ impl Schema {
                 }
             }
             else {
-                out.error(GraphQLError::MissingObjectError(position, format!("Expected object \"{}\" not found", name)));
+                out.error(GraphQLError::MissingObjectError(position, format!("Missing schema reference \"{}\"", name)));
                 None
             }
         }
         else {
-            if let Some(message) = missing_error { 
-                out.error(GraphQLError::MissingObjectError(position, message));
+            None
+        }
+    }
+
+
+
+
+    fn get_default_object(out: &mut Output, name: &str, defined_types: &HashMap<String, TypeDefinition>, missing_error: Option<GraphQLError>) -> Option<Rc<Object>> {
+        if let Some(type_definition) = &defined_types.get(name) {
+            if let TypeDefinition::Object(object) = type_definition {
+                Some(object.clone())
+            }
+            else {
+                out.error(GraphQLError::TypeMismatchError(graphql_parser::Pos { line: 0, column: 0 }, format!("Expected object \"{}\" but found {}", name, type_definition.type_name())));
+                None
+            }
+        }
+        else {
+            if let Some(errror) = missing_error { 
+                out.error(errror);
             }
             None
         }
@@ -598,24 +616,24 @@ impl Schema {
         // }
 
         let query = if let Some(schema_definition) = &parsed.schema_definition {
-            Self::get_object(out, &schema_definition.query, schema_definition.position, &defined_types, Some(format!("Schema declartion is present but no query is given")))
+            Self::get_object(out, &schema_definition.query, schema_definition.position, &defined_types)
         }
         else {
-            Self::get_object(out, &Some("Query".to_string()), graphql_parser::Pos { line: 0, column: 0 }, &defined_types, Some(format!("Default query \"Query\" not found")))
+            Self::get_default_object(out, "Query", &defined_types, Some(GraphQLError::NoQueryDefinition))
         };
 
         let mutation = if let Some(schema_definition) = &parsed.schema_definition {
-            Self::get_object(out, &schema_definition.mutation, schema_definition.position, &defined_types, None)
+            Self::get_object(out, &schema_definition.mutation, schema_definition.position, &defined_types) 
         }
         else {
-            Self::get_object(out, &Some("Mutation".to_string()), graphql_parser::Pos { line: 0, column: 0 }, &defined_types, None)
+            Self::get_default_object(out, "Mutation", &defined_types, None)
         };
         
         let subscription = if let Some(schema_definition) = &parsed.schema_definition {
-            Self::get_object(out, &schema_definition.subscription, schema_definition.position, &defined_types, None)
+            Self::get_object(out, &schema_definition.subscription, schema_definition.position, &defined_types)
         }
         else {
-            Self::get_object(out, &Some("Subscription".to_string()), graphql_parser::Pos { line: 0, column: 0 }, &defined_types, None)
+            Self::get_default_object(out, "Subscription", &defined_types, None)
         };
         
         // let query = if let Some(schema_definition) = &parsed.schema_definition {

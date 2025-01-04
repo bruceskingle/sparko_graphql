@@ -214,7 +214,7 @@ impl BaseOutput {
         })
     }
 
-    pub fn expect_one_error(&self) -> &GraphQLError {
+    pub fn expect_one_error(&self) -> Option<&GraphQLError> {
         self.expect_one(true)
     }
 
@@ -222,7 +222,7 @@ impl BaseOutput {
     //     self.expect_one(false)
     // }
 
-    fn expect_one(&self, error: bool) -> &GraphQLError {
+    fn expect_one(&self, error: bool) -> Option<&GraphQLError> {
         match self {
             BaseOutput::File(output) => Self::do_check_one(error, &output.errors, &output.warnings),
             BaseOutput::Buffer(output) => Self::do_check_one(error, &output.errors, &output.warnings),
@@ -230,22 +230,22 @@ impl BaseOutput {
     }
 
     fn do_check_one<'a>(error: bool, errors: &'a Vec<GraphQLError>,
-        warnings: &'a Vec<GraphQLError>) -> &'a GraphQLError {
+        warnings: &'a Vec<GraphQLError>) -> Option<&'a GraphQLError> {
         if error {
             if warnings.len() == 0 && errors.len() == 1 {
-                errors.get(0).unwrap()
+                errors.get(0)
             }
             else {
-                panic!("Expected 1 error")
+                None
             }
         }
         else {
 
             if warnings.len() == 1 && errors.len() == 0 {
-                warnings.get(0).unwrap()
+                warnings.get(0)
             }
             else {
-                panic!("Expected 1 warning")
+                None
             }
         }
     }
@@ -335,7 +335,14 @@ use serde::{{Deserialize, Serialize}};
     }
 
     fn do_build_schema<'p>(&'p self, out: &mut Output, schema: &'p str) -> Result<validated_model::Schema, Box<dyn Error>> {
-        let ast = parse_schema::<'p, String>(schema)?;
+        let ast = match parse_schema::<'p, String>(schema) {
+            Ok(ast) => ast,
+            Err(error) => {
+                writeln!(out, "ERROR: {}", error)?;
+                return Err(Box::new(error));
+            },
+        };
+
 
         let model = Rc::new(parsed_model::Schema::new(out, ast)?);
         
@@ -450,62 +457,51 @@ fn read_to_string(file_name: &str) -> Result<String, std::io::Error> {
 mod tests {
     use super::*;
 
-    fn test_schema(schema: &str) -> Result<BaseOutput, Box<dyn Error>> {
+    fn test_schema(schema: &str) -> BaseOutput {
 
         let mut base_out = BaseOutput::new();
         let mut out = base_out.indent();
         let builder = builder("test");
-        builder.do_build_schema(&mut out, schema)?;
+        let _ = builder.do_build_schema(&mut out, schema);
+        
+        base_out
         // let string = out.to_string();
 
-        Ok(base_out)
+        
     }
 
     #[test]
     fn test_missing_interface() {
-        match test_schema(r#"
+        let out = test_schema(r#"
 type Query implements Foo {
     name: String,
 }
-"#) 
-        {
-            Ok(out)  => {
-                println!("{}", out);
-                if let GraphQLError::MissingInterfaceError(..) = out.expect_one_error() {
-                    return;
-                }
-            },
-            Err(error) => {
-                println!("{}", error);
-            },
+"#);
+                
+        if let Some(GraphQLError::MissingInterfaceError(..)) = out.expect_one_error() {
+            return;
         }
+        println!("{}", out);
         panic!("Expected missing interface");
     }
 
     #[test]
     fn test_missing_query() {
-        match test_schema(r#"
+        let out = test_schema(r#"
 type Object {
     name: String,
 }
-"#) 
-        {
-            Ok(out)  => {
-                println!("{}", out);
-                if let GraphQLError::NoQueryDefinition = out.expect_one_error() {
-                    return;
-                }
-            },
-            Err(error) => {
-                println!("{}", error);
-            },
+"#);
+        if let Some(GraphQLError::NoQueryDefinition) = out.expect_one_error() {
+            return;
         }
-        panic!("Expected missing interface");
+        println!("{}", out);
+        panic!("Expected NoQueryDefinition");
     }
 
     #[test]
     fn test_missing_mutation() {
-        match test_schema(r#"
+        let out = test_schema(r#"
 schema {
     query: Object,
     mutation: Missing
@@ -513,24 +509,17 @@ schema {
 type Object {
     name: String,
 }
-"#) 
-        {
-            Ok(out)  => {
-                println!("{}", out);
-                if let GraphQLError::MissingObjectError(..) = out.expect_one_error() {
-                    return;
-                }
-            },
-            Err(error) => {
-                println!("{}", error);
-            },
+"#);
+        if let Some(GraphQLError::MissingObjectError(..)) = out.expect_one_error() {
+            return;
         }
-        panic!("Expected missing interface");
+        println!("{}", out);
+        panic!("Expected MissingObjectError");
     }
 
     #[test]
     fn test_missing_subscription() {
-        match test_schema(r#"
+        let out = test_schema(r#"
 schema {
     query: Object,
     subscription: Missing
@@ -538,20 +527,25 @@ schema {
 type Object {
     name: String,
 }
-"#) 
-        {
-            Ok(out)  => {
-                println!("{}", out);
-                if let GraphQLError::MissingObjectError(..) = out.expect_one_error() {
-                    return;
-                }
-            },
-            Err(error) => {
-                println!("{}", error);
-            },
+"#);
+        if let Some(GraphQLError::MissingObjectError(..)) = out.expect_one_error() {
+            return;
         }
-        panic!("Expected missing interface");
+        println!("{}", out);
+        panic!("Expected MissingObjectError");
     }
+
+
+
+
+
+
+
+
+
+
+
+
 
 //     #[test]
 //     fn test_overlapping_interface() {

@@ -1,6 +1,6 @@
 query GetLuke {
   oneOfEverything(id: "cGVvcGxlOjE=") {
-    date
+    date_time?
   	string
   }
 }
