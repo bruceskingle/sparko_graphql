@@ -29,10 +29,14 @@ use graphql_parser::Pos;
 
 #[derive(Debug)]
 pub enum GraphQLError {
-    SyntaxError(graphql_parser::schema::ParseError),
+    InternalError(Box<dyn std::error::Error>),
+    SchemaSyntaxError(graphql_parser::schema::ParseError),
+    QuerySyntaxError(graphql_parser::query::ParseError),
     UndefinedTypeError(Pos, String),
     TypeMismatchError(Pos, String),
     MissingInterfaceError(Pos, String),
+    MissingFieldError(Pos, String),
+    OptionalNonNullFieldError(Pos, String),
     MissingObjectError(Pos, String),
     InvalidQueryError(Pos, String),
     UnsupportedError(Pos, String),
@@ -51,8 +55,20 @@ impl StdError for GraphQLError {
 
 }
 
+impl From<std::io::Error> for GraphQLError {
+    fn from(err: std::io::Error) -> Self {
+        GraphQLError::InternalError(Box::new(err))
+    }
+}
+
 impl From<graphql_parser::schema::ParseError> for GraphQLError {
     fn from(err: graphql_parser::schema::ParseError) -> GraphQLError {
-        GraphQLError::SyntaxError(err)
+        GraphQLError::SchemaSyntaxError(err)
+    }
+}
+
+impl From<graphql_parser::query::ParseError> for GraphQLError {
+    fn from(err: graphql_parser::query::ParseError) -> GraphQLError {
+        GraphQLError::QuerySyntaxError(err)
     }
 }

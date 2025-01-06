@@ -1,7 +1,6 @@
 use error::GraphQLError;
 use graphql_parser::parse_query;
 use graphql_parser::schema::parse_schema;
-use std::error::Error;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::BufWriter;
@@ -193,7 +192,7 @@ impl BaseOutput {
             start_of_line: true,
         }
     }
-
+    
     // pub fn warning(&mut self, error: GraphQLError) {
     //     match self {
     //         Output::File(output) => output.warnings.push(error),
@@ -212,6 +211,21 @@ impl BaseOutput {
             errors: Vec::new(),
             warnings: Vec::new(),
         })
+    }
+
+    pub fn expect_ok(&self) {
+        match self {
+            BaseOutput::File(output) => Self::do_check_ok(self, &output.errors, &output.warnings),
+            BaseOutput::Buffer(output) => Self::do_check_ok(self, &output.errors, &output.warnings),
+        }
+    }
+    
+    fn do_check_ok<'a>(self: &BaseOutput, errors: &'a Vec<GraphQLError>,
+        warnings: &'a Vec<GraphQLError>) {
+        if warnings.len() != 0 || errors.len() != 0 {
+            println!("{}", self);
+            panic!("Expected OK");
+        }
     }
 
     pub fn expect_one_error(&self) -> Option<&GraphQLError> {
@@ -288,7 +302,7 @@ impl Builder {
         }
     }
     
-    fn do_build(&mut self) -> Result<(), Box<dyn Error>> {
+    fn do_build(&mut self) -> Result<(), GraphQLError> {
             
 
         let out_dir = env::var_os("OUT_DIR").unwrap();
@@ -305,7 +319,7 @@ use serde::{{Deserialize, Serialize}};
         )?;
 
         let schema: String;
-        let schema = Rc::new(if let Some(file_name) = &self.schema {
+        let schema = if let Some(file_name) = &self.schema {
             schema = read_to_string(file_name)?;
                     
             // Tell Cargo that if the given file changes, to rerun this build script.
@@ -316,7 +330,7 @@ use serde::{{Deserialize, Serialize}};
         }
         else {
             panic!("No schema defined");
-        });
+        };
 
         for file_name in &self.queries {
             let query: String = read_to_string(file_name)?;
@@ -334,14 +348,15 @@ use serde::{{Deserialize, Serialize}};
         Ok(())
     }
 
-    fn do_build_schema<'p>(&'p self, out: &mut Output, schema: &'p str) -> Result<validated_model::Schema, Box<dyn Error>> {
-        let ast = match parse_schema::<'p, String>(schema) {
-            Ok(ast) => ast,
-            Err(error) => {
-                writeln!(out, "ERROR: {}", error)?;
-                return Err(Box::new(error));
-            },
-        };
+    fn do_build_schema<'p>(&'p self, out: &mut Output, schema: &'p str) -> Result<Rc<validated_model::Schema>, GraphQLError> {
+        let ast = parse_schema::<'p, String>(schema)?;
+        // let ast = match parse_schema::<'p, String>(schema) {
+        //     Ok(ast) => ast,
+        //     Err(error) => {
+        //         writeln!(out, "ERROR: {}", error)?;
+        //         return Err(Box::new(error));
+        //     },
+        // };
 
 
         let model = Rc::new(parsed_model::Schema::new(out, ast)?);
@@ -360,10 +375,10 @@ use serde::{{Deserialize, Serialize}};
 
         validated_model.generate(out)?;
 
-        Ok(validated_model)
+        Ok(Rc::new(validated_model))
     }
 
-    fn do_build_query(&self, out: &mut Output,  schema: &Rc<validated_model::Schema>, query: &str) -> Result<(), Box<dyn Error>> {
+    fn do_build_query(&self, out: &mut Output,  schema: &Rc<validated_model::Schema>, query: &str) -> Result<(), GraphQLError> {
         let ast = parse_query::<String>(query)?.to_owned();
 
         let model = parsed_model::Operations::new(out, schema, ast.definitions)?;
@@ -470,6 +485,17 @@ mod tests {
         
     }
 
+    fn test_query(schema: &str, query: &str) -> BaseOutput {
+
+        let mut base_out = BaseOutput::new();
+        let mut out = base_out.indent();
+        let builder = builder("test");
+        let schema = builder.do_build_schema(&mut out, schema).unwrap();
+        let _q = builder.do_build_query(&mut out, &schema, query);
+        
+        base_out
+    }
+
     #[test]
     fn test_missing_interface() {
         let out = test_schema(r#"
@@ -533,6 +559,62 @@ type Object {
         }
         println!("{}", out);
         panic!("Expected MissingObjectError");
+    }
+
+    const PERSON_SCHEMA: &'static str = r#"
+type Query {
+    person: Person
+}
+type Person {
+    name: String!
+    dateOfBirth: String
+}
+"#;
+
+    #[test]
+    fn test_simple_query() {
+        let out = test_query(PERSON_SCHEMA, 
+r#"query GetPerson {
+  person {
+    name
+  }
+}"#);
+        out.expect_ok();
+    }
+
+    #[test]
+    fn test_missing_attribute() {
+        let out = test_query(PERSON_SCHEMA, 
+r#"query GetPerson {
+  xperson {
+    name?
+    dateOfBirth?
+  }
+}"#);
+        
+        
+        if let Some(GraphQLError::MissingFieldError(..)) = out.expect_one_error() {
+            return;
+        }
+        println!("{}", out);
+        panic!("Expected MissingFieldError");
+    }
+
+    #[test]
+    fn test_missing_attribute2() {
+        let out = test_query(PERSON_SCHEMA, 
+r#"query GetPerson {
+  person {
+    xname
+  }
+}"#);
+        
+        
+        if let Some(GraphQLError::MissingFieldError(..)) = out.expect_one_error() {
+            return;
+        }
+        println!("{}", out);
+        panic!("Expected MissingFieldError");
     }
 
 

@@ -294,7 +294,7 @@ impl Enum {
         writeln!(out, "}}")
     }
 
-    pub fn new(out: &mut Output, enum_type: graphql_parser::schema::EnumType<'_, String>) -> Result<Enum, Box<dyn Error>> {
+    pub fn new(out: &mut Output, enum_type: graphql_parser::schema::EnumType<'_, String>) -> Result<Enum, GraphQLError> {
         let mut model = Enum {
             position: enum_type.position,
             name: enum_type.name.clone(),
@@ -392,7 +392,7 @@ impl Object {
         
     }
 
-    pub fn new(out: &mut Output, object_type: graphql_parser::schema::ObjectType<'_, String>) -> Result<Object, Box<dyn Error>> {
+    pub fn new(out: &mut Output, object_type: graphql_parser::schema::ObjectType<'_, String>) -> Result<Object, GraphQLError> {
         let mut field_names = Vec::new();
         let mut fields = HashMap::new();
 
@@ -458,7 +458,7 @@ impl Interface {
         writeln!(out, "}}")
     }
     
-    pub fn new(out: &mut Output, interface_type: graphql_parser::schema::InterfaceType<'_, String>) -> Result<Interface, Box<dyn Error>> {
+    pub fn new(out: &mut Output, interface_type: graphql_parser::schema::InterfaceType<'_, String>) -> Result<Interface, GraphQLError> {
         let mut field_names = Vec::new();
         let mut fields = HashMap::new();
 
@@ -615,7 +615,7 @@ impl Schema {
     }
 
     pub fn new(out: &mut Output,
-        ast: graphql_parser::schema::Document<'_, String>) -> Result<Schema, Box<dyn Error>> {
+        ast: graphql_parser::schema::Document<'_, String>) -> Result<Schema, GraphQLError> {
         let mut model = Schema {
             // ast,
             named_types: HashMap::new(),
@@ -1161,7 +1161,7 @@ impl Query {
         })
     }
     
-    pub fn validate(&mut self, out: &mut Output) -> Result<(), Box<dyn Error>> {
+    pub fn validate(&mut self, out: &mut Output) -> Result<(), GraphQLError> {
         Ok(())
     }
 
@@ -1237,7 +1237,7 @@ pub struct Operations {
 impl Operations {
     pub fn new(out: &mut Output,
         schema: &validated_model::Schema,
-        definitions: Vec<graphql_parser::query::Definition<'_, String>>) -> Result<Operations, Box<dyn Error>> {
+        definitions: Vec<graphql_parser::query::Definition<'_, String>>) -> Result<Operations, GraphQLError> {
 
         let mut queries = Vec::new();
 

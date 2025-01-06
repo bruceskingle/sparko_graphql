@@ -12,7 +12,7 @@ use crate::{error::GraphQLError, parsed_model, Output};
 #[derive(Debug)]
 pub enum TypeDefinition {
 //     Enum(Rc<Enum>),
-//     Union(Rc<Union>),
+    Union(Rc<Union>),
     Object(Rc<Object>),
     Interface(Rc<Interface>),
 //     Scalar(Rc<TypeDef>),
@@ -21,18 +21,18 @@ pub enum TypeDefinition {
 impl TypeDefinition {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         match self {
-            // DefinedType::Enum(content) => content.print(out),
-            // DefinedType::Union(content) => content.print(out),
+            // TypeDefinition::Enum(content) => content.print(out),
+            TypeDefinition::Union(content) => content.print(out),
             TypeDefinition::Object(content) => content.print(out),
             TypeDefinition::Interface(content) => content.print(out),
-            // DefinedType::Scalar(content) => content.print(out),
+            // TypeDefinition::Scalar(content) => content.print(out),
         }
     }
 
     pub fn type_name(&self) -> &str {
         match self {
             // TypeDefinition::Enum(_) => "enum",
-            // TypeDefinition::Union(union) => "union",
+            TypeDefinition::Union(union) => "union",
             TypeDefinition::Object(object) => "object",
             TypeDefinition::Interface(interface) => "interface",
             // TypeDefinition::Scalar(type_def) => "scalar",
@@ -61,8 +61,20 @@ impl TypeDefinition {
     //     }
     // }
 
-    pub fn generate(&self, out: &mut Output) -> Result<(), Box<dyn Error>> {
+    pub fn generate(&self, out: &mut Output) -> Result<(), GraphQLError> {
         match self {
+            TypeDefinition::Union(union) => {
+                writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                writeln!(out, "#[serde(rename = \"{}\")]", &union.parsed.name)?;
+                writeln!(out, "pub struct {} {{", to_pascal_case(&union.parsed.name))?;
+        
+                for (name, field) in &union.fields {
+                    writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
+                    writeln!(out, "    {}_: {},", to_snake_case(&field.name), field.rust_type())?;
+                }
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+            },
             TypeDefinition::Object(object_model) => {
                 writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
                 writeln!(out, "#[serde(rename = \"{}\")]", &object_model.parsed.name)?;
@@ -290,6 +302,65 @@ impl Field {
 }
 
 #[derive(Debug)]
+pub struct Union {
+    pub parsed: Rc<parsed_model::Union>,
+    pub fields: HashMap<String, Field>,
+}
+
+impl Union {
+
+    pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
+        writeln!(out, "validated_model::Union {{")?;
+        {
+            let mut out = out.indent();
+
+            writeln!(out, "fields {{")?;
+            {
+                let mut out = out.indent();
+
+                for (name, field) in &self.fields {
+                    field.print(&mut out)?;
+                }
+            }
+            writeln!(out, "}}")?;
+
+            writeln!(out, "parsed {{")?;
+            {
+                self.parsed.print(&mut out.indent())?;
+            }
+            writeln!(out, "}}")?;
+        }
+        writeln!(out, "}}")
+    }
+    
+    fn new(out: &mut Output, parsed: Rc<parsed_model::Union>, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Result<TypeDefinition, GraphQLError> {
+        let mut fields = HashMap::new();
+
+        for interface_name in &parsed.implements {
+            if let Some(defined_type) = named_types.get(interface_name) {
+                if let parsed_model::TypeDefinition::Interface(interface) = defined_type {
+                    let mut ok = true;
+                    for (name, field) in &interface.fields {
+                        fields.insert(name.clone(), Field::new(out, field, &named_types));
+                    }
+                }
+                else {
+                    out.error(GraphQLError::TypeMismatchError(parsed.position, format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
+                }
+            }
+            else {
+                out.error(GraphQLError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
+            };
+        }
+
+        Ok(TypeDefinition::Union(Rc::new(Union {
+            parsed,
+            fields,
+        })))
+    }
+}
+
+#[derive(Debug)]
 pub struct Object {
     pub parsed: Rc<parsed_model::Object>,
     pub fully_implements: Vec<Rc<parsed_model::Interface>>,
@@ -312,11 +383,27 @@ impl Object {
                 }
             }
             writeln!(out, "}}")?;
+
+            writeln!(out, "fields {{")?;
+            {
+                let mut out = out.indent();
+
+                for (name, field) in &self.fields {
+                    field.print(&mut out)?;
+                }
+            }
+            writeln!(out, "}}")?;
+
+            writeln!(out, "parsed {{")?;
+            {
+                self.parsed.print(&mut out.indent())?;
+            }
+            writeln!(out, "}}")?;
         }
         writeln!(out, "}}")
     }
     
-    fn new(out: &mut Output, parsed: Rc<parsed_model::Object>, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Result<TypeDefinition, Box<dyn Error>> {
+    fn new(out: &mut Output, parsed: Rc<parsed_model::Object>, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Result<TypeDefinition, GraphQLError> {
         let mut fully_implements = Vec::new();
 
         for interface_name in &parsed.implements {
@@ -383,7 +470,7 @@ impl Interface {
         writeln!(out, "}}")
     }
 
-    pub fn new( out: &mut Output, parsed: Rc<parsed_model::Interface>, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Result<TypeDefinition, Box<dyn Error>> {
+    pub fn new( out: &mut Output, parsed: Rc<parsed_model::Interface>, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Result<TypeDefinition, GraphQLError> {
         let mut implemented_by = Vec::new();
 
         for (name, defined_type) in named_types {
@@ -545,7 +632,17 @@ impl Schema {
         }
     }
 
-
+    fn get_known_union(&self, name: &str) -> &Rc<Union> {
+        if let Some(type_definition) = self.defined_types.get(name) {
+            match type_definition {
+                TypeDefinition::Union(union) => union,
+                _ => panic!("Expected union {} but got {}", name, type_definition.type_name()),
+            }
+        }
+        else {
+            panic!("Expected union {} but found nothing", name)
+        }
+    }
 
 
     fn get_default_object(out: &mut Output, name: &str, defined_types: &HashMap<String, TypeDefinition>, missing_error: Option<GraphQLError>) -> Option<Rc<Object>> {
@@ -566,7 +663,7 @@ impl Schema {
         }
     }
 
-    pub fn new(parsed: Rc<parsed_model::Schema>, out: &mut Output) -> Result<Schema, Box<dyn Error>> {
+    pub fn new(parsed: Rc<parsed_model::Schema>, out: &mut Output) -> Result<Schema, GraphQLError> {
         let mut defined_types: HashMap<String, TypeDefinition> = HashMap::new();
         
         
@@ -759,7 +856,7 @@ impl Schema {
     }
 
 
-    pub fn generate(&self, out: &mut Output) -> Result<(), Box<dyn Error>> {
+    pub fn generate(&self, out: &mut Output) -> Result<(), GraphQLError> {
         for (name, defined_type) in &self.defined_types {
             defined_type.generate(out)?;
         }
@@ -923,7 +1020,7 @@ pub struct VariableDefinition {
 }
 
 impl VariableDefinition {
-    pub fn new(parsed: Rc<parsed_model::VariableDefinition>, out: &mut Output) -> Result<VariableDefinition, Box<dyn Error>> {
+    pub fn new(parsed: Rc<parsed_model::VariableDefinition>, out: &mut Output) -> Result<VariableDefinition, GraphQLError> {
 
 
         Ok(VariableDefinition {
@@ -960,7 +1057,7 @@ impl VariableDefinition {
         writeln!(out, "VariableDefinition is empty")
     }
     
-    pub fn generate(&mut self, out: &mut Output) -> Result<(), Box<dyn Error>> {
+    pub fn generate(&mut self, out: &mut Output) -> Result<(), GraphQLError> {
         // if !self.variables.is_empty() {
 
         //     writeln!(out, "struct {} {{", &to_pascal_case(&format!("{}Variables", &self.name)))?;
@@ -986,12 +1083,19 @@ pub enum Selection {
 } 
 
 impl Selection {
-    pub fn new(selection: &parsed_model::Selection, schema: &Rc<Schema>, context: &Rc<Object>, out: &mut Output) -> Result<Selection, Box<dyn Error>> {
+    pub fn new(selection: &parsed_model::Selection, schema: &Rc<Schema>, context: &Rc<Object>, out: &mut Output) -> Result<Selection, GraphQLError> {
         Ok(match selection {
-            parsed_model::Selection::Field(selection_field) => Selection::Field(SelectionField::new(selection_field.clone(), schema, out)?),
-            // graphql_parser::query::Selection::OptionalField(field) => 
-            //     Selection::Field(SelectionField::new(out, *field, true)?),
-            // graphql_parser::query::Selection::Field(field) => Selection::Field(SelectionField::new(out, field, false)?),
+            parsed_model::Selection::Field(selection_field) => {
+
+            writeln!(out, "/* Selection Field:" );
+            selection_field.print(out);
+            writeln!(out, "Context:" );
+            context.print(out);
+            writeln!(out, "*/" );
+
+                Selection::Field(SelectionField::new(selection_field.clone(), schema, context, out)?)
+            },
+            
             // graphql_parser::query::Selection::FragmentSpread(fragment_spread) => todo!(),
             // graphql_parser::query::Selection::InlineFragment(inline_fragment) => todo!(),
         })
@@ -1019,8 +1123,36 @@ pub struct SelectionField {
 }
 
 impl SelectionField {
-    pub fn new(parsed: Rc<parsed_model::SelectionField>, schema: &Rc<Schema>, out: &mut Output) -> Result<SelectionField, Box<dyn Error>> {
+    pub fn new(parsed: Rc<parsed_model::SelectionField>, schema: &Rc<Schema>, context: &Rc<Object>, out: &mut Output) -> Result<SelectionField, GraphQLError> {
+        let selections = Vec::new();
 
+        if let Some(field) = context.fields.get(&parsed.name) {
+            if parsed.optional && field.nonnull {
+                out.error(GraphQLError::OptionalNonNullFieldError(parsed.position,parsed.name.clone()));
+            }
+
+            let fields = match field.ty {
+                Type::Int => None,
+                Type::Float => None,
+                Type::String => None,
+                Type::Boolean => None,
+                Type::ID => None,
+                Type::Enum(_) => None,
+                Type::Union(union) => {
+                    let validated_union = schema.get_known_union(&union.name);
+                    Some(validated_union.fields)
+                },
+                Type::Object(object) => Some(&object.fields),
+                Type::Interface(interface) => Some(&interface.fields),
+                Type::Scalar(type_def) => None,
+            }
+            for selection in &parsed.selections {
+                selections.push(Selection::new(selection,schema, field, out)?);
+            }
+        }
+        else {
+            out.error(GraphQLError::MissingFieldError(parsed.position,parsed.name.clone()));
+        }
 
         Ok(SelectionField {
             parsed,
@@ -1062,7 +1194,7 @@ impl SelectionField {
         writeln!(out, "}}")
     }
     
-    pub fn generate(&mut self, out: &mut Output) -> Result<(), Box<dyn Error>> {
+    pub fn generate(&mut self, out: &mut Output) -> Result<(), GraphQLError> {
         // if !self.variables.is_empty() {
 
         //     writeln!(out, "struct {} {{", &to_pascal_case(&format!("{}Variables", &self.name)))?;
@@ -1088,7 +1220,7 @@ pub struct Query {
 }
 
 impl Query {
-    pub fn new(parsed: parsed_model::Query, schema:  &Rc<Schema>, out: &mut Output) ->  Result<Query, Box<dyn Error>> {
+    pub fn new(parsed: parsed_model::Query, schema:  &Rc<Schema>, out: &mut Output) ->  Result<Query, GraphQLError> {
         let mut variables = HashMap::new();
 
         for variable in &parsed.variables {
@@ -1137,7 +1269,7 @@ impl Query {
         writeln!(out, "}}")
     }
     
-    pub fn generate(&self, out: &mut Output) -> Result<(), Box<dyn Error>> {
+    pub fn generate(&self, out: &mut Output) -> Result<(), GraphQLError> {
         // if !self.variables.is_empty() {
 
         //     writeln!(out, "struct {} {{", &to_pascal_case(&format!("{}Variables", &self.name)))?;
@@ -1160,7 +1292,7 @@ pub struct Operations {
 }
 
 impl Operations {
-    pub fn new(parsed: parsed_model::Operations, out: &mut Output, schema: &Rc<Schema>) ->  Result<Operations, Box<dyn Error>>{
+    pub fn new(parsed: parsed_model::Operations, out: &mut Output, schema: &Rc<Schema>) ->  Result<Operations, GraphQLError>{
         let mut queries = Vec::new();
 
         for query in parsed.queries {
@@ -1189,7 +1321,7 @@ impl Operations {
         writeln!(out, "}}")
     }
 
-    pub fn generate(&self, out: &mut Output) -> Result<(), Box<dyn Error>> {
+    pub fn generate(&self, out: &mut Output) -> Result<(), GraphQLError> {
         for query in &self.queries {
             query.generate(out)?;
         }
