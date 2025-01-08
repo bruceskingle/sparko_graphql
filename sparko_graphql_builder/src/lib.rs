@@ -14,7 +14,45 @@ mod parsed_model;
 mod validated_model;
 mod error;
 
-struct Output<'a> {
+
+
+// mod validated_model {
+//     pub struct Schema {}
+
+//     impl Schema {
+//         pub(crate) fn new(model: crate::parsed_model::Schema, out: &mut crate::Output<'_>) -> Result<Self, crate::error::GraphQLError> {
+//             Ok(Self {  })
+//         }
+        
+//         pub(crate) fn print(&self, out: &mut crate::Output<'_>) -> Result<(), crate::error::GraphQLError> {
+//             Ok(())
+//         }
+        
+//         pub(crate) fn generate(&self, out: &mut crate::Output<'_>) -> Result<(), crate::error::GraphQLError> {
+//             Ok(())
+//         }
+//     }
+
+//     pub struct Operations {}
+
+//     impl Operations {
+
+        
+//         pub(crate) fn print(&self, out: &mut crate::Output<'_>) -> Result<(), crate::error::GraphQLError> {
+//             Ok(())
+//         }
+        
+//         pub(crate) fn generate(&self, out: &mut crate::Output<'_>) -> Result<(), crate::error::GraphQLError> {
+//             Ok(())
+//         }
+        
+//         pub(crate) fn new(model: crate::parsed_model::Operations, out: &mut crate::Output<'_>, schema: &Schema) -> Result<Self, crate::error::GraphQLError> {
+//             Ok(Self {  })
+//         }
+//     }
+// }
+
+pub struct Output<'a> {
     base: &'a mut BaseOutput,
     indent: usize,
     start_of_line: bool,
@@ -359,11 +397,42 @@ use serde::{{Deserialize, Serialize}};
         // };
 
 
-        let model = Rc::new(parsed_model::Schema::new(out, ast)?);
+        let model = parsed_model::Schema::new(out, ast)?;
         
         writeln!(out, "/* Parsed Model *********************************************************************************************")?;
         model.print(out)?;
         writeln!(out, " * *********************************************************************************************/")?;
+
+
+
+
+//         writeln!(out, "/* TEST *********************************************************************************************")?;
+
+//         let rc = std::rc::Rc::new(model);
+//         let mut names = Vec::new();
+        
+
+//         for defined_type in rc.named_types.values() {
+//             if let parsed_model::TypeDefinition::Interface(interface) = defined_type {
+//                 names.push(interface.name.clone());
+//             }
+//         }
+
+//         let list = parsed_model::InterfaceReferenceList {
+//             schema: rc.clone(),
+//             names,
+//         };
+
+//         for interface in &list {
+//             interface.print(out)?;
+//         }
+
+//         writeln!(out, " * *********************************************************************************************/")?;
+
+
+// panic!("TEST");
+
+
 
         let validated_model = validated_model::Schema::new(model, out)?;
         // model.validate(out)?;
@@ -375,13 +444,13 @@ use serde::{{Deserialize, Serialize}};
 
         validated_model.generate(out)?;
 
-        Ok(Rc::new(validated_model))
+        Ok(validated_model)
     }
 
-    fn do_build_query(&self, out: &mut Output,  schema: &Rc<validated_model::Schema>, query: &str) -> Result<(), GraphQLError> {
+    fn do_build_query(&self, out: &mut Output,  schema: &validated_model::Schema, query: &str) -> Result<(), GraphQLError> {
         let ast = parse_query::<String>(query)?.to_owned();
 
-        let model = parsed_model::Operations::new(out, schema, ast.definitions)?;
+        let model = parsed_model::Operations::new(out, schema, ast.definitions);
         
         writeln!(out, "/* *********************************************************************************************")?;
         model.print(out)?;
