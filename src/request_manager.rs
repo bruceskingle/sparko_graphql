@@ -195,15 +195,15 @@ impl RequestManager {
 
     }
 
-    pub async fn new_call<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(&self, request_type: &str, request_name: &str, query_name: &str, query: Q, token: Option<&Arc<String>>) 
+    pub async fn new_call<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>) 
     -> Result<R, Box<dyn std::error::Error>> {
 
         // println!("NEW query {}", &query);
 
         let payload = NewRequest {
             query: Q::get_query(),
-            variables: query.get_variables(),
-            operation_name: request_name,
+            variables: query.get_variables()?,
+            operation_name: Q::get_request_name(),
         };
         // let serialized = serde_json::to_string(&payload).unwrap();
 
@@ -231,7 +231,7 @@ impl RequestManager {
             println!("{}",Q::get_query());
             
             Self::report_error("Variables");
-            println!("{}", query.get_variables());
+            println!("{}", query.get_variables()?);
             
             Self::report_error("Payload");
             println!("{}",  &serde_json::to_string(&payload).unwrap());

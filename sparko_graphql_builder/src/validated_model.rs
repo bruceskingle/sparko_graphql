@@ -282,17 +282,12 @@ impl Type {
             base_type
         };
 
-        let type3 = if nonnull || !maybe_optional {
+        if nonnull || !maybe_optional {
             type2
         }
         else {
             format!("Option<{}>", type2)
-        };
-
-        format!("{} /* alias={} */", type3, match alias {
-            Some(alias) => alias,
-            None => "None",
-        })
+        }
     }
      
 }
@@ -1787,10 +1782,31 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
 "#
             )?;
 
+
+            if !self.variables.is_empty() {
+                writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                writeln!(out, "pub struct Variables {{")?;
+
+                {
+                    let mut out = out.indent();
+                
+                    for (name, field) in &self.variables {
+                        writeln!(out, "#[serde(rename = \"{}\")]", &field.name)?;
+                        writeln!(out, "{}_: {},", to_snake_case(&name), field.rust_type(schema, true, &None))?;
+                    }
+                }
+
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+            }
+
             writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-            writeln!(out, "#[serde(rename = \"{}\")]", self.name)?;
+            // writeln!(out, "#[serde(rename = \"{}\")]", self.name)?;
             writeln!(out, "pub struct Query {{")?;
 
+            if !self.variables.is_empty() {
+                writeln!(out.indent(), "variables: Variables,")?;
+            }
             writeln!(out, "}}")?;
             writeln!(out, "")?;
 
@@ -1798,7 +1814,23 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
             {
                 let mut out = out.indent();
 
-                writeln!(out, "const QUERY: &str = r#\"query {} {{", self.name)?;
+                writeln!(out, "const REQUEST_NAME: &str = \"{}\";", self.name)?;
+
+                if self.variables.is_empty() {
+                    writeln!(out, "const QUERY: &str = r#\"query {} {{", self.name)?;
+                }
+                else {
+                    writeln!(out, "const QUERY: &str = r#\"query {}(", self.name)?;
+                    {
+                        let mut out = out.indent();
+                    
+                        for (name, field) in &self.variables {
+                            writeln!(out, "${}: {},", to_snake_case(&name), field.ty)?;
+                        }
+                    }
+                    writeln!(out, ") {{")?;
+                }
+                
                 {
                     let mut out = out.indent();
     
@@ -1807,6 +1839,48 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                     }
                 }
                 writeln!(out, "}}\"#;")?;
+                writeln!(out, "")?;
+
+                if self.variables.is_empty() {
+                    writeln!(out, "pub fn new() -> Query {{")?;
+                    writeln!(out.indent(), "Query {{}}")?;
+                    writeln!(out, "}}")?;
+                }
+                else {
+
+                    writeln!(out, "pub fn from(variables: Variables) -> Query {{")?;
+                    writeln!(out.indent(), "Query {{variables}}")?;
+                    writeln!(out, "}}")?;
+                    writeln!(out, "")?;
+
+                    writeln!(out, "pub fn new(")?;
+                    {
+                        let mut out = out.indent();
+                    
+                        for (name, field) in &self.variables {
+                            writeln!(out, "{}_: {},", to_snake_case(&name), field.rust_type(schema, true, &None))?;
+                        }
+                    }
+                    writeln!(out, ") -> Query {{")?;
+                    {
+                        let mut out = out.indent();
+
+                        writeln!(out, "Query {{")?;
+                        {
+                            writeln!(out, "variables: Variables {{")?;
+                            {
+                                let mut out = out.indent();
+        
+                                for (name, field) in &self.variables {
+                                    writeln!(out, "{}_,", to_snake_case(&name))?;
+                                }
+                            }
+                            writeln!(out, "}}")?;
+                        }
+                        writeln!(out, "}}")?;
+                    }
+                    writeln!(out, "}}")?;
+                }
             }
             writeln!(out, "}}")?;
             writeln!(out, "")?;
@@ -1815,18 +1889,27 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
             {
                 let mut out = out.indent();
 
+                writeln!(out, "fn get_request_name() -> &'static str {{")?;
+                writeln!(out.indent(), "Self::REQUEST_NAME")?;
+                writeln!(out, "}}")?;
+
                 writeln!(out, "fn get_query() -> &'static str {{")?;
                 writeln!(out.indent(), "Self::QUERY")?;
                 writeln!(out, "}}")?;
 
-                writeln!(out, "fn get_variables(&self) -> String {{")?;
-                writeln!(out.indent(), "String::from(\"{{}}\")")?;
+                writeln!(out, "fn get_variables(&self) -> Result<std::string::String, serde_json::Error> {{")?;
+                if self.variables.is_empty() {
+                    writeln!(out.indent(), "Ok(String::from(\"{{}}\"))")?;
+                }
+                else {
+                    writeln!(out.indent(), "serde_json::to_string_pretty(&self.variables)")?;
+                }
                 writeln!(out, "}}")?;
             }
             writeln!(out, "}}")?;
 
             writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-            writeln!(out, "#[serde(rename = \"{}\")]", self.name)?;
+            // writeln!(out, "#[serde(rename = \"{}\")]", self.name)?;
             writeln!(out, "pub struct Response {{")?;
             {
                 let mut out = out.indent();
