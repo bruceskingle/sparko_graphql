@@ -43,6 +43,7 @@ pub enum GraphQLError {
     DuplicateName(Pos, Pos, String),
     NoQueryDefinition,
     ValidationError,
+    BuildFailed(String),
 }
 
 impl Display for GraphQLError {

@@ -7,10 +7,10 @@ type OneOfEverything {
     id: ID!,
 
     # Required date
-    date: Date!,
+    # date: Date!,
 
     # Required DateTime
-    dateTime: DateTime!,
+    # dateTime: DateTime!,
 
     # Required String
     string: String!,
@@ -28,10 +28,10 @@ type OneOfEverything {
     optionalId: ID,
 
     # Optional date
-    optionalDate: Date,
+    # optionalDate: Date,
 
     # Optional DateTime
-    optionalDateTime: DateTime,
+    # optionalDateTime: DateTime,
 
     # Optional String
     optionalString: String,

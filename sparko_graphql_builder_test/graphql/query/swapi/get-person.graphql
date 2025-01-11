@@ -1,5 +1,5 @@
 query GetPerson($id: ID!) {
-  xperson(id: $id) {
+  person(id: $id) {
     name
     hairColor?
   }

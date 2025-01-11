@@ -43,6 +43,27 @@ pub use request_manager::RequestManager;
 mod authenticated_request_manager;
 pub use authenticated_request_manager::AuthenticatedRequestManager;
 
+/* Start of new implementation */
+
+
+
+pub trait NewGraphQLQuery<R: NewGraphQLResponse> {
+    fn get_query() -> &'static str;
+    fn get_variables(&self) -> String;
+}
+
+pub trait NewGraphQLResponse: serde::de::DeserializeOwned {
+
+}
+
+
+#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+#[serde(rename_all = "camelCase")]
+struct GraphQLResponseStructure {
+   errors: Option<Vec<GraphQLJsonError>>,
+   data:   serde_json::Value,
+}
+
 /* Start of going forward implementation */
 
 

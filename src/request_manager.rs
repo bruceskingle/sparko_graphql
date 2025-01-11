@@ -29,13 +29,24 @@ use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{Error, GraphQLType,  GraphQLResponse, GraphQLQueryParams};
+use crate::{Error, GraphQLQueryParams, GraphQLResponse, GraphQLResponseStructure, GraphQLType, NewGraphQLQuery, NewGraphQLResponse};
 
 #[derive(Serialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
 struct Request<'a>
 {
     query:          String,
+    variables:      String,
+    operation_name:  &'a str,
+}
+
+
+
+#[derive(Serialize, Debug, DisplayAsJsonPretty)]
+#[serde(rename_all = "camelCase")]
+struct NewRequest<'a>
+{
+    query:          &'a str,
     variables:      String,
     operation_name:  &'a str,
 }
@@ -180,6 +191,89 @@ impl RequestManager {
         else {
             return Err(Box::new(Error::InternalError(format!("No response found"))))
         }
+
+
+    }
+
+    pub async fn new_call<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(&self, request_type: &str, request_name: &str, query_name: &str, query: Q, token: Option<&Arc<String>>) 
+    -> Result<R, Box<dyn std::error::Error>> {
+
+        // println!("NEW query {}", &query);
+
+        let payload = NewRequest {
+            query: Q::get_query(),
+            variables: query.get_variables(),
+            operation_name: request_name,
+        };
+        // let serialized = serde_json::to_string(&payload).unwrap();
+
+        // println!("NEW payload {}", &serialized);
+        // panic!("Dont send");
+        // println!("NEW variables {}", params.get_variables()?);
+               
+
+        let mut request = self.reqwest_client.post(&self.url.clone());
+
+        if let Some(token) = token {
+            request = request.header(reqwest::header::AUTHORIZATION, reqwest::header::HeaderValue::from_str(token)?);
+        }
+
+        let response = request
+            .body(serde_json::to_string(&payload).unwrap())
+            .send().await?;
+
+        if &response.status() != &StatusCode::OK {
+            let status = response.status();
+            Self::report_error("ERROR Request Failed");
+            println!("HTTP status {}", status);
+            
+            Self::report_error("Query");
+            println!("{}",Q::get_query());
+            
+            Self::report_error("Variables");
+            println!("{}", query.get_variables());
+            
+            Self::report_error("Payload");
+            println!("{}",  &serde_json::to_string(&payload).unwrap());
+
+            let text = &(response).text().await;
+            println!("ERROR {}", text.as_ref().expect("No Response Body"));
+            return Err(Box::new(Error::HttpError(status)));
+        }
+
+        let response_json: serde_json::Value = response.json().await?;
+
+        println!("response_json {}", serde_json::to_string_pretty(&response_json)?);
+
+        let graphql_response: GraphQLResponseStructure = serde_json::from_value(response_json)?;
+
+        println!("graphql_response {}", serde_json::to_string_pretty(&graphql_response)?);
+
+
+
+        // let response_json = response.json().await?;
+
+        // println!("response {:?}", response_json);
+
+        // let graphql_response:  GraphQLResponse = response_json;
+
+        if let Some(errors) = graphql_response.errors {
+            
+            Self::report_error("GraphQL Errors");
+            println!("{:?}", serde_json::to_string_pretty(&errors)?);
+
+            return Err(Box::new(Error::GraphQLError(errors)));
+        }
+        // println!("query_name {}", &query_name);
+        // if let Some(response) = graphql_response.data {
+        //     println!("response {}", serde_json::to_string_pretty(&response)?);
+
+            let object: R = serde_json::from_value(graphql_response.data)?;
+            Ok(object)
+        // }
+        // else {
+        //     return Err(Box::new(Error::InternalError(format!("No response found"))))
+        // }
 
 
     }

@@ -1,6 +1,7 @@
 use error::GraphQLError;
 use graphql_parser::parse_query;
 use graphql_parser::schema::parse_schema;
+use inflections::case::to_snake_case;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::BufWriter;
@@ -213,9 +214,28 @@ impl BaseOutput {
             BaseOutput::Buffer(output) => output.errors.len()>0,
         }
     }
+
+    pub fn errors(&self) -> &Vec<error::GraphQLError> {
+        match self {
+            BaseOutput::File(file_output) => &file_output.errors,
+            #[cfg(test)]
+            BaseOutput::Buffer(test_output) => &test_output.errors,
+        }
+    }
+
+    pub fn warnings(&self) -> &Vec<error::GraphQLError> {
+        match self {
+            BaseOutput::File(file_output) => &file_output.warnings,
+            #[cfg(test)]
+            BaseOutput::Buffer(test_output) => &test_output.warnings,
+        }
+    }
     
 
     pub fn error(&mut self, error: GraphQLError) {
+        if let Err(_) = writeln!(self, "ERROR //{}", &error) {
+            // oh dear.....
+        };
         match self {
             BaseOutput::File(output) => output.errors.push(error),
             #[cfg(test)]
@@ -306,7 +326,7 @@ impl BaseOutput {
 pub struct Builder {
     model_name: String,
     schema: Option<String>,
-    queries: Vec<String>,
+    queries: Vec<(String, String)>,
 }
 
 pub fn builder(model_name: impl Into<String>) -> Builder {
@@ -327,20 +347,20 @@ impl Builder {
         self
     }
 
-    pub fn with_query(&mut self, file_name: &str) -> &mut Builder {
-        self.queries.push(file_name.to_string());
+    pub fn with_query(&mut self, file_name: &str, model_name: &str) -> &mut Builder {
+        self.queries.push((file_name.to_string(), model_name.to_string()));
 
         self
     }
     
-    pub fn build(&mut self) {
-        match self.do_build() {
-            Ok(_) => (),
-            Err(error) => panic!("GraohQL Generation failed: {}", error),
-        }
-    }
+    // pub fn build(&mut self) {
+    //     match self.do_build() {
+    //         Ok(_) => (),
+    //         Err(error) => panic!("GraohQL Generation failed: {}", error),
+    //     }
+    // }
     
-    fn do_build(&mut self) -> Result<(), GraphQLError> {
+    pub fn build(&mut self) -> Result<(), GraphQLError> {
             
 
         let out_dir = env::var_os("OUT_DIR").unwrap();
@@ -351,14 +371,15 @@ impl Builder {
         let mut out = base_out.indent();
         writeln!(out, 
             r#"
+pub mod {} {{
 use display_json::DisplayAsJsonPretty;
 use serde::{{Deserialize, Serialize}};
-"#
+"#, to_snake_case(&self.model_name)
         )?;
 
         let schema: String;
         let schema = if let Some(file_name) = &self.schema {
-            schema = read_to_string(file_name)?;
+            schema = read_to_string(&mut out, file_name)?;
                     
             // Tell Cargo that if the given file changes, to rerun this build script.
             println!("cargo::rerun-if-changed={}", file_name);
@@ -370,20 +391,34 @@ use serde::{{Deserialize, Serialize}};
             panic!("No schema defined");
         };
 
-        for file_name in &self.queries {
-            let query: String = read_to_string(file_name)?;
+        for (file_name, model_name) in &self.queries {
+            let query: String = read_to_string(&mut out, file_name)?;
                     
             // Tell Cargo that if the given file changes, to rerun this build script.
             println!("cargo::rerun-if-changed={}", file_name);
             writeln!(out, "// cargo::rerun-if-changed={}", file_name)?;
             
-            self.do_build_query(&mut out, &schema, &query)?;
+            self.do_build_query(&mut out, &schema, &query, model_name)?;
         }
 
+        writeln!(out, 
+            r#"
+}} // End model {}
+"#, to_snake_case(&self.model_name)
+        )?;
+
         if base_out.has_errors() {
-            panic!("GraohQL Generation completed with errors: {}", base_out);
+            for error in  base_out.errors() {
+                // println!("cargo::error={}", error);
+                println!("cargo::error={}", error);
+            }
+            // panic!("GraohQL Generation completed with errors: {}", base_out);
+            println!("cargo::warning=Build failed with {} errors and {} warnings", base_out.errors().len(), base_out.warnings().len());
+            Err(GraphQLError::BuildFailed(format!("Build failed with {} errors and {} warnings", base_out.errors().len(), base_out.warnings().len())))
         }
-        Ok(())
+        else {
+            Ok(())
+        }
     }
 
     fn do_build_schema<'p>(&'p self, out: &mut Output, schema: &'p str) -> Result<Rc<validated_model::Schema>, GraphQLError> {
@@ -447,10 +482,10 @@ use serde::{{Deserialize, Serialize}};
         Ok(validated_model)
     }
 
-    fn do_build_query(&self, out: &mut Output,  schema: &validated_model::Schema, query: &str) -> Result<(), GraphQLError> {
+    fn do_build_query(&self, out: &mut Output,  schema: &validated_model::Schema, query: &str, model_name: &str) -> Result<(), GraphQLError> {
         let ast = parse_query::<String>(query)?.to_owned();
 
-        let model = parsed_model::Operations::new(out, schema, ast.definitions);
+        let model = parsed_model::Operations::new(out, schema, ast.definitions, model_name);
         
         writeln!(out, "/* *********************************************************************************************")?;
         model.print(out)?;
@@ -464,17 +499,17 @@ use serde::{{Deserialize, Serialize}};
         validated_model.print(out)?;
         writeln!(out, " * *********************************************************************************************/")?;
 
-        validated_model.generate(out)?;
+        validated_model.generate(out, schema)?;
         
         Ok(())
     }
 }
 
-fn read_to_string(file_name: &str) -> Result<String, std::io::Error> {
+fn read_to_string(out: &mut Output, file_name: &str) -> Result<String, std::io::Error> {
     let result = fs::read_to_string(file_name);
 
     if let Err(error) = &result {
-        eprintln!("Unable to open file \"{}\" ({})", file_name, error);
+        out.error(GraphQLError::BuildFailed(format!("Unable to open file \"{}\" ({})", file_name, error)));
     }
     result
 }
@@ -560,7 +595,7 @@ mod tests {
         let mut out = base_out.indent();
         let builder = builder("test");
         let schema = builder.do_build_schema(&mut out, schema).unwrap();
-        let _q = builder.do_build_query(&mut out, &schema, query);
+        let _q = builder.do_build_query(&mut out, &schema, query, "test_query");
         
         base_out
     }

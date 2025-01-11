@@ -5,6 +5,8 @@ use std::rc::Rc;
 
 // use inflections::case::to_snake_case;
 
+use inflections::case::to_snake_case;
+
 // use crate::utils::to_pascal_case;
 use crate::error::GraphQLError;
 use crate::Output;
@@ -255,10 +257,10 @@ impl TypeDefinition {
     pub fn type_name(&self) -> &str {
         match self {
             TypeDefinition::Enum(_) => "enum",
-            TypeDefinition::Union(union) => "union",
-            TypeDefinition::Object(object) => "object",
-            TypeDefinition::Interface(interface) => "interface",
-            TypeDefinition::Scalar(type_def) => "scalar",
+            TypeDefinition::Union(_) => "union",
+            TypeDefinition::Object(_) => "object",
+            TypeDefinition::Interface(_) => "interface",
+            TypeDefinition::Scalar(_) => "scalar",
         }
     }
 }
@@ -291,7 +293,7 @@ impl Enum {
         writeln!(out, "}}")
     }
 
-    pub fn new(out: &mut Output, enum_type: graphql_parser::schema::EnumType<'_, String>) -> Enum {
+    pub fn new(_out: &mut Output, enum_type: graphql_parser::schema::EnumType<'_, String>) -> Enum {
         let mut model = Enum {
             position: enum_type.position,
             name: enum_type.name.clone(),
@@ -387,7 +389,7 @@ impl Object {
         
     }
 
-    pub fn new(out: &mut Output, object_type: graphql_parser::schema::ObjectType<'_, String>) -> Object {
+    pub fn new(_out: &mut Output, object_type: graphql_parser::schema::ObjectType<'_, String>) -> Object {
         let mut field_names = Vec::new();
         let mut fields = HashMap::new();
 
@@ -449,7 +451,7 @@ impl Interface {
         writeln!(out, "}}")
     }
     
-    pub fn new(out: &mut Output, interface_type: graphql_parser::schema::InterfaceType<'_, String>) -> Interface {
+    pub fn new(_out: &mut Output, interface_type: graphql_parser::schema::InterfaceType<'_, String>) -> Interface {
         let mut field_names = Vec::new();
         let mut fields = HashMap::new();
 
@@ -630,7 +632,7 @@ impl Schema {
 
                 for (name, ty) in &self.named_types {
                     write!(out, "{}\t", name)?;
-                    ty.print(&mut out);
+                    ty.print(&mut out)?;
                 }
             }
             writeln!(out, "}}")?;
@@ -776,7 +778,7 @@ impl Schema {
                         graphql_parser::schema::TypeDefinition::Enum(ast) => {
                             (ast.name.clone(), TypeDefinition::Enum(Enum::new(out, ast)))
                         },
-                        graphql_parser::schema::TypeDefinition::InputObject(input_object_type) => {
+                        graphql_parser::schema::TypeDefinition::InputObject(_input_object_type) => {
                            unimplemented!()
     
                             // Self::named_type(out, model, input_object_type.name.clone(), Type::InputObject(ObjectModel::from_input_object(out, input_object_type)?));
@@ -978,21 +980,20 @@ impl Schema {
 
 
 #[derive(Debug)]
-
 pub enum Value {
     Variable(String),
     Int(i64),
-    Float(f64),
+    // Float(f64),
     String(String),
-    Boolean(bool),
-    Null,
-    Enum,
-    List,
-    Object,
+    // Boolean(bool),
+    // Null,
+    // Enum,
+    // List,
+    // Object,
 }
 
 impl Value {
-    pub fn new(out: &mut Output, value: graphql_parser::query::Value<'_, String> ) -> Value {
+    pub fn new(_out: &mut Output, value: graphql_parser::query::Value<'_, String> ) -> Value {
         match value {
             graphql_parser::query::Value::Variable(name) => Value::Variable(name),
             graphql_parser::query::Value::Int(number) => Value::Int(number.as_i64().unwrap()),
@@ -1001,8 +1002,8 @@ impl Value {
             graphql_parser::query::Value::Boolean(_) => todo!(),
             graphql_parser::query::Value::Null => todo!(),
             graphql_parser::query::Value::Enum(_) => todo!(),
-            graphql_parser::query::Value::List(vec) => todo!(),
-            graphql_parser::query::Value::Object(btree_map) => todo!(),
+            graphql_parser::query::Value::List(_) => todo!(),
+            graphql_parser::query::Value::Object(_) => todo!(),
         }
     }
 }
@@ -1012,13 +1013,13 @@ impl Display for Value {
         match self {
             Value::Variable(name) => write!(f, "${}", name),
             Value::Int(number) => write!(f, "{}", number),
-            Value::Float(_) => todo!(),
+            // Value::Float(_) => todo!(),
             Value::String(string) => write!(f, "\"{}\"", string),
-            Value::Boolean(_) => todo!(),
-            Value::Null => todo!(),
-            Value::Enum => todo!(),
-            Value::List => todo!(),
-            Value::Object => todo!(),
+            // Value::Boolean(_) => todo!(),
+            // Value::Null => todo!(),
+            // Value::Enum => todo!(),
+            // Value::List => todo!(),
+            // Value::Object => todo!(),
         }
     }
 }
@@ -1047,6 +1048,11 @@ impl Argument {
             writeln!(out, "value:     {}", self.value)?;
         }
         writeln!(out, "}}")
+    }
+    
+    pub(crate) fn generate_query(&self, out: &mut Output<'_>, fields: &HashMap<String, validated_model::Field>, schema: &validated_model::Schema, arg: bool) -> Result<(), GraphQLError> {
+        writeln!(out, "{}: {}", self.name, self.value)?;
+        Ok(())
     }
 }
 
@@ -1118,8 +1124,9 @@ impl Argument {
 
 #[derive(Debug)]
 pub struct SelectionField {
-    pub position: graphql_parser::Pos,
     pub name: String,
+    pub alias: Option<String>,
+    pub position: graphql_parser::Pos,
     pub optional: bool,
     pub arguments: Vec<Argument>,
     pub selections: Vec<Selection>,
@@ -1130,6 +1137,7 @@ impl SelectionField {
         SelectionField {
             position: field.position,
             name: field.name,
+            alias: field.alias,
             optional,
             arguments: build_arguments(out, field.arguments),
             selections: build_selections(out, field.selection_set),
@@ -1141,8 +1149,8 @@ impl SelectionField {
         {
             let mut out = out.indent();
 
-            writeln!(out, "position:  {}", self.position)?;
             writeln!(out, "name:      {}", self.name)?;
+            writeln!(out, "position:  {}", self.position)?;
             writeln!(out, "optional:  {}", self.optional)?;
             writeln!(out, "arguments {{")?;
             {
@@ -1181,8 +1189,8 @@ impl Selection {
             graphql_parser::query::Selection::OptionalField(field) => 
                 Selection::Field(SelectionField::new(out, *field, true)),
             graphql_parser::query::Selection::Field(field) => Selection::Field(SelectionField::new(out, field, false)),
-            graphql_parser::query::Selection::FragmentSpread(fragment_spread) => todo!(),
-            graphql_parser::query::Selection::InlineFragment(inline_fragment) => todo!(),
+            graphql_parser::query::Selection::FragmentSpread(_fragment_spread) => todo!(),
+            graphql_parser::query::Selection::InlineFragment(_inline_fragment) => todo!(),
         }
     }
 
@@ -1192,11 +1200,11 @@ impl Selection {
         }
     }
 
-    pub fn position(&self) -> graphql_parser::Pos {
-        match self {
-            Selection::Field(selection_field) => selection_field.position,
-        }
-    }
+    // pub fn position(&self) -> graphql_parser::Pos {
+    //     match self {
+    //         Selection::Field(selection_field) => selection_field.position,
+    //     }
+    // }
 }
 
 
@@ -1214,7 +1222,7 @@ pub struct Query {
 }
 
 impl Query {
-    pub fn new(out: &mut Output, query: graphql_parser::query::Query<'_, String>, schema: &validated_model::Schema ) -> Result<Query, GraphQLError> {
+    pub fn new(out: &mut Output, query: graphql_parser::query::Query<'_, String>, _schema: &validated_model::Schema ) -> Result<Query, GraphQLError> {
         let name = match query.name {
             Some(name) => name,
             None => {
@@ -1260,9 +1268,9 @@ impl Query {
         })
     }
     
-    pub fn validate(&mut self, out: &mut Output) -> Result<(), GraphQLError> {
-        Ok(())
-    }
+    // pub fn validate(&mut self, _out: &mut Output) -> Result<(), GraphQLError> {
+    //     Ok(())
+    // }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "Query {{")?;
@@ -1295,7 +1303,7 @@ impl Query {
     }
 }
 
-fn build_variables(out: &mut Output, variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>) -> Vec<Field> {
+fn build_variables(_out: &mut Output, variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>) -> Vec<Field> {
     let mut variables = Vec::new();
 
     for variable in variable_definitions {
@@ -1329,14 +1337,23 @@ fn build_arguments(out: &mut Output, arguments: Vec<(String, graphql_parser::que
 }
 
 pub struct Operations {
-    // pub schema: &'p validated_model::Schema<'p>,
+    pub name: String,
     pub queries: Vec<Query>,
 }
 
 impl Operations {
     pub fn new(out: &mut Output,
         schema: &validated_model::Schema,
-        definitions: Vec<graphql_parser::query::Definition<'_, String>>) -> Operations {
+        definitions: Vec<graphql_parser::query::Definition<'_, String>>, model_name: &str) -> Operations {
+
+        let name = to_snake_case(model_name);
+        //     if model_name.ends_with(".graphql") {
+        //     let end = model_name.len() - 8;
+        //     &model_name[..end]
+        // }
+        // else {
+        //     &model_name
+        // });
 
         let mut queries = Vec::new();
 
@@ -1348,19 +1365,19 @@ impl Operations {
                             for item in selection_set.items {
                                 match item {
 
-                                    graphql_parser::query::Selection::OptionalField(field) => {
+                                    graphql_parser::query::Selection::OptionalField(_field) => {
                                         unimplemented!()
                                     },
 
-                                    graphql_parser::query::Selection::Field(field) => {
+                                    graphql_parser::query::Selection::Field(_field) => {
                                         unimplemented!()
                                         
                                     },
-                                    graphql_parser::query::Selection::FragmentSpread(fragment_spread) => {
+                                    graphql_parser::query::Selection::FragmentSpread(_fragment_spread) => {
                                         unimplemented!()
                                         
                                     },
-                                    graphql_parser::query::Selection::InlineFragment(inline_fragment) => {
+                                    graphql_parser::query::Selection::InlineFragment(_inline_fragment) => {
                                         unimplemented!()
                                         
                                     },
@@ -1373,24 +1390,24 @@ impl Operations {
                                 Err(error) => out.error(error),
                             }
                         },
-                        graphql_parser::query::OperationDefinition::Mutation(mutation) => {
+                        graphql_parser::query::OperationDefinition::Mutation(_mutation) => {
                             unimplemented!()
                             
                         },
-                        graphql_parser::query::OperationDefinition::Subscription(subscription) => {
+                        graphql_parser::query::OperationDefinition::Subscription(_subscription) => {
                             unimplemented!()
                             
                         },
                     }
                 },
-                graphql_parser::query::Definition::Fragment(fragment_definition) => {
+                graphql_parser::query::Definition::Fragment(_fragment_definition) => {
                     unimplemented!()
                 },
             }
         }
 
         Operations {
-                // schema,
+                name,
                 queries,
             }
     }

@@ -4,3 +4,10 @@ query GetLuke {
   	birthYear
   }
 }
+
+query GetHan {
+  person(id: "idOfHan=") {
+    name
+  	birthYear
+  }
+}
