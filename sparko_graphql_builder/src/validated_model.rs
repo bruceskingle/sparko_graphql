@@ -8,6 +8,8 @@ use inflections::case::{to_snake_case, to_constant_case};
 use crate::utils::to_pascal_case;
 use crate::{error::GraphQLError, parsed_model, Output};
 
+const TYPE_NAME: &str = "__typename";
+
 #[derive(Debug)]
 pub struct Scalar {
     pub position: graphql_parser::Pos,
@@ -105,12 +107,12 @@ impl TypeDefinition {
     //     }
     // }
 
-    pub fn generate(&self, out: &mut Output, schema: &Schema, selected_fields: Option<HashMap<String, &SelectionField>>) -> Result<(), GraphQLError> {
+    pub fn generate(&self, out: &mut Output, schema: &Schema, selections: Option<&Vec<Selection>>) -> Result<(), GraphQLError> {
         match self {
-            TypeDefinition::Enum(content) => content.generate(out, schema, selected_fields),
-            TypeDefinition::Union(content) => content.generate(out, schema, selected_fields, &None),
-            TypeDefinition::Object(content) => content.generate(out, schema, selected_fields, &None),
-            TypeDefinition::Interface(content) => content.generate(out, schema, selected_fields),
+            TypeDefinition::Enum(content) => content.generate(out, schema, selections),
+            TypeDefinition::Union(content) => content.generate(out, schema, selections, &None),
+            TypeDefinition::Object(content) => content.generate(out, schema, selections, &None),
+            TypeDefinition::Interface(content) => content.generate(out, schema, selections, &None),
             TypeDefinition::Scalar(content) => content.generate(out, schema),
         }
     }
@@ -138,12 +140,12 @@ impl Display for DefinedType {
 }
 
 impl DefinedType {
-    pub fn generate(&self, out: &mut Output<'_>, schema: &Schema, selected_fields: Option<HashMap<String, &SelectionField>>, alias: &Option<String>) -> Result<(), GraphQLError> {
+    pub fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), GraphQLError> {
         match self {
-            DefinedType::Enum(proxy) => proxy.get(schema).generate(out, schema, selected_fields,),
-            DefinedType::Union(proxy) => proxy.get(schema).generate(out, schema, selected_fields, alias),
-            DefinedType::Object(proxy) => proxy.get(schema).generate(out, schema, selected_fields, alias),
-            DefinedType::Interface(proxy) => proxy.get(schema).generate(out, schema, selected_fields),
+            DefinedType::Enum(proxy) => proxy.get(schema).generate(out, schema, selections,),
+            DefinedType::Union(proxy) => proxy.get(schema).generate(out, schema, selections, alias),
+            DefinedType::Object(proxy) => proxy.get(schema).generate(out, schema, selections, alias),
+            DefinedType::Interface(proxy) => proxy.get(schema).generate(out, schema, selections, alias),
             DefinedType::Scalar(proxy) => proxy.get(schema).generate(out, schema),
         }
     }
@@ -383,7 +385,7 @@ impl Enum {
         }
     }
     
-    fn generate(&self, out: &mut Output<'_>, _schema: &Schema, _selected_fields: Option<HashMap<String, &SelectionField>>) -> Result<(), GraphQLError> {
+    fn generate(&self, out: &mut Output<'_>, _schema: &Schema, _selections: Option<&Vec<Selection>>) -> Result<(), GraphQLError> {
         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
         writeln!(out, "#[serde(rename = \"{}\")]", self.name)?;
         writeln!(out, "pub enum {} {{", to_pascal_case(&self.name))?;
@@ -454,29 +456,30 @@ impl Union {
         }
     }
     
-    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selected_fields: Option<HashMap<String, &SelectionField>>, alias: &Option<String>) -> Result<(), GraphQLError> {
-        
-        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-        writeln!(out, "#[serde(rename = \"{}\")]", &self.name)?;
-        writeln!(out, "pub struct {} {{", to_pascal_case(&self.name))?;
+    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), GraphQLError> {
+        generate_struct(out, schema, selections, alias, &self.name, &self.fields)
 
-        if let Some(selected_fields) = selected_fields {
-            for (name, field) in &self.fields {
-                if let Some(selection_field) = selected_fields.get(name) {
-                    writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
-                    writeln!(out, "    /* BRUCE */ {}_: {},", to_snake_case(&name), field.rust_type(schema, selection_field.optional.clone(), &selection_field.alias))?;
-                }
-            }
-        }
-        else {
-            for (name, field) in &self.fields {
-                writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
-                writeln!(out, "    /* BRUCE2 */ {}_: {},", to_snake_case(&name), field.rust_type(schema, true, &None))?;
-            }
-        }
-        writeln!(out, "}}")?;
-        writeln!(out, "")?;
-        Ok(())
+        // writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+        // writeln!(out, "#[serde(rename = \"{}\")]", &self.name)?;
+        // writeln!(out, "pub struct {} {{", to_pascal_case(&self.name))?;
+
+        // if let Some(selected_fields) = selected_fields {
+        //     for (name, field) in &self.fields {
+        //         if let Some(selection_field) = selected_fields.get(name) {
+        //             writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
+        //             writeln!(out, "    /* BRUCE */ {}_: {},", to_snake_case(&name), field.rust_type(schema, selection_field.optional.clone(), &selection_field.alias))?;
+        //         }
+        //     }
+        // }
+        // else {
+        //     for (name, field) in &self.fields {
+        //         writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
+        //         writeln!(out, "    /* BRUCE2 */ {}_: {},", to_snake_case(&name), field.rust_type(schema, true, &None))?;
+        //     }
+        // }
+        // writeln!(out, "}}")?;
+        // writeln!(out, "")?;
+        // Ok(())
     }
 }
 
@@ -562,50 +565,131 @@ impl Object {
         }
     }
     
-    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selected_fields: Option<HashMap<String, &SelectionField>>, alias: &Option<String>) -> Result<(), GraphQLError> {
-        let name = if let Some(alias) = &alias {
-            to_pascal_case(alias)
-            // format!("{}{}", to_pascal_case(alias),to_pascal_case(&self.name))
-        }
-        else {
-            to_pascal_case(&self.name)
-        };
+    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), GraphQLError> {
+        generate_struct(out, schema, selections, alias, &self.name, &self.fields)
+        // let name = if let Some(alias) = &alias {
+        //     to_pascal_case(alias)
+        //     // format!("{}{}", to_pascal_case(alias),to_pascal_case(&self.name))
+        // }
+        // else {
+        //     to_pascal_case(&self.name)
+        // };
         
-        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-        writeln!(out, "#[serde(rename = \"{}\")]", &self.name)?;
-        writeln!(out, "pub struct {} {{", name)?;
+        // writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+        // writeln!(out, "#[serde(rename = \"{}\")]", &self.name)?;
+        // writeln!(out, "pub struct {} {{", name)?;
 
-        if let Some(selected_fields) = selected_fields {
+        // if let Some(selected_fields) = selected_fields {
 
-            for (k, v) in &selected_fields {
-                writeln!(out, "//selected_fields {} = {} {} {}", k, v.name, v.optional, match &v.alias {
-                    Some(alias) => alias,
-                    None => "None",
-                })?;
+        //     for (k, v) in &selected_fields {
+        //         writeln!(out, "//selected_fields {} = {} {} {}", k, v.name, v.optional, match &v.alias {
+        //             Some(alias) => alias,
+        //             None => "None",
+        //         })?;
+        //     }
+
+        //     for (name, field) in &self.fields {
+        //         // writeln!(out, "// T2 {}", name);
+        //         // field.print(out);
+        //         if let Some(selection_field) = selected_fields.get(name) {
+        //             writeln!(out, "// T3 {} {}", name, selection_field.optional)?;
+        //             writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
+        //             writeln!(out, "    /* BRUCE3 */ {}_: {},", to_snake_case(&name), field.rust_type(schema, selection_field.optional.clone(), &selection_field.alias))?;
+        //         }
+        //         writeln!(out, "// T4 {}", name)?;
+        //     }
+        // }
+        // else {
+        //     for (name, field) in &self.fields {
+        //         writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
+        //         writeln!(out, "    {}_: {},", to_snake_case(&name), field.rust_type(schema, true, &None))?;
+        //     }
+        // }
+        
+        // writeln!(out, "}}")?;
+        // writeln!(out, "")?;
+        // Ok(())
+    }
+}
+
+fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>, name: &str, fields: &HashMap<String, Field>) -> Result<(), GraphQLError> {
+    let rust_name = if let Some(alias) = &alias {
+        to_pascal_case(alias)
+        // format!("{}{}", to_pascal_case(alias),to_pascal_case(&self.name))
+    }
+    else {
+        to_pascal_case(name)
+    };
+
+    
+    
+    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+    writeln!(out, "#[serde(rename = \"{}\")]", name)?;
+    writeln!(out, "pub struct {} {{", rust_name)?;
+
+    if let Some(selections) = selections {
+
+        let mut selected_fields = HashMap::new();
+            for selection in selections {
+                match selection {
+                    Selection::Field(selection_field) => {
+                        selected_fields.insert(selection_field.name.clone(), selection_field);
+                        // writeln!(out, "// selected field {} = {}", selection_field.name, selection_field.optional)?;
+                    },
+                };
             }
 
-            for (name, field) in &self.fields {
-                // writeln!(out, "// T2 {}", name);
-                // field.print(out);
-                if let Some(selection_field) = selected_fields.get(name) {
-                    writeln!(out, "// T3 {} {}", name, selection_field.optional)?;
+        // for (k, v) in &selected_fields {
+        //     writeln!(out, "//selected_fields {} = {} {} {}", k, v.name, v.optional, match &v.alias {
+        //         Some(alias) => alias,
+        //         None => "None",
+        //     })?;
+        // }
+
+        for (name, selection_field) in &selected_fields {
+            if name == TYPE_NAME {
+                writeln!(out, "    #[serde(rename = \"{}\")]", name)?;
+                writeln!(out, "    {}: String,", name)?;
+            }
+            else {
+                if let Some(field) = fields.get(name) {
+                    // writeln!(out, "// T3 {} {}", name, selection_field.optional)?;
                     writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
-                    writeln!(out, "    /* BRUCE3 */ {}_: {},", to_snake_case(&name), field.rust_type(schema, selection_field.optional.clone(), &selection_field.alias))?;
+                    writeln!(out, "    {}_: {},", to_snake_case(&name), field.rust_type(schema, selection_field.optional.clone(), &selection_field.alias))?;
                 }
-                writeln!(out, "// T4 {}", name)?;
+                else {
+                    writeln!(out, "UNKNOWN FIELD {}", name)?;
+                }
             }
         }
-        else {
-            for (name, field) in &self.fields {
-                writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
-                writeln!(out, "    {}_: {},", to_snake_case(&name), field.rust_type(schema, true, &None))?;
-            }
-        }
-        
+    
         writeln!(out, "}}")?;
         writeln!(out, "")?;
-        Ok(())
+
+        for (name, selection_field) in &selected_fields {
+            if name == TYPE_NAME {}
+            else {
+                if let Some(field) = fields.get(name) {
+                    if let Type::DefinedType(defined_type) = &field.ty {
+                        defined_type.generate(out, schema, Some(&selection_field.selections), &selection_field.alias);
+                    }
+                }
+                else {
+                    writeln!(out, "UNKNOWN FIELD {}", name)?;
+                }
+            }
+        }
     }
+    else {
+        for (name, field) in fields {
+            writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
+            writeln!(out, "    {}_: {},", to_snake_case(&name), field.rust_type(schema, true, &None))?;
+        }
+    
+        writeln!(out, "}}")?;
+        writeln!(out, "")?;
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -689,18 +773,23 @@ impl Interface {
         }
     }
     
-    fn generate(&self, out: &mut Output<'_>, schema: &Schema, _selected_fields: Option<HashMap<String, &SelectionField>>) -> Result<(), GraphQLError> {
-        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-        writeln!(out, "pub enum {} {{", to_pascal_case(&self.name))?;
-
-        for object in self.implemented_by.iterator(schema) {
-            
-            writeln!(out, "    {}({}),", to_pascal_case(&object.name), to_pascal_case(&object.name))?;
+    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), GraphQLError> {
+        if let Some(_) = selections {
+            generate_struct(out, schema, selections, alias, &self.name, &self.fields)
         }
+        else {
+            writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+            writeln!(out, "pub enum {} {{", to_pascal_case(&self.name))?;
 
-        writeln!(out, "}}")?;
-        writeln!(out, "")?;
-        Ok(())
+            for object in self.implemented_by.iterator(schema) {
+                
+                writeln!(out, "    {}({}),", to_pascal_case(&object.name), to_pascal_case(&object.name))?;
+            }
+
+            writeln!(out, "}}")?;
+            writeln!(out, "")?;
+            Ok(())
+        }
     }
 }
 
@@ -1483,44 +1572,50 @@ impl SelectionField {
         
         let mut selections = Vec::new();
 
-        if let Some(field) = context.get(&parsed.name) {
-            if parsed.optional && field.nonnull {
-                out.error(GraphQLError::OptionalNonNullFieldError(parsed.position,parsed.name.clone()));
-            }
-
-            if !parsed.selections.is_empty() {
-                let optional_fields = match &field.ty {
-                    Type::Int => None,
-                    Type::Float => None,
-                    Type::String => None,
-                    Type::Boolean => None,
-                    Type::ID => None,
-                    Type::DefinedType(defined_type) => match defined_type {
-                        DefinedType::Enum(_) => None,
-                        DefinedType::Union(proxy) => Some(&proxy.get(schema).fields),
-                        DefinedType::Object(proxy) => Some(&proxy.get(schema).fields),
-                        DefinedType::Interface(proxy) => Some(&proxy.get(schema).fields),
-                        DefinedType::Scalar(_) => None,
-                    },
-                };
-
-                if let Some(fields) = optional_fields {
-                    for selection in parsed.selections {
-                        match Selection::new(selection, schema, &fields, out) {
-                            Ok(selection) => selections.push(selection),
-                            Err(error) => out.error(error),
-                        };
+        if parsed.name == TYPE_NAME {
+            println!("HERE1");
+        }
+        else  {
+                if let Some(field) = context.get(&parsed.name) {
+                    if parsed.optional && field.nonnull {
+                        out.error(GraphQLError::OptionalNonNullFieldError(parsed.position,parsed.name.clone()));
                     }
+        
+                    if !parsed.selections.is_empty() {
+                        let optional_fields = match &field.ty {
+                            Type::Int => None,
+                            Type::Float => None,
+                            Type::String => None,
+                            Type::Boolean => None,
+                            Type::ID => None,
+                            Type::DefinedType(defined_type) => match defined_type {
+                                DefinedType::Enum(_) => None,
+                                DefinedType::Union(proxy) => Some(&proxy.get(schema).fields),
+                                DefinedType::Object(proxy) => Some(&proxy.get(schema).fields),
+                                DefinedType::Interface(proxy) => Some(&proxy.get(schema).fields),
+                                DefinedType::Scalar(_) => None,
+                            },
+                        };
+        
+                        if let Some(fields) = optional_fields {
+                            for selection in parsed.selections {
+                                match Selection::new(selection, schema, &fields, out) {
+                                    Ok(selection) => selections.push(selection),
+                                    Err(error) => out.error(error),
+                                };
+                            }
+                        }
+                        else {
+                            out.error(GraphQLError::TypeMismatchError(parsed.position, format!("Attribute selection given on incompatible type \"{}\"", field.ty)));
+                        }
+                    }
+                    
                 }
                 else {
-                    out.error(GraphQLError::TypeMismatchError(parsed.position, format!("Attribute selection given on incompatible type \"{}\"", field.ty)));
+                    return Err(GraphQLError::MissingFieldError(parsed.position,parsed.name.clone()));
                 }
             }
-            
-        }
-        else {
-            return Err(GraphQLError::MissingFieldError(parsed.position,parsed.name.clone()));
-        }
+        
 
         Ok(SelectionField {
             name: parsed.name,
@@ -1602,6 +1697,9 @@ impl SelectionField {
     }
 
     pub fn generate_fields(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: bool) -> Result<(), GraphQLError> {
+        if &self.name == TYPE_NAME {
+            println!("HERE");
+        }
         let field = context.get(&self.name).unwrap();
         let name = if let Some(alias) = &self.alias {
             alias
@@ -1620,16 +1718,8 @@ impl SelectionField {
 
         if let Type::DefinedType(defined_type) = &field.ty {
             writeln!(out, "// {} is {}", &self.name, defined_type)?;
-            let mut selected_fields = HashMap::new();
-            for selection in &self.selections {
-                match selection {
-                    Selection::Field(selection_field) => {
-                        selected_fields.insert(selection_field.name.clone(), selection_field);
-                        writeln!(out, "// selected field {} = {}", selection_field.name, selection_field.optional)?;
-                    },
-                };
-            }
-            defined_type.generate(out, schema, Some(selected_fields), &self.alias)?;
+            
+            defined_type.generate(out, schema, Some(&self.selections), &self.alias)?;
 
             // let fields = defined_type.fields();
 

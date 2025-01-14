@@ -208,7 +208,7 @@ impl RequestManager {
         // let serialized = serde_json::to_string(&payload).unwrap();
 
         // println!("NEW payload {}", &serialized);
-        // panic!("Dont send");
+        // panic!("Don't send");
         // println!("NEW variables {}", params.get_variables()?);
                
 

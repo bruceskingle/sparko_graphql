@@ -1,5 +1,78 @@
 type Query {
-  oneOfEverything: OneOfEverything
+  oneOfEverything: OneOfEverything,
+  viewer: AccountUserType,
+}
+
+
+# User objects are the core of the authentication system. They typically represent a customer who manages a portfolio of one or more accounts.
+type AccountUserType {
+  id: ID!
+
+  # List of accounts that the user is linked to either via portfolio role or account role.
+  accounts(
+    # Optionally filter the user's accounts to only return those linked to portfolios on the specified brands.
+    # allowedBrandCodes: [BrandChoices]
+
+    # Optionally restrict user accounts to only return those linked to portfolios on public facing brands.
+    restrictToPublicFacingBrands: Boolean
+
+    # Optionally restrict user accounts to only return those with the specified account numbers.
+    restrictToAccountNumbers: [String]
+
+    # Optionally exclude accounts with any of the given account types.
+    # excludeAccountTypes: [AccountTypeChoices]
+
+    # Optionally exclude accounts that have never had an agreement.
+    excludeAccountsWithoutAgreements: Boolean
+  ): [AccountInterface]
+}
+
+
+
+enum AccountStatus {
+  # A pending account is one that has been created but no registrations have started.
+  PENDING
+
+  # Account requires processes to be completed before supply can be set up
+  INCOMPLETE
+
+  # Withdrawn before supply started
+  WITHDRAWN
+
+  # Supply could have started, be ongoing or ended.
+  ACTIVE
+
+  # An error occurred when we tried to enroll a meter point. This may be deprecated in future in favour of exposing this through enrollment property of a meter point.
+  ENROLMENT_ERROR
+
+  # Meter point enrollment was rejected. This may be deprecated in future in favour of exposing this through enrollment property of a meter point.
+  ENROLMENT_REJECTED
+
+  # Dormant. Users should not be able to log into dormant accounts.
+  DORMANT
+
+  # Void. Account created in error.
+  VOID
+}
+
+interface AccountInterface {
+  # The brand of the account.
+  brand: String
+
+  # The current status of the account.
+  status: AccountStatus
+
+  # The current account balance.
+  balance(
+    # If this variable is set to true, the balance will be calculated based on the sum of balances on all ledgers configured to contribute to this account's balance. Otherwise, only the main ledger's balance will be fetched (legacy behaviour). If you are unsure, set this value to true.
+    includeAllLedgers: Boolean = false
+  ): Int!
+
+  # The current account overdue balance.
+  overdueBalance: Int
+
+  # A code that uniquely identifies the account.
+  number: String
 }
 
 type OneOfEverything {

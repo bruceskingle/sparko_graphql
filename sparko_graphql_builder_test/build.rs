@@ -24,10 +24,11 @@ fn build()  -> Result<(), Box<dyn Error>> {
     sparko_graphql_builder::builder("example")
         .with_schema("graphql/schema/example.graphql")
         .with_query("graphql/query/example/get-luke.graphql", "get-luke")
+        .with_query("graphql/query/example/get-logged-in-user.graphql", "get-logged-in-user")
         .build()?;
 
 
-        sparko_graphql_builder::builder("swapi")
+    sparko_graphql_builder::builder("swapi")
         .with_schema("graphql/schema/swapi.graphql")
         .with_query("graphql/query/swapi/get-luke.graphql", "luke")
         .with_query("graphql/query/swapi/get-person.graphql", "person")
