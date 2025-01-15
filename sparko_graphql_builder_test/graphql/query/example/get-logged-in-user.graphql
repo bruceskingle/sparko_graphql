@@ -1,0 +1,9 @@
+query getLoggedInUser {
+  viewer {
+    accounts {
+      number,
+      __typename
+    },
+    __typename
+  }
+}

@@ -1,4 +1,3 @@
 /target
 sparko_graphql_builder_test/src/bin/test_octopus.rs
-sparko_graphql_builder_test/graphql/schema/octopus.graphql
-sparko_graphql_builder_test/graphql/query/example/get-logged-in-user.graphql
+sparko_graphql_builder_test/graphql/octopus

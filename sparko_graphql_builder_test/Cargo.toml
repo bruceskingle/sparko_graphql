@@ -17,3 +17,4 @@ sparko_graphql_builder = { path = "../sparko_graphql_builder" }
 sparko_graphql = { path = ".." }
 tokio = { version = "1.38", features = ["full"] }
 reqwest = { version = "0.11", features = ["json"] }
+rpassword = "7.3"

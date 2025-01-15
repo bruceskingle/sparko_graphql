@@ -472,12 +472,12 @@ use serde::{{Deserialize, Serialize}};
         let validated_model = validated_model::Schema::new(model, out)?;
         // model.validate(out)?;
 
-        writeln!(out, "/* Validated Model *********************************************************************************************")?;
-        validated_model.print(out)?;
-        writeln!(out, " * *********************************************************************************************/")?;
+        // writeln!(out, "/* Validated Model *********************************************************************************************")?;
+        // validated_model.print(out)?;
+        // writeln!(out, " * *********************************************************************************************/")?;
 
 
-        validated_model.generate(out)?;
+        // validated_model.generate(out)?;
 
         Ok(validated_model)
     }
