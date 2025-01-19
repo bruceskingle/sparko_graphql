@@ -44,6 +44,7 @@ pub enum GraphQLError {
     NoQueryDefinition,
     ValidationError,
     BuildFailed(String),
+    MultipleErrors(Vec<GraphQLError>)
 }
 
 impl Display for GraphQLError {

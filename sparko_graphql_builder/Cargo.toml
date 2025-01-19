@@ -7,4 +7,5 @@ edition = "2021"
 
 [dependencies]
 graphql-parser = { path = "../../graphql-parser" }
+indexmap = "2.7.0"
 inflections = "1.1.1"

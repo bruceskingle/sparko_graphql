@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::collections::HashMap;
 use std::io::Write;
 
+use indexmap::IndexMap;
 use inflections::case::{to_snake_case, to_constant_case};
 
 use crate::parsed_model::BuiltinType;
@@ -11,347 +12,158 @@ use crate::{error::GraphQLError, parsed_model, Output};
 
 const TYPE_NAME: &str = "__typename";
 
-
-
-#[derive(Debug)]
-pub enum ScalarType {
-    DefinedType(DefinedType),
-    BuiltinType(BuiltinType),
-}
-
-impl ScalarType {
-    fn new(parsed: &parsed_model::ScalarType, schema: &parsed_model::Schema) -> Result<ScalarType, GraphQLError> {
-        match parsed {
-            parsed_model::ScalarType::DefinedType{name, position} => {
-                if let Some(def) = schema.named_types.get(name) {
-                    Ok(match def {
-                        parsed_model::TypeDefinition::Enum(content) => ScalarType::DefinedType(DefinedType::Enum(EnumProxy::new(content.name.clone()))),
-                        parsed_model::TypeDefinition::Union(content) =>ScalarType::DefinedType(DefinedType::Union(UnionProxy::new(content.name.clone()))),
-                        parsed_model::TypeDefinition::Object(content) =>ScalarType::DefinedType(DefinedType::Object(ObjectProxy::new(content.name.clone()))),
-                        parsed_model::TypeDefinition::Interface(content) =>ScalarType::DefinedType(DefinedType::Interface(InterfaceProxy::new(content.name.clone()))),
-                        parsed_model::TypeDefinition::Scalar(content) =>ScalarType::DefinedType(DefinedType::Scalar(ScalarProxy::new(content.name.clone()))),
-                    })
-                }
-                else {
-                    Err(GraphQLError::UndefinedTypeError(position.clone(), format!("Missing type {}", name)))
-                }
-            },
-            parsed_model::ScalarType::BuiltinType(builtin_type) => Ok(ScalarType::BuiltinType(*builtin_type)),
-        }
-    }
-
-    fn from_validated(parsed: &parsed_model::ScalarType, schema: &Schema) -> Result<ScalarType, GraphQLError> {
-        match parsed {
-            parsed_model::ScalarType::DefinedType{name, position} => {
-                if let Some(def) = schema.defined_types.get(name) {
-                    Ok(match def {
-                        TypeDefinition::Enum(content) => ScalarType::DefinedType(DefinedType::Enum(EnumProxy::new(content.name.clone()))),
-                        TypeDefinition::Union(content) =>ScalarType::DefinedType(DefinedType::Union(UnionProxy::new(content.name.clone()))),
-                        TypeDefinition::Object(content) =>ScalarType::DefinedType(DefinedType::Object(ObjectProxy::new(content.name.clone()))),
-                        TypeDefinition::Interface(content) =>ScalarType::DefinedType(DefinedType::Interface(InterfaceProxy::new(content.name.clone()))),
-                        TypeDefinition::Scalar(content) =>ScalarType::DefinedType(DefinedType::Scalar(ScalarProxy::new(content.name.clone()))),
-                    })
-                }
-                else {
-                    Err(GraphQLError::UndefinedTypeError(position.clone(), format!("Missing type {}", name)))
-                }
-            },
-            parsed_model::ScalarType::BuiltinType(builtin_type) => Ok(ScalarType::BuiltinType(*builtin_type)),
-        }
-    }
-}
-
-impl Display for ScalarType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ScalarType::DefinedType(defined_type) => write!(f, "{}", defined_type),
-            ScalarType::BuiltinType(builtin_type) => builtin_type.fmt(f),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub enum Type {
-    Scalar(ScalarType),
-    Required(Box<Type>),
-    Array(Box<Type>),
-}
-
-impl Type {
-    fn new(parsed: &parsed_model::Type, schema: &parsed_model::Schema) -> Result<Type, GraphQLError> {
-       Ok( match parsed {
-            parsed_model::Type::Scalar(scalar_type) => Type::Scalar(ScalarType::new(scalar_type, schema)?),
-            parsed_model::Type::Required(wrapped) => Type::Required(Box::new(Type::new(wrapped, schema)?)),
-            parsed_model::Type::Array(wrapped) => Type::Array(Box::new(Type::new(wrapped, schema)?)),
-        })
-    }
-
-    fn from_validated(parsed: &parsed_model::Type, schema: &Schema) -> Result<Type, GraphQLError> {
-        Ok( match parsed {
-             parsed_model::Type::Scalar(scalar_type) => Type::Scalar(ScalarType::from_validated(scalar_type, schema)?),
-             parsed_model::Type::Required(wrapped) => Type::Required(Box::new(Type::from_validated(wrapped, schema)?)),
-             parsed_model::Type::Array(wrapped) => Type::Array(Box::new(Type::from_validated(wrapped, schema)?)),
-         })
-     }
-
-    fn graphql_name(&self) -> String {
-        match self {
-            Type::Scalar(scalar_type) => {
-                match scalar_type {
-                    ScalarType::DefinedType(defined_type) => defined_type.name().to_string(),
-                    ScalarType::BuiltinType(builtin_type) => builtin_type.name().to_string(),
-                }
-            },
-            Type::Required(wrapped) => format!("{}!", wrapped.graphql_name()),
-            Type::Array(wrapped) => format!("[{}]", wrapped.graphql_name()),
-        }
-    }
-
-    pub fn get_scalar(&self) -> &ScalarType {
-        match self {
-            Type::Scalar(scalar_type) => scalar_type,
-            Type::Required(wrapped) => wrapped.get_scalar(),
-            Type::Array(wrapped) => wrapped.get_scalar(),
-        }
-    }
-
-    
-    // if nonnull then the type is coerced to be nonnull at all levels
-    pub fn rust_type(&self, nonnull: bool) -> String {
-        // Will never be called with Required variant.
-        fn do_rust_type(input: &Type, nonnull: bool) -> String {
-            match input {
-                Type::Scalar(wrapped) => {
-                    match wrapped {
-                        ScalarType::DefinedType(defined_type) => defined_type.rust_type(),
-                        ScalarType::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
-                    }
-                },
-                Type::Required(_) => unreachable!(),
-                Type::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(nonnull)),
-            }
-        }
-
-        if let Type::Required(wrapped) = self {
-            do_rust_type(wrapped, nonnull)
-        }
-        else {
-            if nonnull {
-                do_rust_type(self, nonnull)
-            }
-            else {
-                format!("Option<{}>", do_rust_type(self, nonnull))
-            }
-        }
-        // match self {
-            
-        //     Type::Scalar(scalar_type) => {
-        //         match scalar_type {
-        //             ScalarType::DefinedType(defined_type) => defined_type.rust_type().to_string(),
-        //             ScalarType::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
-        //         }
-        //     },
-        //     Type::Required(wrapped) => format!("{}!", wrapped.graphql_name()),
-        //     Type::Array(wrapped) => format!("[{}]", wrapped.graphql_name()),
-        // }
-    }
-
-     
-    // fn rust_type(&self, multiple: bool, nonnull: bool, schema: &Schema, maybe_optional: Maybe, alias: &Option<String>) -> String {
-    //     let base_type = 
-    //     match alias {
-    //         Some(alias) => to_pascal_case(alias),
-    //         None =>
-    //          match self {
-    //             Type::DefinedType(defined_type) => match defined_type {
-    //                 DefinedType::Enum(proxy) => to_pascal_case(&proxy.get(schema).name),
-    //                 DefinedType::Union(proxy) => to_pascal_case(&proxy.get(schema).name),
-    //                 DefinedType::Object(proxy) => to_pascal_case(&proxy.get(schema).name),
-    //                 DefinedType::Interface(proxy) => to_pascal_case(&proxy.get(schema).name),
-    //                 DefinedType::Scalar(proxy) => proxy.get(schema).rust_name.clone(),
-    //             },
-    //             Type::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
-    //     }
-            
-    //     };
-
-    //     let type2 = if multiple {
-    //         format!("Vec<{}>", base_type)
-    //     }
-    //     else {
-    //         base_type
-    //     };
-
-    //     if maybe_optional.isit(!nonnull) {
-    //         format!("Option<{}>", type2)
-    //     }
-    //     else {
-    //         type2
-    //     }
-    //     // if nonnull || !maybe_optional {
-    //     //     type2
-    //     // }
-    //     // else {
-    //     //     format!("Option<{}>", type2)
-    //     // }
-    // }
+    DefinedType(DefinedType),
+    BuiltinType(BuiltinType),
 }
 
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Scalar(scalar_type) => scalar_type.fmt(f),
-            Type::Required(wrapped) => write!(f, "{}!", wrapped),
-            Type::Array(wrapped) => write!(f, "[{}]", wrapped),
+            Type::DefinedType(defined_type) => defined_type.fmt(f),
+            Type::BuiltinType(builtin_type) => builtin_type.fmt(f),
         }
     }
 }
 
+impl Type {
+    // pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
+    //     match self {
+    //         // Type::DefinedType(content) => {content.print(out); Ok(0 as usize)},
+    //         Type::Int => out.write(b"Int"),
+    //         Type::Float => out.write(b"Float"),
+    //         Type::String => out.write(b"String"),
+    //         Type::Boolean => out.write(b"Boolean"),
+    //         Type::ID => out.write(b"ID"),
+    //         Type::Enum(content) => {content.print(out); Ok(0 as usize)},
+    //         Type::Union(content) => {content.print(out); Ok(0 as usize)},
+    //         Type::Object(content) => {content.print(out); Ok(0 as usize)},
+    //         Type::Interface(content) => {content.print(out); Ok(0 as usize)},
+    //         Type::Scalar(content) => {content.print(out); Ok(0 as usize)},
+    //     }?;
+    //     Ok(())
+    // }
 
+    // pub fn position(&self) -> &graphql_parser::Pos {
+    //     match self {
+    //         Type::Enum(content) => &content.position,
+    //         Type::Union(content) => &content.position,
+    //         Type::Object(content) => &content.position,
+    //         Type::Interface(content) => &content.position,
+    //         Type::Scalar(content) => &content.position,
+    //     }
+    // }
 
+    fn new(out: &mut Output, field: &parsed_model::Field, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Self {
+        match &field.ty {
+            parsed_model::Type::DefinedType(name) => {
+                if let Some(def) = named_types.get(name) {
+                    match def {
+                        parsed_model::TypeDefinition::Enum(content) => Type::DefinedType(DefinedType::Enum(EnumProxy::new(content.name.clone()))),
+                        parsed_model::TypeDefinition::Union(content) =>Type::DefinedType(DefinedType::Union(UnionProxy::new(content.name.clone()))),
+                        parsed_model::TypeDefinition::Object(content) =>Type::DefinedType(DefinedType::Object(ObjectProxy::new(content.name.clone()))),
+                        parsed_model::TypeDefinition::Interface(content) =>Type::DefinedType(DefinedType::Interface(InterfaceProxy::new(content.name.clone()))),
+                        parsed_model::TypeDefinition::Scalar(content) =>Type::DefinedType(DefinedType::Scalar(ScalarProxy::new(content.name.clone()))),
+                    }
+                }
+                else {
+                    out.error(GraphQLError::UndefinedTypeError(field.position.clone(), format!("Missing type {}", name)));
+                    Type::BuiltinType(BuiltinType::String) // TODO: is this what we want to do?
+                }
+            },
+            parsed_model::Type::BuiltinType(builtin_type) => Type::BuiltinType(*builtin_type),
+        }
+    }
 
+    fn from_validated(out: &mut Output<'_>, variable: &parsed_model::Field, schema: &Schema) -> Type {
+        match &variable.ty {
+            parsed_model::Type::DefinedType(name) => {
+                if let Some(def) = schema.defined_types.get(name) {
+                    match def {
+                        TypeDefinition::Enum(content) => Type::DefinedType(DefinedType::Enum(EnumProxy::new(content.name.clone()))),
+                        TypeDefinition::Union(content) =>Type::DefinedType(DefinedType::Union(UnionProxy::new(content.name.clone()))),
+                        TypeDefinition::Object(content) =>Type::DefinedType(DefinedType::Object(ObjectProxy { name: content.name.clone()})),
+                        TypeDefinition::Interface(content) =>Type::DefinedType(DefinedType::Interface(InterfaceProxy::new(content.name.clone()))),
+                        TypeDefinition::Scalar(content) =>Type::DefinedType(DefinedType::Scalar(ScalarProxy::new(content.name.clone()))),
+                    }
+                }
+                else {
+                    out.error(GraphQLError::UndefinedTypeError(variable.position.clone(), format!("Missing type {}", name)));
+                    Type::BuiltinType(BuiltinType::String) // TODO: is this what we want to do?
+                }
+            },
+            parsed_model::Type::BuiltinType(builtin_type) => Type::BuiltinType(*builtin_type),
+        }
+    }
 
+    fn graphql_name(&self, multiple: bool, nonnull: bool) -> String {
+        let base_type = match self {
+            Type::DefinedType(defined_type) => match defined_type {
+                DefinedType::Enum(proxy) => &proxy.name,
+                DefinedType::Union(proxy) => &proxy.name,
+                DefinedType::Object(proxy) => &proxy.name,
+                DefinedType::Interface(proxy) => &proxy.name,
+                DefinedType::Scalar(proxy) => &proxy.name,
+            },
+            Type::BuiltinType(builtin_type) => builtin_type.name(),
+        };
 
+        let type2 = if nonnull {
+            format!("{}!", base_type)
+        }
+        else {
+            base_type.to_string()
+        };
 
-
-
-// impl xType {
-//     // pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
-//     //     match self {
-//     //         // Type::DefinedType(content) => {content.print(out); Ok(0 as usize)},
-//     //         Type::Int => out.write(b"Int"),
-//     //         Type::Float => out.write(b"Float"),
-//     //         Type::String => out.write(b"String"),
-//     //         Type::Boolean => out.write(b"Boolean"),
-//     //         Type::ID => out.write(b"ID"),
-//     //         Type::Enum(content) => {content.print(out); Ok(0 as usize)},
-//     //         Type::Union(content) => {content.print(out); Ok(0 as usize)},
-//     //         Type::Object(content) => {content.print(out); Ok(0 as usize)},
-//     //         Type::Interface(content) => {content.print(out); Ok(0 as usize)},
-//     //         Type::Scalar(content) => {content.print(out); Ok(0 as usize)},
-//     //     }?;
-//     //     Ok(())
-//     // }
-
-//     // pub fn position(&self) -> &graphql_parser::Pos {
-//     //     match self {
-//     //         Type::Enum(content) => &content.position,
-//     //         Type::Union(content) => &content.position,
-//     //         Type::Object(content) => &content.position,
-//     //         Type::Interface(content) => &content.position,
-//     //         Type::Scalar(content) => &content.position,
-//     //     }
-//     // }
-
-//     fn new(out: &mut Output, field: &parsed_model::Field, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Self {
-//         match &field.ty {
-//             parsed_model::Type::DefinedType(name) => {
-//                 if let Some(def) = named_types.get(name) {
-//                     match def {
-//                         parsed_model::TypeDefinition::Enum(content) => Type::DefinedType(DefinedType::Enum(EnumProxy::new(content.name.clone()))),
-//                         parsed_model::TypeDefinition::Union(content) =>Type::DefinedType(DefinedType::Union(UnionProxy::new(content.name.clone()))),
-//                         parsed_model::TypeDefinition::Object(content) =>Type::DefinedType(DefinedType::Object(ObjectProxy::new(content.name.clone()))),
-//                         parsed_model::TypeDefinition::Interface(content) =>Type::DefinedType(DefinedType::Interface(InterfaceProxy::new(content.name.clone()))),
-//                         parsed_model::TypeDefinition::Scalar(content) =>Type::DefinedType(DefinedType::Scalar(ScalarProxy::new(content.name.clone()))),
-//                     }
-//                 }
-//                 else {
-//                     out.error(GraphQLError::UndefinedTypeError(field.position.clone(), format!("Missing type {}", name)));
-//                     Type::BuiltinType(BuiltinType::String) // TODO: is this what we want to do?
-//                 }
-//             },
-//             parsed_model::Type::BuiltinType(builtin_type) => Type::BuiltinType(*builtin_type),
-//         }
-//     }
-
-//     fn from_validated(out: &mut Output<'_>, variable: &parsed_model::Field, schema: &Schema) -> Type {
-//         match &variable.ty {
-//             parsed_model::Type::DefinedType(name) => {
-//                 if let Some(def) = schema.defined_types.get(name) {
-//                     match def {
-//                         TypeDefinition::Enum(content) => Type::DefinedType(DefinedType::Enum(EnumProxy::new(content.name.clone()))),
-//                         TypeDefinition::Union(content) =>Type::DefinedType(DefinedType::Union(UnionProxy::new(content.name.clone()))),
-//                         TypeDefinition::Object(content) =>Type::DefinedType(DefinedType::Object(ObjectProxy { name: content.name.clone()})),
-//                         TypeDefinition::Interface(content) =>Type::DefinedType(DefinedType::Interface(InterfaceProxy::new(content.name.clone()))),
-//                         TypeDefinition::Scalar(content) =>Type::DefinedType(DefinedType::Scalar(ScalarProxy::new(content.name.clone()))),
-//                     }
-//                 }
-//                 else {
-//                     out.error(GraphQLError::UndefinedTypeError(variable.position.clone(), format!("Missing type {}", name)));
-//                     Type::BuiltinType(BuiltinType::String) // TODO: is this what we want to do?
-//                 }
-//             },
-//             parsed_model::Type::BuiltinType(builtin_type) => Type::BuiltinType(*builtin_type),
-//         }
-//     }
-
-//     fn graphql_name(&self, multiple: bool, nonnull: bool) -> String {
-//         let base_type = match self {
-//             Type::DefinedType(defined_type) => match defined_type {
-//                 DefinedType::Enum(proxy) => &proxy.name,
-//                 DefinedType::Union(proxy) => &proxy.name,
-//                 DefinedType::Object(proxy) => &proxy.name,
-//                 DefinedType::Interface(proxy) => &proxy.name,
-//                 DefinedType::Scalar(proxy) => &proxy.name,
-//             },
-//             Type::BuiltinType(builtin_type) => builtin_type.name(),
-//         };
-
-//         let type2 = if nonnull {
-//             format!("{}!", base_type)
-//         }
-//         else {
-//             base_type.to_string()
-//         };
-
-//         if multiple {
-//             format!("[{}]", type2)
-//         }
-//         else {
-//             type2
-//         }
-//     }
+        if multiple {
+            format!("[{}]", type2)
+        }
+        else {
+            type2
+        }
+    }
      
-//     fn rust_type(&self, multiple: bool, nonnull: bool, schema: &Schema, maybe_optional: Maybe, alias: &Option<String>) -> String {
-//         let base_type = 
-//         match alias {
-//             Some(alias) => to_pascal_case(alias),
-//             None =>
-//              match self {
-//                 Type::DefinedType(defined_type) => match defined_type {
-//                     DefinedType::Enum(proxy) => to_pascal_case(&proxy.get(schema).name),
-//                     DefinedType::Union(proxy) => to_pascal_case(&proxy.get(schema).name),
-//                     DefinedType::Object(proxy) => to_pascal_case(&proxy.get(schema).name),
-//                     DefinedType::Interface(proxy) => to_pascal_case(&proxy.get(schema).name),
-//                     DefinedType::Scalar(proxy) => proxy.get(schema).rust_name.clone(),
-//                 },
-//                 Type::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
-//         }
+    fn rust_type(&self, multiple: bool, nonnull: bool, schema: &Schema, maybe_optional: Maybe, alias: &Option<String>) -> String {
+        let base_type = 
+        match alias {
+            Some(alias) => to_pascal_case(alias),
+            None =>
+             match self {
+                Type::DefinedType(defined_type) => match defined_type {
+                    DefinedType::Enum(proxy) => to_pascal_case(&proxy.get(schema).name),
+                    DefinedType::Union(proxy) => to_pascal_case(&proxy.get(schema).name),
+                    DefinedType::Object(proxy) => to_pascal_case(&proxy.get(schema).name),
+                    DefinedType::Interface(proxy) => to_pascal_case(&proxy.get(schema).name),
+                    DefinedType::Scalar(proxy) => proxy.get(schema).rust_name.clone(),
+                },
+                Type::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
+        }
             
-//         };
+        };
 
-//         let type2 = if multiple {
-//             format!("Vec<{}>", base_type)
-//         }
-//         else {
-//             base_type
-//         };
+        let type2 = if multiple {
+            format!("Vec<{}>", base_type)
+        }
+        else {
+            base_type
+        };
 
-//         if maybe_optional.isit(!nonnull) {
-//             format!("Option<{}>", type2)
-//         }
-//         else {
-//             type2
-//         }
-//         // if nonnull || !maybe_optional {
-//         //     type2
-//         // }
-//         // else {
-//         //     format!("Option<{}>", type2)
-//         // }
-//     }
+        if maybe_optional.isit(!nonnull) {
+            format!("Option<{}>", type2)
+        }
+        else {
+            type2
+        }
+        // if nonnull || !maybe_optional {
+        //     type2
+        // }
+        // else {
+        //     format!("Option<{}>", type2)
+        // }
+    }
      
-// }
+}
 
 
 
@@ -367,6 +179,7 @@ impl Display for Type {
 
 
 // Unordered --------------------------------------------------------------------------------------------------------------------------------------------
+
 #[derive(Debug, Clone, Copy)]
 pub enum Maybe {
     True,
@@ -524,16 +337,6 @@ impl Display for DefinedType {
 }
 
 impl DefinedType {
-    pub fn name(&self) -> &str {
-        match self {
-            DefinedType::Enum(proxy) => &proxy.name,
-            DefinedType::Union(proxy) => &proxy.name,
-            DefinedType::Object(proxy) => &proxy.name,
-            DefinedType::Interface(proxy) => &proxy.name,
-            DefinedType::Scalar(proxy) => &proxy.name,
-        }
-    }
-
     pub fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), GraphQLError> {
         match self {
             DefinedType::Enum(proxy) => proxy.get(schema).generate(out, schema, selections,),
@@ -543,17 +346,8 @@ impl DefinedType {
             DefinedType::Scalar(proxy) => proxy.get(schema).generate(out, schema),
         }
     }
-    
-    fn rust_type(&self) -> String {
-        match self {
-            DefinedType::Enum(proxy) => to_pascal_case(&proxy.name),
-            DefinedType::Union(proxy) => to_pascal_case(&proxy.name),
-            DefinedType::Object(proxy) => to_pascal_case(&proxy.name),
-            DefinedType::Interface(proxy) => to_pascal_case(&proxy.name),
-            DefinedType::Scalar(proxy) => to_pascal_case(&proxy.name),
-        }
-    }
 }
+
 
 
 
@@ -561,6 +355,8 @@ impl DefinedType {
 pub struct Field {
     pub name: String,
     pub position: graphql_parser::Pos,
+    pub multiple: bool,
+    pub nonnull: bool,
     pub ty: Type,
 }
 
@@ -575,6 +371,8 @@ impl Field {
             writeln!(out, "position:  {}", self.position)?;
             writeln!(out, "name:      {}", self.name)?;
             writeln!(out, "ty:        {}", self.ty)?;
+            writeln!(out, "nonnull:   {}", self.nonnull)?;
+            writeln!(out, "multiple:  {}", self.multiple)?;
             writeln!(out, "}}")?;
         }
         writeln!(out, "}}")
@@ -582,28 +380,32 @@ impl Field {
         
     }
     
-    fn new(parsed: &parsed_model::Field, schema: &parsed_model::Schema) -> Result<Field, GraphQLError> {
-        Ok(Field {
-            name: parsed.name.clone(),
-            position: parsed.position,
-            ty: Type::new(&parsed.ty, schema)?,
-        })
+    fn new(out: &mut Output, field: &parsed_model::Field, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Field {
+        Field {
+            name: field.name.clone(),
+            position: field.position,
+            multiple: field.multiple,
+            nonnull: field.nonnull,
+            ty: Type::new(out, field, named_types),
+        }
     }
 
-    // pub fn rust_type(&self, schema: &Schema, maybe_optional: Maybe, alias: &Option<String>) -> String {
-    //     self.ty.rust_type()   .rust_type(self.multiple, self.nonnull, schema, maybe_optional, alias)
-    // }
+    pub fn rust_type(&self, schema: &Schema, maybe_optional: Maybe, alias: &Option<String>) -> String {
+        self.ty.rust_type(self.multiple, self.nonnull, schema, maybe_optional, alias)
+    }
 
     pub fn graphql_name(&self) -> String {
-        self.ty.graphql_name()
+        self.ty.graphql_name(self.multiple, self.nonnull)
     }
     
-    fn from_variable(parsed: &parsed_model::Field, schema: &Schema) -> Result<Field, GraphQLError> {
-        Ok(Field {
-            name: parsed.name.clone(),
-            position: parsed.position,
-            ty: Type::from_validated(&parsed.ty, schema)?,
-        })
+    fn from_variable(out: &mut Output, variable: &parsed_model::Field, schema: &Schema) -> Field {
+        Field {
+            name: variable.name.clone(),
+            position: variable.position,
+            multiple: variable.multiple,
+            nonnull: variable.nonnull,
+            ty: Type::from_validated(out, variable, schema),
+        }
     }
 }
 
@@ -635,7 +437,7 @@ impl Enum {
         writeln!(out, "}}")
     }
 
-    pub fn new(parsed: &parsed_model::Enum) -> Enum {
+    pub fn new(_out: &mut Output, parsed: &parsed_model::Enum) -> Enum {
         Enum {
             position: parsed.position,
             name: parsed.name.clone(),
@@ -688,38 +490,29 @@ impl Union {
         writeln!(out, "}}")
     }
     
-    fn new(parsed: &parsed_model::Union, schema: &parsed_model::Schema) -> Result<Union, GraphQLError> {
+    fn new(out: &mut Output, parsed: &parsed_model::Union, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Union {
         let mut fields = HashMap::new();
-        let mut errors = Vec::new();
 
         for type_name in &parsed.types {
-            if let Some(defined_type) = schema.named_types.get(type_name) {
-                if let parsed_model::TypeDefinition::Object(object) = defined_type {
-                    for (name, field) in &object.fields {
-                        match Field::new(field, schema) {
-                            Ok(field) => { fields.insert(name.clone(), field);},
-                            Err(error) => {errors.push(error);},
-                        };
+            if let Some(defined_type) = named_types.get(type_name) {
+                if let parsed_model::TypeDefinition::Object(interface) = defined_type {
+                    for (name, field) in &interface.fields {
+                        fields.insert(name.clone(), Field::new(out, field, &named_types));
                     }
                 }
                 else {
-                    errors.push(GraphQLError::TypeMismatchError(parsed.position, format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
+                    out.error(GraphQLError::TypeMismatchError(parsed.position, format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
                 }
             }
             else {
-                errors.push(GraphQLError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
+                out.error(GraphQLError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
             };
         }
 
-        if errors.is_empty() {
-            Ok(Union {
-                position: parsed.position,
-                name: parsed.name.clone(),
-                fields,
-            })
-        }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
+        Union {
+            position: parsed.position,
+            name: parsed.name.clone(),
+            fields,
         }
     }
     
@@ -793,12 +586,11 @@ impl Object {
         writeln!(out, "}}")
     }
     
-    fn new(parsed: &parsed_model::Object, schema: &parsed_model::Schema) -> Result<Object, GraphQLError> {
+    fn new(out: &mut Output, parsed: &parsed_model::Object, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Object {
         let mut fully_implements = Vec::new();
-        let mut errors = Vec::new();
 
         for interface_name in &parsed.implements {
-            if let Some(defined_type) = schema.named_types.get(interface_name) {
+            if let Some(defined_type) = named_types.get(interface_name) {
                 if let parsed_model::TypeDefinition::Interface(interface) = defined_type {
                     let mut ok = true;
                     for field_name in &interface.field_names {
@@ -812,37 +604,27 @@ impl Object {
                     }
                 }
                 else {
-                    errors.push(GraphQLError::TypeMismatchError(parsed.position, format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
+                    out.error(GraphQLError::TypeMismatchError(parsed.position, format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
                 }
             }
             else {
-                errors.push(GraphQLError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
+                out.error(GraphQLError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
             };
         }
 
         let mut fields = HashMap::new();
 
         for (name, field) in &parsed.fields {
-            match Field::new(field, schema) {
-                Ok(field) => { fields.insert(name.clone(), field);},
-                Err(error) => {errors.push(error);},
-            };
+            fields.insert(name.clone(), Field::new(out, field, &named_types));
         }
 
-        if errors.is_empty() {
-            Ok(Object {
-                position: parsed.position,
-                name: parsed.name.clone(),
-                fully_implements: InterfaceListProxy::new(fully_implements),
-                fields,
-                is_input: parsed.is_input,
-            })
+        Object {
+            position: parsed.position,
+            name: parsed.name.clone(),
+            fully_implements: InterfaceListProxy::new(fully_implements),
+            fields,
+            is_input: parsed.is_input,
         }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
-        }
-
-        
     }
     
     fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), GraphQLError> {
@@ -936,7 +718,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Ve
                 if let Some(field) = fields.get(&selection_field.name) {
                     // writeln!(out, "// T3 {} {}", name, selection_field.optional)?;
                     writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
-                    writeln!(out, "    pub {}_: {},", to_snake_case(&selection_field.name), field.ty.rust_type(selection_field.nonnull));
+                    writeln!(out, "    pub {}_: {},", to_snake_case(&selection_field.name), field.rust_type(schema, selection_field.optional, &selection_field.alias))?;
                 }
                 else {
                     writeln!(out, "UNKNOWN FIELD 1 {}", &selection_field.name)?;
@@ -951,7 +733,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Ve
             if &selection_field.name == TYPE_NAME {}
             else {
                 if let Some(field) = fields.get(&selection_field.name) {
-                    if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
+                    if let Type::DefinedType(defined_type) = &field.ty {
                         defined_type.generate(out, schema, Some(&selection_field.selections), &selection_field.alias)?;
                     }
                 }
@@ -1001,7 +783,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Ve
     else {
         for (name, field) in fields {
             writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
-            writeln!(out, "    pub {}_: {},", to_snake_case(&name), field.ty.rust_type(false))?;
+            writeln!(out, "    pub {}_: {},", to_snake_case(&name), field.rust_type(schema, Maybe::Maybe, &None))?;
         }
     
         writeln!(out, "}}")?;
@@ -1028,7 +810,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Ve
             writeln!(out, "pub struct {}Builder {{", rust_name)?;
 
             for (name, field) in fields {
-                writeln!(out, "    {}_: {},", to_snake_case(&name), field.ty.rust_type(false));
+                writeln!(out, "    {}_: {},", to_snake_case(&name), field.rust_type(schema, Maybe::True, &None))?;
             }
         
             writeln!(out, "}}")?;
@@ -1039,7 +821,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Ve
                 let mut out = out.indent();
 
                 for (name, field) in fields {
-                    writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&name), field.ty.rust_type(false))?;
+                    writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&name), field.rust_type(schema, Maybe::False, &None))?;
                     {
                         let mut out = out.indent();
 
@@ -1054,7 +836,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Ve
                     let mut out = out.indent();
 
                     for (name, field) in fields {
-                        if let Type::Required(_) = field.ty {
+                        if field.nonnull {
                             writeln!(out, "if let None = self.{}_ {{", to_snake_case(&name))?;
                             writeln!(out, "    return Err(sparko_graphql::error::Error::MissingRequiredValueError(\"{}\"))", name)?;
                             writeln!(out, "}}")?;
@@ -1066,7 +848,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Ve
                         let mut out = out.indent();
     
                         for (name, field) in fields {
-                            if let Type::Required(_) = field.ty {
+                            if field.nonnull {
                                 writeln!(out, "{}_: self.{}_.unwrap(),", to_snake_case(&name), to_snake_case(&name))?;
                             }
                             else {
@@ -1117,11 +899,10 @@ impl Interface {
         writeln!(out, "}}")
     }
 
-    fn new(parsed: &parsed_model::Interface, schema: &parsed_model::Schema) -> Result<Interface, GraphQLError> {
+    pub fn new( out: &mut Output, parsed: &parsed_model::Interface, named_types: &HashMap<String, parsed_model::TypeDefinition>) -> Interface {
         let mut implemented_by = Vec::new();
-        let mut errors = Vec::new();
 
-        for (_, defined_type) in &schema.named_types {
+        for (_, defined_type) in named_types {
             if let parsed_model::TypeDefinition::Object(object_model) = defined_type {
                 for implements in &object_model.implements {
                     if implements == &parsed.name {
@@ -1157,24 +938,14 @@ impl Interface {
         let mut fields = HashMap::new();
 
         for (name, field) in &parsed.fields {
-            match Field::new(field, schema) {
-                Ok(field) => { fields.insert(name.clone(), field);},
-                Err(error) => {errors.push(error);},
-            };
+            fields.insert(name.clone(), Field::new(out, field, named_types));
         }
 
-        
-
-        if errors.is_empty() {
-            Ok(Interface {
-                position: parsed.position,
-                name: parsed.name.clone(),
-                implemented_by: ObjectListProxy::new(implemented_by),
-                fields,
-            })
-        }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
+        Interface {
+            position: parsed.position,
+            name: parsed.name.clone(),
+            implemented_by: ObjectListProxy::new(implemented_by),
+            fields,
         }
     }
     
@@ -1518,10 +1289,10 @@ impl<'a> Iterator for ObjectListProxyItertor<'a> {
 
 #[derive(Debug)]
 pub struct Schema {
-    pub defined_types: HashMap<String, TypeDefinition>,
-    pub query: ObjectProxy,
-    pub mutation: Option<ObjectProxy>,
-    pub subscription: Option<ObjectProxy>,
+    defined_types: HashMap<String, TypeDefinition>,
+    query: ObjectProxy,
+    mutation: Option<ObjectProxy>,
+    subscription: Option<ObjectProxy>,
 }
 
 impl Schema {
@@ -1605,26 +1376,18 @@ impl Schema {
     //     }
     // }
 
-    pub fn new(parsed: parsed_model::Schema, out: &mut Output) -> Result<Schema, GraphQLError> {
-
-        fn make_type(ty: &parsed_model::TypeDefinition, schema: &parsed_model::Schema) -> Result<TypeDefinition, GraphQLError> {
-            match ty {
-                parsed_model::TypeDefinition::Enum(enum_definition) => Ok(TypeDefinition::Enum(Enum::new(enum_definition))),
-                parsed_model::TypeDefinition::Union(union) => Ok(TypeDefinition::Union(Union::new(union, schema)?)),
-                parsed_model::TypeDefinition::Object(object) => Ok(TypeDefinition::Object(Object::new(object, schema)?)),
-                parsed_model::TypeDefinition::Interface(interface) => Ok(TypeDefinition::Interface(Interface::new(interface, schema)?)),
-                parsed_model::TypeDefinition::Scalar(type_def) => Ok(TypeDefinition::Scalar(Scalar::new(type_def))),
-            }
-        }
-
+    pub fn new(parsed: parsed_model::Schema, out: &mut Output) -> Result<Rc<Schema>, GraphQLError> {
         let mut defined_types: HashMap<String, TypeDefinition> = HashMap::new();
-        let mut errors = Vec::new();
+        
         
         for(name, ty) in &parsed.named_types {
-            match make_type(ty, &parsed) {
-                Ok(defined_type) =>  {defined_types.insert(name.clone(), defined_type);},
-                Err(error) => errors.push(error),
-            }
+            defined_types.insert(name.clone(), match ty {
+                parsed_model::TypeDefinition::Enum(enum_definition) => TypeDefinition::Enum(Enum::new(out, enum_definition)),
+                parsed_model::TypeDefinition::Union(union) => TypeDefinition::Union(Union::new(out, union, &parsed.named_types)),
+                parsed_model::TypeDefinition::Object(object) => TypeDefinition::Object(Object::new(out, object, &parsed.named_types)),
+                parsed_model::TypeDefinition::Interface(interface) => TypeDefinition::Interface(Interface::new(out, interface, &parsed.named_types)),
+                parsed_model::TypeDefinition::Scalar(type_def) => TypeDefinition::Scalar(Scalar::new(type_def)),
+            });
         }
 
         let query = if let Some(schema_definition) = &parsed.schema_definition {
@@ -1648,17 +1411,13 @@ impl Schema {
             Self::get_default_object(out, "Subscription", &defined_types, None)
         };
 
-        if errors.is_empty() {
-            Ok(Schema {
-                defined_types,
-                query: query.ok_or(GraphQLError::ValidationError)?,
-                mutation,
-                subscription,
-            })
-        }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
-        }
+        Ok(Rc::new(Schema {
+            defined_types,
+            query: query.ok_or(GraphQLError::ValidationError)?,
+            mutation,
+            subscription,
+        }))
+        
     }
 
 
@@ -1889,7 +1648,7 @@ pub enum Selection {
 } 
 
 impl Selection {
-    pub fn new(selection: parsed_model::Selection, schema: &Schema, context: &HashMap<std::string::String, Field>) -> Result<Selection, GraphQLError> {
+    pub fn new(selection: parsed_model::Selection, schema: &Schema, context: &HashMap<std::string::String, Field>, out: &mut Output) -> Result<Selection, GraphQLError> {
         match selection {
             parsed_model::Selection::Field(selection_field) => {
 
@@ -1899,9 +1658,12 @@ impl Selection {
             // context.print(out);
             // writeln!(out, "*/" );
 
-                Ok(Selection::Field(SelectionField::new(selection_field, schema, context)?))
+                Ok(Selection::Field(SelectionField::new(selection_field, schema, context, out)?))
             },
-            parsed_model::Selection::Fragment(fragment_spread) => todo!(),
+            parsed_model::Selection::Fragment(fragment) => {
+                todo!();
+                // Ok(Selection::FragmentSpread(FragmentSpread::new(fragment, schema, context, out)?))
+            },
             
             // graphql_parser::query::Selection::FragmentSpread(fragment_spread) => todo!(),
             // graphql_parser::query::Selection::InlineFragment(inline_fragment) => todo!(),
@@ -1910,7 +1672,8 @@ impl Selection {
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         match self {
-            Selection::Field(selection_field) => selection_field.print(out),
+            Selection::Field(value) => value.print(out),
+            // Selection::FragmentSpread(value) => value.print(out),
         }
     }
 
@@ -1974,15 +1737,14 @@ pub struct SelectionField {
     pub name: String,
     pub alias: Option<String>,
     pub position: graphql_parser::Pos,
-    pub nonnull: bool,
+    pub optional: Maybe,
     pub arguments: Vec<parsed_model::Argument>,
     pub selections: Vec<Selection>,
 }
 
 impl SelectionField {
-    pub fn new(parsed: parsed_model::SelectionField, schema: &Schema, context: &HashMap<std::string::String, Field>) -> Result<SelectionField, GraphQLError> {
+    pub fn new(parsed: parsed_model::SelectionField, schema: &Schema, context: &HashMap<std::string::String, Field>, out: &mut Output) -> Result<SelectionField, GraphQLError> {
         let mut arguments = Vec::new();
-        let mut errors = Vec::new();
         
         for parsed_argument in parsed.arguments {
             // arguments.push(Argument::new(prsed_argument));
@@ -1994,49 +1756,58 @@ impl SelectionField {
         if parsed.name == TYPE_NAME {
             println!("HERE1");
         }
-        else {
-            if let Some(field) = context.get(&parsed.name) {
-                if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
-                    let optional_fields =  match defined_type {
-                        DefinedType::Enum(_) => None,
-                        DefinedType::Union(proxy) => Some(&proxy.get(schema).fields),
-                        DefinedType::Object(proxy) => Some(&proxy.get(schema).fields),
-                        DefinedType::Interface(proxy) => Some(&proxy.get(schema).fields),
-                        DefinedType::Scalar(_) => None,
-                    };
-    
-                    if let Some(fields) = optional_fields {
-                        for selection in parsed.selections {
-                            match Selection::new(selection, schema, &fields) {
-                                Ok(selection) => selections.push(selection),
-                                Err(error) => errors.push(error),
-                            };
+        else  {
+                if let Some(field) = context.get(&parsed.name) {
+                    if parsed.optional && field.nonnull {
+                        out.error(GraphQLError::OptionalNonNullFieldError(parsed.position,parsed.name.clone()));
+                    }
+        
+                    if !parsed.selections.is_empty() {
+                        let optional_fields = match &field.ty {
+                            Type::BuiltinType(_) => None,
+                            Type::DefinedType(defined_type) => match defined_type {
+                                DefinedType::Enum(_) => None,
+                                DefinedType::Union(proxy) => Some(&proxy.get(schema).fields),
+                                DefinedType::Object(proxy) => Some(&proxy.get(schema).fields),
+                                DefinedType::Interface(proxy) => Some(&proxy.get(schema).fields),
+                                DefinedType::Scalar(_) => None,
+                            },
+                        };
+        
+                        if let Some(fields) = optional_fields {
+                            for selection in parsed.selections {
+                                match Selection::new(selection, schema, &fields, out) {
+                                    Ok(selection) => selections.push(selection),
+                                    Err(error) => out.error(error),
+                                };
+                            }
+                        }
+                        else {
+                            out.error(GraphQLError::TypeMismatchError(parsed.position, format!("Attribute selection given on incompatible type \"{}\"", field.ty)));
                         }
                     }
-                    else {
-                        errors.push(GraphQLError::TypeMismatchError(parsed.position, format!("Attribute selection given on incompatible type \"{}\"", field.ty)));
-                    }
+                    
                 }
-                
+                else {
+                    return Err(GraphQLError::MissingFieldError(parsed.position,parsed.name.clone()));
+                }
             }
-            else {
-                return Err(GraphQLError::MissingFieldError(parsed.position,parsed.name.clone()));
-            }
-        }
-
-        if errors.is_empty() {
-            Ok(SelectionField {
-                name: parsed.name,
-                alias: parsed.alias,
-                position: parsed.position,
-                nonnull: !parsed.optional,
-                arguments,
-                selections,
-            })
+        
+        let optional = if parsed.optional {
+            Maybe::Maybe
         }
         else {
-            Err(GraphQLError::MultipleErrors(errors))
-        }
+            Maybe::False
+        };
+
+        Ok(SelectionField {
+            name: parsed.name,
+            alias: parsed.alias,
+            position: parsed.position,
+            optional: optional,
+            arguments,
+            selections,
+        })
     }
 
 
@@ -2047,7 +1818,7 @@ impl SelectionField {
             let mut out = out.indent();
 
             writeln!(out, "name:      {}", self.name)?;
-            writeln!(out, "nonnull:  {}", self.nonnull)?;
+            writeln!(out, "optional:  {}", self.optional)?;
             writeln!(out, "arguments {{")?;
             {
                 let mut out = out.indent();
@@ -2121,14 +1892,14 @@ impl SelectionField {
         };
 
         writeln!(out, "#[serde(rename = \"{}\")]", &name)?;
-        writeln!(out, "/* HERE1 */ pub {}: {},", to_snake_case(&name), field.ty.rust_type(self.nonnull))?;
+        writeln!(out, "/* HERE1 */ pub {}: {},", to_snake_case(&name), field.rust_type(schema, maybe_optional, &self.alias))?;
         Ok(())
     }
 
     pub fn generate_structs(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema) -> Result<(), GraphQLError> {
         let field = context.get(&self.name).unwrap();
 
-        if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
+        if let Type::DefinedType(defined_type) = &field.ty {
             writeln!(out, "// {} is {}", &self.name, defined_type)?;
             
             defined_type.generate(out, schema, Some(&self.selections), &self.alias)?;
@@ -2192,6 +1963,242 @@ impl SelectionField {
     // }
 }
 
+
+#[derive(Debug)]
+pub struct FragmentSpread {
+    pub name: String,
+    // pub alias: Option<String>,
+    pub position: graphql_parser::Pos,
+    // pub optional: Maybe,
+    // pub arguments: Vec<parsed_model::Argument>,
+    // pub selections: Vec<Selection>,
+}
+
+impl FragmentSpread {
+    pub fn new(parsed: parsed_model::FragmentSpread, schema: &Schema, context: &HashMap<std::string::String, Field>, out: &mut Output) -> Result<FragmentSpread, GraphQLError> {
+        // // let mut arguments = Vec::new();
+        
+        // // for parsed_argument in parsed.arguments {
+        // //     // arguments.push(Argument::new(prsed_argument));
+        // //     arguments.push(parsed_argument);
+        // // }
+        
+        // let mut selections = Vec::new();
+
+        // if parsed.name == TYPE_NAME {
+        //     println!("HERE1");
+        // }
+        // else  {
+        //         if let Some(field) = context.get(&parsed.name) {
+        //             if parsed.optional && field.nonnull {
+        //                 out.error(GraphQLError::OptionalNonNullFieldError(parsed.position,parsed.name.clone()));
+        //             }
+        
+        //             if !parsed.selections.is_empty() {
+        //                 let optional_fields = match &field.ty {
+        //                     Type::Int => None,
+        //                     Type::Float => None,
+        //                     Type::String => None,
+        //                     Type::Boolean => None,
+        //                     Type::ID => None,
+        //                     Type::DefinedType(defined_type) => match defined_type {
+        //                         DefinedType::Enum(_) => None,
+        //                         DefinedType::Union(proxy) => Some(&proxy.get(schema).fields),
+        //                         DefinedType::Object(proxy) => Some(&proxy.get(schema).fields),
+        //                         DefinedType::Interface(proxy) => Some(&proxy.get(schema).fields),
+        //                         DefinedType::Scalar(_) => None,
+        //                     },
+        //                 };
+        
+        //                 if let Some(fields) = optional_fields {
+        //                     for selection in parsed.selections {
+        //                         match Selection::new(selection, schema, &fields, out) {
+        //                             Ok(selection) => selections.push(selection),
+        //                             Err(error) => out.error(error),
+        //                         };
+        //                     }
+        //                 }
+        //                 else {
+        //                     out.error(GraphQLError::TypeMismatchError(parsed.position, format!("Attribute selection given on incompatible type \"{}\"", field.ty)));
+        //                 }
+        //             }
+                    
+        //         }
+        //         else {
+        //             return Err(GraphQLError::MissingFieldError(parsed.position,parsed.name.clone()));
+        //         }
+        //     }
+        
+        // let optional = if parsed.optional {
+        //     Maybe::Maybe
+        // }
+        // else {
+        //     Maybe::False
+        // };
+
+        Ok(FragmentSpread {
+            name: parsed.name,
+            // alias: parsed.alias,
+            position: parsed.position,
+            // optional: optional,
+            // arguments,
+            // selections,
+        })
+    }
+
+
+
+    pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
+        writeln!(out, "FragmentSpread {{")?;
+        {
+            let mut out = out.indent();
+
+            writeln!(out, "name:      {}", self.name)?;
+            // writeln!(out, "optional:  {}", self.optional)?;
+            // writeln!(out, "arguments {{")?;
+            // {
+            //     let mut out = out.indent();
+
+            //     for argument in &self.arguments {
+            //         argument.print(&mut out)?;
+            //     }
+            // }
+            // writeln!(out, "}}")?;
+
+            // writeln!(out, "selections {{")?;
+            // {
+            //     let mut out = out.indent();
+
+            //     for selection in &self.selections {
+            //         selection.print(&mut out)?;
+            //     }
+            // }
+            // writeln!(out, "}}")?;
+        }
+        writeln!(out, "}}")
+    }
+
+    pub fn generate_query(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: Maybe) -> Result<(), GraphQLError> {
+        // // let field = context.get(&self.name).unwrap();
+        // if let Some(alias) = &self.alias {
+        //     writeln!(out, "{}: {}", alias, &self.name)?;
+        // }
+        // else {
+        //     writeln!(out, "{}", &self.name)?;
+        // }
+
+        // if ! self.arguments.is_empty() {
+        //     writeln!(out, "(")?;
+        //     {
+        //         let mut out = out.indent();
+
+            
+        //         for argument in &self.arguments {
+        //             argument.generate_query(&mut out, &context, schema, true)?;
+        //         }
+        //     }
+        //     writeln!(out, ")")?;
+        // }
+
+        // if ! &self.selections.is_empty() {
+        //     writeln!(out, "{{")?;
+        //     {
+        //         let mut out = out.indent();
+
+            
+        //         for selection in &self.selections {
+        //             selection.generate_query(&mut out, &context, schema, Maybe::Maybe)?;
+        //         }
+        //     }
+        //     writeln!(out, "}}")?;
+        // }
+        Ok(())
+    }
+
+    pub fn generate_fields(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: Maybe) -> Result<(), GraphQLError> {
+        // if &self.name == TYPE_NAME {
+        //     println!("HERE");
+        // }
+        // let field = context.get(&self.name).unwrap();
+        // let name = if let Some(alias) = &self.alias {
+        //     alias
+        // }
+        // else {
+        //     &self.name
+        // };
+
+        // writeln!(out, "#[serde(rename = \"{}\")]", &name)?;
+        // writeln!(out, "/* HERE1 */ pub {}: {},", to_snake_case(&name), field.rust_type(schema, maybe_optional, &self.alias))?;
+        Ok(())
+    }
+
+    pub fn generate_structs(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema) -> Result<(), GraphQLError> {
+        // let field = context.get(&self.name).unwrap();
+
+        // if let Type::DefinedType(defined_type) = &field.ty {
+        //     writeln!(out, "// {} is {}", &self.name, defined_type)?;
+            
+        //     defined_type.generate(out, schema, Some(&self.selections), &self.alias)?;
+
+        //     // let fields = defined_type.fields();
+
+        //     // writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+        //     // writeln!(out, "#[serde(rename = \"{}\")]", defined_type.name)?;
+        //     // writeln!(out, "pub struct {} {{", name)?;
+        //     // {
+        //     //     let mut out = out.indent();
+
+        //     //     for selection in &self.selections {
+        //     //         // let context: HashMap<String, Field> = schema.query.get(schema).fields;
+
+        //     //         let ty: &TypeDefinition = schema.defined_types.get(&self.name).unwrap();
+        //     //         let x = ty.
+        //     //         selection.generate_fields(&mut out, &schema.defined_types.get(&self.name).unwrap().fields, schema)?;
+        //     //         // writeln!(out, "    #[serde(rename = \"{}\")]", &selection.name)?;
+        //     //         // writeln!(out, "    {},", to_constant_case(&selection.name))?;
+        //     //     }
+        //     // }
+        //     // writeln!(out, "}}")?;
+        //     // writeln!(out, "")?;
+        // }
+        // else {
+        //     writeln!(out, "// Nothing to generate because {} is {}", &self.name, field.ty)?;
+        // }
+        // // if !self.selections.is_empty() {
+        // //     let name = to_pascal_case(&self.name);
+        // //     self.
+
+            
+
+        // //     for selection in &self.selections {
+        // //         // let context: HashMap<String, Field> = schema.query.get(schema).fields;
+
+        // //         selection.generate_structs(out, &schema.query.get(schema).fields, schema)?;
+        // //         // writeln!(out, "    #[serde(rename = \"{}\")]", &selection.name)?;
+        // //         // writeln!(out, "    {},", to_constant_case(&selection.name))?;
+        // //     }
+
+        // // }
+        Ok(())
+    }
+    
+    // pub fn generate(&mut self, out: &mut Output) -> Result<(), GraphQLError> {
+    //     // if !self.variables.is_empty() {
+
+    //     //     writeln!(out, "struct {} {{", &to_pascal_case(&format!("{}Variables", &self.name)))?;
+    //     //     {
+    //     //         let mut out = out.indent();
+
+    //     //         for variable in &mut self.variables {
+    //     //             writeln!(out, "{}_: {},", &to_snake_case(&variable.name), &to_pascal_case(&variable.type_name))?;
+    //     //         }
+    //     //     }
+    //     //     writeln!(out, "}}")?;
+    //     // }
+    //     Ok(())
+    // }
+}
+
 #[derive(Debug)]
 pub enum OperationType {
     Query,
@@ -2224,27 +2231,183 @@ impl OperationType {
     }
 }
 
+
+// #[derive(Debug)]
+// pub enum SelectionType {
+//     Type(Type),
+//     SelectionSet(SelectionSet),
+// }
+
+// #[derive(Debug)]
+// pub struct SelectionItem {
+//     pub name: String,
+//     pub position: graphql_parser::Pos,
+//     pub selection_type: SelectionType,
+//     pub optional: Maybe,
+// }
+
+// impl SelectionItem {
+//     pub fn from_field(parsed: parsed_model::SelectionField, schema: &Schema, context: &HashMap<std::string::String, Field>, out: &mut Output) -> Result<SelectionItem, GraphQLError> {
+        
+//         // let selection_type: SelectionType;
+//         let mut arguments = Vec::new();
+        
+//         for parsed_argument in parsed.arguments {
+//             // arguments.push(Argument::new(prsed_argument));
+//             arguments.push(parsed_argument);
+//         }
+        
+//         // let mut selections = Vec::new();
+
+//         let selection_type = if parsed.name == TYPE_NAME {
+//             if !parsed.selections.is_empty() {
+//                 return Err(GraphQLError::TypeMismatchError(parsed.position, format!("Attribute selection given on \"{}\"", TYPE_NAME)));
+//             }
+//             SelectionType::Type(Type::String)
+//         }
+//         else  {
+//             if let Some(field) = context.get(&parsed.name) {
+//                 if parsed.optional && field.nonnull {
+//                     out.error(GraphQLError::OptionalNonNullFieldError(parsed.position,parsed.name.clone()));
+//                 }
+                
+//                 if let Type::DefinedType(defined_type) = &field.ty {
+//                     SelectionType::SelectionSet(SelectionSet::new(parsed.selections, schema, context, out)?)
+//                 }
+//                 else {
+//                     if !parsed.selections.is_empty() {
+//                         return Err(GraphQLError::TypeMismatchError(parsed.position, format!("Attribute selection given on \"{}\" (which is type {})", TYPE_NAME, &field.ty)));
+//                     }
+//                     SelectionType::Type(field.ty)
+//                 }
+                
+                
+               
+
+
+
+//                 // if !parsed.selections.is_empty() {
+//                 //     let optional_fields = match &field.ty {
+//                 //         Type::Int => None,
+//                 //         Type::Float => None,
+//                 //         Type::String => None,
+//                 //         Type::Boolean => None,
+//                 //         Type::ID => None,
+//                 //         Type::DefinedType(defined_type) => match defined_type {
+//                 //             DefinedType::Enum(_) => None,
+//                 //             DefinedType::Union(proxy) => Some(&proxy.get(schema).fields),
+//                 //             DefinedType::Object(proxy) => Some(&proxy.get(schema).fields),
+//                 //             DefinedType::Interface(proxy) => Some(&proxy.get(schema).fields),
+//                 //             DefinedType::Scalar(_) => None,
+//                 //         },
+//                 //     };
+    
+//                 //     if let Some(fields) = optional_fields {
+//                 //         for selection in parsed.selections {
+//                 //             match Selection::new(selection, schema, &fields, out) {
+//                 //                 Ok(selection) => selections.push(selection),
+//                 //                 Err(error) => out.error(error),
+//                 //             };
+//                 //         }
+//                 //     }
+//                 //     else {
+//                 //         out.error(GraphQLError::TypeMismatchError(parsed.position, format!("Attribute selection given on incompatible type \"{}\"", field.ty)));
+//                 //     }
+//                 // }
+                
+//             }
+//             else {
+//                 return Err(GraphQLError::MissingFieldError(parsed.position,parsed.name.clone()));
+//             }
+//         }
+        
+//         let optional = if parsed.optional {
+//             Maybe::Maybe
+//         }
+//         else {
+//             Maybe::False
+//         };
+
+//         // Ok(SelectionField {
+//         //     name: parsed.name,
+//         //     alias: parsed.alias,
+//         //     position: parsed.position,
+//         //     optional: optional,
+//         //     arguments,
+//         //     selections,
+//         // })
+        
+//         Ok(SelectionItem {
+//             name: parsed.name,
+//             position: parsed.position,
+//             selection_type,
+//             optional,
+//         })
+//     }
+// }
+
+// /*
+//     Represents a set of selected fields and variables, as conained in a query or another SelectionSet
+// */
+// #[derive(Debug)]
+// pub struct SelectionSet {
+//     items: IndexMap<String, SelectionItem>,
+//     variables: IndexMap<String, Field>,
+// }
+
+// impl SelectionSet {
+//     pub fn new(parsed_selections: Vec<parsed_model::Selection>, schema: &Schema, context: &HashMap<std::string::String, Field>, out: &mut Output) -> Result<SelectionSet, GraphQLError> {
+//         let mut selection_set = SelectionSet {
+//             items: IndexMap::new(),
+//             variables: IndexMap::new(),
+//         };
+
+//         for selection in &parsed_selections {
+//             selection_set.merge(selection, schema, context, out);
+//         }
+
+//         Ok(selection_set)
+//     }
+    
+//     fn merge(&mut self, selection: &parsed_model::Selection, schema: &Schema, context: &HashMap<std::string::String, Field>, out: &mut Output) -> Result<(), GraphQLError> {
+//         // match selection {
+//         //     parsed_model::Selection::Field(selection_field) => {
+//         //         if let Some(existing) = self.items.get(&selection_field.name) {
+
+//         //         }
+//         //         else {
+//         //             self.items.insert(selection_field.name.clone(), SelectionItem::from_field(selection_field, schema, context, out));
+//         //         }
+//         //     },
+//         //     parsed_model::Selection::Fragment(fragment_spread) => todo!(),
+//         // }
+        
+//         Ok(())
+//     }
+// }
+
 #[derive(Debug)]
 pub struct GenericOperation {
     pub name: String,
     pub position: graphql_parser::Pos,
     pub operation: OperationType,
     // context: &HashMap<String, Field>,
-    variables: HashMap<String, Field>,
-    selections: Vec<Selection>,
+    // variables: HashMap<String, Field>,
+    // selections: Vec<Selection>,
+    selection: SelectionSet,
 }
 
 impl GenericOperation {
     pub fn from_query(parsed: parsed_model::Query, schema:  &Schema, out: &mut Output) ->  Result<GenericOperation, GraphQLError> {
         Self::new(OperationType::Query, 
             parsed.name, parsed.position,
-            parsed.variables, parsed.selections, schema)
+            parsed.variables, parsed.selections, schema, out)
     }
 
     pub fn from_mutation(parsed: parsed_model::Mutation, schema:  &Schema, out: &mut Output) ->  Result<GenericOperation, GraphQLError> {
         Self::new(OperationType::Mutation, 
             parsed.name, parsed.position,
-            parsed.variables, parsed.selections, schema)
+            parsed.variables, parsed.selections, schema, out)
     }
     
     // pub fn from_subscription(parsed: graphql_parser::Subscription, schema:  &Schema, out: &mut Output) ->  Result<GenericOperation, GraphQLError> {
@@ -2271,48 +2434,46 @@ impl GenericOperation {
         Self::get_context2(&self.operation, &self.name, &self.position, schema)
     }
 
-    fn new(operation: OperationType, name: String, position: graphql_parser::Pos, parsed_variables: Vec<parsed_model::Field>, parsed_selections: Vec<parsed_model::Selection>, schema: &Schema) -> Result<GenericOperation, GraphQLError> {
+    fn new(operation: OperationType, name: String, position: graphql_parser::Pos, parsed_variables: Vec<parsed_model::Field>, parsed_selections: Vec<parsed_model::Selection>, schema: &Schema, out: &mut Output<'_>) -> Result<GenericOperation, GraphQLError> {
+        let context= Self::get_context2(&operation, &name, &position, schema)?;
+        let mut selection_set = SelectionSet::new(parsed_selections, schema, context, out);
+
+        for selection in &parsed_selections {
+            selection_set.merge(selection, schema, context, out);
+        }
+
+
+
 
         let mut variables = HashMap::new();
-        let mut errors = Vec::new();
 
         for variable in &parsed_variables {
-            match Field::from_variable(variable, schema) {
-                Ok(field) => {
-                    if let Some(existing) = variables.insert(variable.name.clone(), field) {
-                        errors.push(GraphQLError::DuplicateName(existing.position, variable.position, variable.name.clone()));
-                    }
-                },
-                Err(error) => errors.push(error),
+            if let Some(existing) = variables.insert(variable.name.clone(), Field::from_variable(out, variable, schema)) {
+                out.error(GraphQLError::DuplicateName(existing.position, variable.position, variable.name.clone()));
             }
         }
 
-        let context= Self::get_context2(&operation, &name, &position, schema)?;
+        
         
         let mut selections = Vec::new();
         for selection in parsed_selections {
             
             // selections.push(Selection::new(selection, schema, &schema.query.get(schema).fields, out));
-            match Selection::new(selection, schema, context) {
+            match Selection::new(selection, schema, context, out) {
                 Ok(selection) => selections.push(selection),
-                Err(error) => errors.push(error),
+                Err(error) => out.error(error),
             };
         }
 
-        if errors.is_empty() {
-            Ok(GenericOperation {
-                // parsed,
-                name,
-                position,
-                operation,
-                // context,
-                variables,
-                selections,
-            })
-        }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
-        }
+        Ok(GenericOperation {
+            // parsed,
+            name,
+            position,
+            operation,
+            // context,
+            variables,
+            selections,
+        })
     }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
@@ -2383,7 +2544,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                 
                     for (name, field) in &self.variables {
                         writeln!(out, "#[serde(rename = \"{}\")]", &field.name)?;
-                        writeln!(out, "{}_: {},", to_snake_case(&name), field.ty.rust_type(false))?;
+                        writeln!(out, "{}_: {},", to_snake_case(&name), field.rust_type(schema, Maybe::Maybe, &None))?;
                     }
                 }
 
@@ -2451,7 +2612,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                         let mut out = out.indent();
                     
                         for (name, field) in &self.variables {
-                            writeln!(out, "{}_: {},", to_snake_case(&name), field.ty.rust_type(false))?;
+                            writeln!(out, "{}_: {},", to_snake_case(&name), field.rust_type(schema, Maybe::Maybe, &None))?;
                         }
                     }
                     writeln!(out, ") -> {} {{", self.operation)?;
@@ -2530,8 +2691,8 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                 // writeln!(out, "    {},", to_constant_case(&selection.name))?;
             }
 
-            for (_name, field) in &self.variables {
-                if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
+            for (name, field) in &self.variables {
+                if let Type::DefinedType(defined_type) = &field.ty {
                     defined_type.generate(&mut out, schema, None, &None)?;
                 }
             }

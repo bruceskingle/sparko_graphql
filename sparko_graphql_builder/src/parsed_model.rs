@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 // use inflections::case::to_snake_case;
 
+use graphql_parser::Pos;
 use inflections::case::to_snake_case;
 
 // use crate::utils::to_pascal_case;
@@ -12,8 +13,227 @@ use crate::error::GraphQLError;
 use crate::Output;
 use crate::validated_model;
 
+#[derive(Debug, Clone, Copy)]
+pub enum BuiltinType {
+    Int,
+    Float,
+    String,
+    Boolean,
+    ID,
+}
+
+impl BuiltinType {
+    pub fn from_str(v: &str) -> Option<BuiltinType> {
+        match v {
+            "Boolean" => Some(BuiltinType::Boolean),
+            "Float" => Some(BuiltinType::Float),
+            "ID" => Some(BuiltinType::ID),
+            "Int" => Some(BuiltinType::Int),
+            "String" => Some(BuiltinType::String),
+
+            _ => None,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            BuiltinType::Int =>"Int",
+            BuiltinType::Float =>"Float",
+            BuiltinType::String =>"String",
+            BuiltinType::Boolean =>"Boolean",
+            BuiltinType::ID =>"ID",
+        }
+    }
+
+    pub fn rust_type(&self) -> &'static str {
+        match self {
+            BuiltinType::Int =>"i32",
+            BuiltinType::Float =>"f64",
+            BuiltinType::String =>"String",
+            BuiltinType::Boolean =>"bool",
+            BuiltinType::ID =>"String",
+        }
+    }
+}
+
+impl Display for BuiltinType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
+#[derive(Debug)]
+pub enum ScalarType {
+    DefinedType{name: String, position: Pos},
+    BuiltinType(BuiltinType),
+}
+
+impl ScalarType {
+    fn new(v: &str, position: &Pos) -> ScalarType {
+        if let Some(builtin_type) = BuiltinType::from_str(v) {
+            ScalarType::BuiltinType(builtin_type)
+        }
+        else {
+            ScalarType::DefinedType{ name: v.to_string(), position: position.clone()}
+        }
+    }
+}
+
+impl Display for ScalarType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScalarType::DefinedType{name, position} => write!(f, "{}", name),
+            ScalarType::BuiltinType(builtin_type) => builtin_type.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Type {
+    Scalar(ScalarType),
+    Required(Box<Type>),
+    Array(Box<Type>),
+}
+
+impl Type {
+    fn new(parsed: graphql_parser::schema::Type<'_, String>, position: &graphql_parser::Pos) -> Type {
+        match parsed {
+            graphql_parser::query::Type::NamedType(name) => Type::Scalar(ScalarType::new(&name, position)),
+            graphql_parser::query::Type::ListType(wrapped) => Type::Array(Box::new(Type::new(*wrapped, position))),
+            graphql_parser::query::Type::NonNullType(wrapped) => Type::Required(Box::new(Type::new(*wrapped, position))),
+        }
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Scalar(scalar_type) => scalar_type.fmt(f),
+            Type::Required(wrapped) => write!(f, "{}!", wrapped),
+            Type::Array(wrapped) => write!(f, "[{}]", wrapped),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::BaseOutput;
+
+    use super::*;
+
+    fn test_schema(schema: &str) -> BaseOutput {
+
+        let mut base_out = BaseOutput::new();
+        let mut out = base_out.indent();
+        let builder = crate::builder("test");
+        let _ = builder.do_build_schema(&mut out, schema);
+        
+        base_out
+    }
+
+    fn test_query(schema: &str, query: &str) -> BaseOutput {
+
+        let mut base_out = BaseOutput::new();
+        let mut out = base_out.indent();
+        let builder = crate::builder("test");
+        let schema = builder.do_build_schema(&mut out, schema).unwrap();
+        let _q = builder.do_build_query(&mut out, &schema, query, "test_query");
+        
+        base_out
+    }
+
+    #[test]
+    fn test_builtin_types() {
+        let out = test_schema(r#"
+type Query {
+    int: Int,
+    float: Float,
+    string: String,
+    boolean: Boolean,
+    id: ID,
+}
+"#);
+        out.expect_ok();        
+        // if let Some(GraphQLError::MissingInterfaceError(..)) = out.expect_one_error() {
+        //     return;
+        // }
+        // println!("{}", out);
+        // panic!("Expected missing interface");
+    }
+
+    #[test]
+    fn test_builtin_required_types() {
+        let out = test_schema(r#"
+type Query {
+    int: Int!,
+    float: Float!,
+    string: String!,
+    boolean: Boolean!,
+    id: ID!,
+}
+"#);
+        out.expect_ok();   
+    }
+
+    #[test]
+    fn test_builtin_multiple_types() {
+        let out = test_schema(r#"
+type Query {
+    int:[Int],
+    float: [Float],
+    string: [String],
+    boolean: [Boolean],
+    id: [ID],
+}
+"#);
+        out.expect_ok();   
+    }
+
+    #[test]
+    fn test_builtin_required_multiple_types() {
+        let out = test_schema(r#"
+    type Query {
+    int:[Int]!,
+    float: [Float]!,
+    string: [String]!,
+    boolean: [Boolean]!,
+    id: [ID]!,
+    }
+    "#);
+        out.expect_ok();   
+    }
+
+    #[test]
+    fn test_builtin_required_multiple_required_types() {
+        let out = test_schema(r#"
+    type Query {
+    int:[Int!]!,
+    float: [Float!]!,
+    string: [String!]!,
+    boolean: [Boolean!]!,
+    id: [ID!]!,
+    }
+    "#);
+        out.expect_ok();   
+    }
+
+    #[test]
+    fn test_builtin_required_multiple_required_types2() {
+        let out = test_schema(r#"
+    type Query {
+    int:[[Int!]!],
+    float: [[[Float!]!]!]!,
+    string: [[[String]]!],
+    boolean: [Boolean!]!,
+    id: [ID!]!,
+    }
+    "#);
+        out.expect_ok();   
+    }
+}
 
 
+// Unordered --------------------------------------------------------------------------------------------------------------------------------------------
 #[derive(Debug)]
 pub struct TypeDef {
     pub position: graphql_parser::Pos,
@@ -49,8 +269,8 @@ pub struct Field {
     pub position: graphql_parser::Pos,
     pub name: String,
     pub ty: Type,
-    pub nonnull: bool,
-    pub multiple: bool,
+    // pub nonnull: bool,
+    // pub multiple: bool,
 }
 
 impl Field {
@@ -62,8 +282,8 @@ impl Field {
             writeln!(out, "position:  {}", self.position)?;
             writeln!(out, "name:      {}", self.name)?;
             writeln!(out, "ty:        {}", self.ty)?;
-            writeln!(out, "nonnull:   {}", self.nonnull)?;
-            writeln!(out, "multiple:  {}", self.multiple)?;
+            // writeln!(out, "nonnull:   {}", self.nonnull)?;
+            // writeln!(out, "multiple:  {}", self.multiple)?;
             writeln!(out, "}}")?;
         }
         writeln!(out, "}}")
@@ -71,48 +291,26 @@ impl Field {
         
     }
 
-    fn do_new(position: graphql_parser::Pos, name: String, field_type: graphql_parser::query::Type<'_, String>, nonnull: bool, multiple: bool) -> Field {
-        match field_type {
-            graphql_parser::query::Type::NamedType(v) => {
-                let ty = match &v as &str {
-                    "Boolean" => Type::Boolean,
-                    //  "Date" => Type::Boolean,
-                    //  "DateTime" => Type::Boolean,
-                    "Float" => Type::Float,
-                    "ID" => Type::ID,
-                    "Int" => Type::Int,
-                    "String" => Type::String,
-
-                    _ => Type::DefinedType(v.clone()),
-                };
-
-                Field {
-                    position,
-                    name,
-                    ty,
-                    nonnull,
-                    multiple,
-                }
-            },
-            graphql_parser::query::Type::ListType(t) => {
-                Self::do_new(position, name, *t, nonnull, true)
-            },
-            graphql_parser::query::Type::NonNullType(t) => {
-                Self::do_new(position, name, *t, true, multiple)
-            },
-         }
+    fn do_new(position: graphql_parser::Pos, name: String, field_type: graphql_parser::schema::Type<'_, String>) -> Field {
+        let ty = Type::new(field_type, &position);
+        Field {
+            position,
+            name,
+            ty,
+        }
+        
      }
 
      pub fn from_input_value(field: graphql_parser::schema::InputValue<'_, String>) -> Self {
-         Self::do_new(field.position, field.name, field.value_type, false, false)
+         Self::do_new(field.position, field.name, field.value_type)
      }
 
      pub fn from_field(field: graphql_parser::schema::Field<'_, String>) -> Self {
-         Self::do_new(field.position, field.name, field.field_type, false, false)
+         Self::do_new(field.position, field.name, field.field_type)
      }
     
     fn from_variable(variable: graphql_parser::query::VariableDefinition<'_, String>) -> Field {
-        Self::do_new(variable.position, variable.name, variable.var_type, false, false)
+        Self::do_new(variable.position, variable.name, variable.var_type)
     }
 }
 
@@ -163,69 +361,8 @@ impl Field {
 // }
 
 
-#[derive(Debug)]
-pub enum Type {
-    DefinedType(String),
-    Int,
-    Float,
-    String,
-    Boolean,
-    ID,
-}
-
-impl Display for Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Type::DefinedType(defined_type) => write!(f, "{}", defined_type),
-            Type::Int => write!(f, "Int"),
-            Type::Float => write!(f, "Float"),
-            Type::String => write!(f, "String"),
-            Type::Boolean => write!(f, "Boolean"),
-            Type::ID => write!(f, "ID"),
-        }
-    }
-}
-
-// impl Type {
-//     fn visit_type(field_type: &graphql_parser::query::Type<'_, String>, nonnull: bool, multiple: bool) -> Type {
-//         match field_type {
-//             graphql_parser::query::Type::NamedType(v) => {
-
-//                 let builtin_type = BuiltinType {
-//                     nonnull,
-//                     multiple,
-//                 };
-
-//                 match v as &str {
-//                     "Boolean" => Type::Boolean(builtin_type),
-//                     //  "Date" => Type::Boolean(builtin_type),
-//                     //  "DateTime" => Type::Boolean(builtin_type),
-//                     "Float" => Type::Float(builtin_type),
-//                     "ID" => Type::ID(builtin_type),
-//                     "Int" => Type::Int(builtin_type),
-//                     "String" => Type::String(builtin_type),
-
-//                     _ => Type::DefinedType(DefinedType {
-//                         name: to_pascal_case(v),
-//                         nonnull: builtin_type.nonnull,
-//                         multiple: builtin_type.multiple,
-//                     }),
-//                 }
-//             },
-//             graphql_parser::query::Type::ListType(t) => {
-//                 Self::visit_type(&*t, nonnull, multiple)
-//             },
-//             graphql_parser::query::Type::NonNullType(t) => {
-//                 Self::visit_type(&*t, true, multiple)
-//             },
-//          }
-//      }
 
 
-//      pub fn new(field_type: &graphql_parser::query::Type<'_, String>) -> Type {
-//         Self::visit_type(field_type, false, false)
-//      }
-// }
 
 
 #[derive(Debug)]
@@ -1199,9 +1336,35 @@ impl SelectionField {
 }
 
 #[derive(Debug)]
+pub struct FragmentSpread {
+    pub name: String,
+    pub position: graphql_parser::Pos,
+}
+
+impl FragmentSpread {
+    pub fn new(out: &mut Output, fragment: graphql_parser::query::FragmentSpread<'_, String>) -> FragmentSpread {
+        FragmentSpread {
+            position: fragment.position,
+            name: fragment.fragment_name,
+        }
+    }
+
+    pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
+        writeln!(out, "FragmentSpread {{")?;
+        {
+            let mut out = out.indent();
+
+            writeln!(out, "name:      {}", self.name)?;
+            writeln!(out, "position:  {}", self.position)?;
+        }
+        writeln!(out, "}}")
+    }
+}
+
+#[derive(Debug)]
 pub enum Selection {
     Field(SelectionField),
-    // FragmentSpread(FragmentSpread),
+    Fragment(FragmentSpread),
     // InlineFragment(InlineFragment),
 } 
 
@@ -1211,7 +1374,7 @@ impl Selection {
             graphql_parser::query::Selection::OptionalField(field) => 
                 Selection::Field(SelectionField::new(out, *field, true)),
             graphql_parser::query::Selection::Field(field) => Selection::Field(SelectionField::new(out, field, false)),
-            graphql_parser::query::Selection::FragmentSpread(_fragment_spread) => todo!(),
+            graphql_parser::query::Selection::FragmentSpread(fragment) => Selection::Fragment(FragmentSpread::new(out, fragment)),
             graphql_parser::query::Selection::InlineFragment(_inline_fragment) => todo!(),
         }
     }
@@ -1219,6 +1382,7 @@ impl Selection {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         match self {
             Selection::Field(selection_field) => selection_field.print(out),
+            Selection::Fragment(selection_fragment) => selection_fragment.print(out),
         }
     }
 
@@ -1360,6 +1524,7 @@ fn build_arguments(out: &mut Output, arguments: Vec<(String, graphql_parser::que
 
 pub struct Operations {
     pub name: String,
+    pub fragments: Vec<FragmentDefinition>,
     pub queries: Vec<Query>,
     pub mutations: Vec<Mutation>
 }
@@ -1378,6 +1543,7 @@ impl Operations {
         //     &model_name
         // });
 
+        let mut fragments = Vec::new();
         let mut queries = Vec::new();
         let mut mutations = Vec::new();
 
@@ -1426,14 +1592,18 @@ impl Operations {
                         },
                     }
                 },
-                graphql_parser::query::Definition::Fragment(_fragment_definition) => {
-                    unimplemented!()
+                graphql_parser::query::Definition::Fragment(fragment_definition) => {
+                    match FragmentDefinition::new(out, fragment_definition, schema) {
+                        Ok(fragment) => fragments.push(fragment),
+                        Err(error) => out.error(error),
+                    }
                 },
             }
         }
 
         Operations {
                 name,
+                fragments,
                 queries,
                 mutations,
             }
@@ -1557,6 +1727,85 @@ impl Mutation {
 
                 for variable in &self.variables {
                     variable.print(&mut out)?;
+                }
+            }
+            writeln!(out, "}}")?;
+        }
+        writeln!(out, "}}")
+    }
+}
+
+#[derive(Debug)]
+pub struct FragmentDefinition {
+    pub position: graphql_parser::Pos,
+    pub name: String,
+    pub selections: Vec<Selection>,
+    pub type_condition: String,
+}
+
+impl FragmentDefinition {
+    pub fn new(out: &mut Output, fragment_definition: graphql_parser::query::FragmentDefinition<'_, String>, _schema: &validated_model::Schema ) -> Result<FragmentDefinition, GraphQLError> {
+
+        let selections = build_selections(out, fragment_definition.selection_set);
+
+        if selections.is_empty() {
+            return Err(GraphQLError::InvalidQueryError(fragment_definition.position, format!("FragmentDefinition {} has no selection set", &fragment_definition.name)));
+        }
+
+        let type_condition = match fragment_definition.type_condition {
+            graphql_parser::query::TypeCondition::On(value) => value,
+        };
+
+
+        // for selection in selections {
+        //    let query_object = if let SelectionModel::Field(selection_field) = selection {
+
+        //         let query_object = if let Some(query_schema) = schema.query {
+        //             if let Some(query_schema_object) = schema.objects.get(&query_schema) {
+        //                 query_schema_object.fields.get(&selection_field.name)
+        //             } else {None}
+        //         } else {None};
+
+        //         if let Some(query_object) = query_object {
+        //             query_object
+        //         }
+        //         else {
+        //             return Err(GraphQLError::MissingObjectError(selection.position(), format!("Query {} has mising selection \"{}\"", name, selection_field.name)));
+        //         }
+        //     }
+        //     else {
+        //         return Err(GraphQLError::InvalidQueryError(selection.position(), format!("Query {} has invalid selection set, expected a field name", name)));
+        //     };
+        // }
+        
+
+        Ok(FragmentDefinition {
+            position: fragment_definition.position,
+            name: fragment_definition.name,
+            selections,
+            type_condition,
+            // query_object,
+        })
+    }
+    
+    // pub fn validate(&mut self, _out: &mut Output) -> Result<(), GraphQLError> {
+    //     Ok(())
+    // }
+
+    pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
+        writeln!(out, "Query {{")?;
+        {
+            let mut out = out.indent();
+
+            writeln!(out, "position:        {}", self.position)?;
+            writeln!(out, "name:            {}", self.name)?;
+            writeln!(out, "type_condition:  {}", self.type_condition)?;
+            writeln!(out, "selections {{")?;
+            {
+                let mut out = out.indent();
+
+                for selection in &self.selections {
+                    selection.print(&mut out)?;
                 }
             }
             writeln!(out, "}}")?;

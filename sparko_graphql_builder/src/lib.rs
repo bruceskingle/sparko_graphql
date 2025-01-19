@@ -16,41 +16,42 @@ mod validated_model;
 mod error;
 
 
+// #[derive(Debug)]
+// pub enum Error {
+//     InternalError(Box<dyn std::error::Error>),
+//     BuildFailed(String),
+// }
 
-// mod validated_model {
-//     pub struct Schema {}
-
-//     impl Schema {
-//         pub(crate) fn new(model: crate::parsed_model::Schema, out: &mut crate::Output<'_>) -> Result<Self, crate::error::GraphQLError> {
-//             Ok(Self {  })
-//         }
-        
-//         pub(crate) fn print(&self, out: &mut crate::Output<'_>) -> Result<(), crate::error::GraphQLError> {
-//             Ok(())
-//         }
-        
-//         pub(crate) fn generate(&self, out: &mut crate::Output<'_>) -> Result<(), crate::error::GraphQLError> {
-//             Ok(())
-//         }
+// impl From<std::io::Error> for Error {
+//     fn from(err: std::io::Error) -> Self {
+//         GraphQLError::InternalError(Box::new(err))
 //     }
+// }
 
-//     pub struct Operations {}
+// #[derive(Debug)]
+// pub enum BuildError {
+//     SchemaSyntaxError(graphql_parser::schema::ParseError),
+//     QuerySyntaxError(graphql_parser::query::ParseError),
+//     UndefinedTypeError(Pos, String),
+//     TypeMismatchError(Pos, String),
+//     MissingInterfaceError(Pos, String),
+//     MissingFieldError(Pos, String),
+//     OptionalNonNullFieldError(Pos, String),
+//     MissingObjectError(Pos, String),
+//     InvalidQueryError(Pos, String),
+//     UnsupportedError(Pos, String),
+//     DuplicateName(Pos, Pos, String),
+//     NoQueryDefinition,
+//     ValidationError,
+// }
 
-//     impl Operations {
-
-        
-//         pub(crate) fn print(&self, out: &mut crate::Output<'_>) -> Result<(), crate::error::GraphQLError> {
-//             Ok(())
-//         }
-        
-//         pub(crate) fn generate(&self, out: &mut crate::Output<'_>) -> Result<(), crate::error::GraphQLError> {
-//             Ok(())
-//         }
-        
-//         pub(crate) fn new(model: crate::parsed_model::Operations, out: &mut crate::Output<'_>, schema: &Schema) -> Result<Self, crate::error::GraphQLError> {
-//             Ok(Self {  })
-//         }
+// impl Display for BuildError {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         writeln!(f, "{:?}", self)
 //     }
+// }
+// pub struct ErrorCollector {
+
 // }
 
 pub struct Output<'a> {
@@ -236,10 +237,19 @@ impl BaseOutput {
         if let Err(_) = writeln!(self, "ERROR //{}", &error) {
             // oh dear.....
         };
-        match self {
-            BaseOutput::File(output) => output.errors.push(error),
+        let errors = match self {
+            BaseOutput::File(output) => &mut output.errors,
             #[cfg(test)]
-            BaseOutput::Buffer(output) => output.errors.push(error),
+            BaseOutput::Buffer(output) => &mut output.errors,
+        };
+
+        if let GraphQLError::MultipleErrors(multiple) = error {
+            for error in multiple {
+                errors.push(error);
+            }
+        }
+        else {
+            errors.push(error);
         }
     }
 
@@ -421,7 +431,18 @@ use serde::{{Deserialize, Serialize}};
         }
     }
 
-    fn do_build_schema<'p>(&'p self, out: &mut Output, schema: &'p str) -> Result<Rc<validated_model::Schema>, GraphQLError> {
+    fn do_build_schema<'p>(&'p self, out: &mut Output, schema: &'p str) -> Result<validated_model::Schema, GraphQLError> {
+        match self.do_build_schema2(out, schema) {
+            Ok(schema) => Ok(schema),
+            Err(error) => {
+                let result = GraphQLError::BuildFailed(format!("{}", &error));
+                out.error(error);
+                Err(result)
+            },
+        }
+    }
+
+    fn do_build_schema2<'p>(&'p self, out: &mut Output, schema: &'p str) -> Result<validated_model::Schema, GraphQLError> {
         let ast = parse_schema::<'p, String>(schema)?;
         // let ast = match parse_schema::<'p, String>(schema) {
         //     Ok(ast) => ast,
@@ -434,9 +455,9 @@ use serde::{{Deserialize, Serialize}};
 
         let model = parsed_model::Schema::new(out, ast)?;
         
-        writeln!(out, "/* Parsed Model *********************************************************************************************")?;
-        model.print(out)?;
-        writeln!(out, " * *********************************************************************************************/")?;
+        // writeln!(out, "/* Parsed Model *********************************************************************************************")?;
+        // model.print(out)?;
+        // writeln!(out, " * *********************************************************************************************/")?;
 
 
 
@@ -487,17 +508,17 @@ use serde::{{Deserialize, Serialize}};
 
         let model = parsed_model::Operations::new(out, schema, ast.definitions, model_name);
         
-        writeln!(out, "/* *********************************************************************************************")?;
-        model.print(out)?;
-        writeln!(out, " * *********************************************************************************************/")?;
+        // writeln!(out, "/* *********************************************************************************************")?;
+        // model.print(out)?;
+        // writeln!(out, " * *********************************************************************************************/")?;
 
          let validated_model = validated_model::Operations::new(model, out, schema)?;
 
 
 
-        writeln!(out, "/* Validated Model *********************************************************************************************")?;
-        validated_model.print(out)?;
-        writeln!(out, " * *********************************************************************************************/")?;
+        // writeln!(out, "/* Validated Model *********************************************************************************************")?;
+        // validated_model.print(out)?;
+        // writeln!(out, " * *********************************************************************************************/")?;
 
         validated_model.generate(out, schema)?;
         
@@ -584,9 +605,16 @@ mod tests {
         let _ = builder.do_build_schema(&mut out, schema);
         
         base_out
-        // let string = out.to_string();
+    }
 
+    fn get_schema(schema: &str) -> validated_model::Schema {
+
+        let mut base_out = BaseOutput::new();
+        let mut out = base_out.indent();
+        let builder = builder("test");
+        let schema = builder.do_build_schema(&mut out, schema);
         
+        schema.unwrap()
     }
 
     fn test_query(schema: &str, query: &str) -> BaseOutput {
@@ -720,6 +748,7 @@ r#"query GetPerson {
         println!("{}", out);
         panic!("Expected MissingFieldError");
     }
+
 
 
 
