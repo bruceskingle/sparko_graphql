@@ -2,7 +2,7 @@ use std::error::Error;
 
 use display_json::DisplayAsJsonPretty;
 use serde::{Deserialize, Serialize};
-use sparko_graphql::{NewGraphQLResponse, RequestManager};
+use sparko_graphql::NewGraphQLResponse;
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 struct Foo {}

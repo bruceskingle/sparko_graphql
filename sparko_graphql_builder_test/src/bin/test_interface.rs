@@ -1,7 +1,6 @@
 use std::error::Error;
 use display_json::DisplayAsJsonPretty;
 use serde::{Deserialize, Serialize};
-use sparko_graphql::{NewGraphQLResponse, NewGraphQLQuery};
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 struct Film {

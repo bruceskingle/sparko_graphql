@@ -85,7 +85,7 @@ impl ScalarType {
 impl Display for ScalarType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ScalarType::DefinedType{name, position} => write!(f, "{}", name),
+            ScalarType::DefinedType{name, position} => write!(f, "{} (defined at {})", name, position),
             ScalarType::BuiltinType(builtin_type) => builtin_type.fmt(f),
         }
     }
@@ -120,7 +120,7 @@ impl Display for Type {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BaseErrorCollector, BaseOutput};
+    use crate::BaseErrorCollector;
 
     use super::*;
 
@@ -134,18 +134,16 @@ mod tests {
         base
     }
 
-    fn test_query(schema: &str, query: &str) -> BaseErrorCollector {
+    // fn test_query(schema: &str, query: &str) -> BaseErrorCollector {
 
-        let mut base = BaseErrorCollector::new();
-        let mut err = ErrorCollector::new(&mut base);
-        // let mut base_out = BaseOutput::new();
-        // let mut out = base_out.indent();
-        let builder = crate::builder("test");
-        let schema = builder.do_build_schema(&mut err, schema).unwrap();
-        let _q = builder.do_build_query(&mut err, &schema, query, "test_query");
+    //     let mut base = BaseErrorCollector::new();
+    //     let mut err = ErrorCollector::new(&mut base);
+    //     let builder = crate::builder("test");
+    //     let schema = builder.do_build_schema(&mut err, schema).unwrap();
+    //     let _q = builder.do_build_query(&mut err, &schema, query, "test_query");
         
-        base
-    }
+    //     base
+    // }
 
     #[test]
     fn test_builtin_types() {

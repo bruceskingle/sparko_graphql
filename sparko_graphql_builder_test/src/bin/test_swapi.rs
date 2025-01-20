@@ -1,7 +1,4 @@
 use std::error::Error;
-
-use display_json::DisplayAsJsonPretty;
-use serde::{Deserialize, Serialize};
 use sparko_graphql::{NewGraphQLQuery, NewGraphQLResponse, RequestManager};
 
 

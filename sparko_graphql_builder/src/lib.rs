@@ -5,7 +5,6 @@ use std::fmt::Display;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
-use std::rc::Rc;
 use std::{env, fs};
 use std::io::Write;
 
@@ -104,10 +103,6 @@ impl BaseErrorCollector {
     pub fn new_error_collector(&mut self) -> ErrorCollector {
         ErrorCollector::new(self)
     }
-    
-    // fn err(&self) -> Result<(), Error> {
-    //     Err(Error::BuildErrors { errors: self.errors.len() as u32, warnings: self.warnings.len() as u32 })
-    // }
 
     pub fn expect_ok(&self) {
         if self.warnings.len() != 0 || self.errors.len() != 0 {
@@ -202,24 +197,6 @@ impl ErrorCollector<'_> {
     } 
 }
 
-// fn test() -> Result<String, Error>{
-//     let mut base = BaseErrorCollector::new();
-//     let mut err = ErrorCollector::new(&mut base);
-
-//     err.error(BuildError::NoQueryDefinition);
-
-//     err.ok_then(&||{String::new()})
-// }
-
-// fn test2() -> Result<String, Error>{
-//     let mut base = BaseErrorCollector::new();
-//     let mut err = ErrorCollector::new(&mut base);
-
-//     err.error(BuildError::NoQueryDefinition);
-
-//     err.ok(String::new())
-// }
-
 pub struct Output<'a> {
     base: &'a mut BaseOutput,
     indent: usize,
@@ -234,18 +211,6 @@ impl Output<'_> {
             start_of_line: true,
         }
     }
-
-    // pub fn error(&mut self, error: BuildError) {
-    //     self.base.error(error);
-    // }
-
-    // pub fn warning(&mut self, warning: BuildWarning) {
-    //     self.base.warning(warning);
-    // }
-
-    // pub fn new_error_collector(&mut self) -> ErrorCollector {
-    //     self.base.new_error_collector()
-    // }
 }
 
 impl Write for Output<'_> {
@@ -288,72 +253,32 @@ impl Write for Output<'_> {
     }
 }
 
-// impl Display for Output<'_> {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         self.base.fmt(f)
-//     }
-// }
-
-// #[cfg(test)]
-// struct TestOutput {
-//     buf: Vec<u8>,
-//     errors: Vec<GraphQLError>,
-//     warnings: Vec<GraphQLError>,
-// }
-
-// struct FileOutput {
-//     buf: BufWriter<File>,
-//     errors: Vec<GraphQLError>,
-//     warnings: Vec<GraphQLError>,
-// }
-
 enum BaseOutput {
     File(BufWriter<File>),
     #[cfg(test)]
     Buffer(Vec<u8>),
 }
 
-// impl Display for BaseOutput {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for BaseOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 
-//         fn fmt_errors(f: &mut std::fmt::Formatter<'_>, errors: &Vec<BuildError>)  -> std::fmt::Result {
-//             writeln!(f, "    Errors")?;
-//             for item in errors {
-//                 writeln!(f, "        {}", item)?;
-//             }
-//             Ok(())
-//         }
-
-//         fn fmt_warnings(f: &mut std::fmt::Formatter<'_>, warnings: &Vec<BuildWarning>)  -> std::fmt::Result {
-//             writeln!(f, "    Warnings")?;
-//             for item in warnings {
-//                 writeln!(f, "        {}", item)?;
-//             }
-//             Ok(())
-//         }
-
-//         writeln!(f, "Output")?;
-//         match self {
-//             BaseOutput::File(out) => {
-//                 fmt_errors(f, &err.errors)?;
-//                 fmt_warnings(f, &err.warnings)?;
-//             }
-//             #[cfg(test)]
-//             BaseOutput::Buffer{err, out} => {
-//                 fmt_errors(f, &err.errors)?;
-//                 fmt_warnings(f, &err.warnings)?;
-//                 writeln!(f, "    Output")?;
-//                 let buf = &out;
-//                 for item in std::str::from_utf8(buf).unwrap().lines() {
-//                     writeln!(f, "        {}", item)?;
-//                 }
-//             },
-//         }
-
+        writeln!(f, "Output")?;
+        match self {
+            BaseOutput::File(_) => {
+            }
+            #[cfg(test)]
+            BaseOutput::Buffer(out) => {
+                writeln!(f, "    Output")?;
+                let buf = &out;
+                for item in std::str::from_utf8(buf).unwrap().lines() {
+                    writeln!(f, "        {}", item)?;
+                }
+            },
+        }
         
-//         Ok(())
-//     }
-// }
+        Ok(())
+    }
+}
 
 impl Write for BaseOutput {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -389,73 +314,6 @@ impl BaseOutput {
         BaseOutput::File(BufWriter::new(file))
     }
 
-
-
-    // pub fn new_error_collector(&mut self) -> ErrorCollector {
-    //     match self{
-    //         BaseOutput::File { err, out: _ } => err.new_error_collector(),
-    //         #[cfg(test)]
-    //         BaseOutput::Buffer { err, out: _ } => err.new_error_collector(),
-    //     }
-    // }
-
-    // pub fn has_errors(&self) -> bool {
-    //     match self {
-    //         BaseOutput::File{err, out} => err.errors.len()>0,
-    //         #[cfg(test)]
-    //         BaseOutput::Buffer{err, out} => err.errors.len()>0,
-    //     }
-    // }
-
-    // pub fn errors(&self) -> &Vec<BuildError> {
-    //     match self {
-    //         BaseOutput::File{err, out} => &err.errors,
-    //         #[cfg(test)]
-    //         BaseOutput::Buffer{err, out} => &err.errors,
-    //     }
-    // }
-
-    // pub fn warnings(&self) -> &Vec<BuildWarning> {
-    //     match self {
-    //         BaseOutput::File{err, out} => &err.warnings,
-    //         #[cfg(test)]
-    //         BaseOutput::Buffer{err, out} => &err.warnings,
-    //     }
-    // }
-
-    // pub fn error(&mut self, error: BuildError) {
-    //     if let Err(_) = writeln!(self, "ERROR //{}", &error) {
-    //         // oh dear.....
-    //     };
-    //     let errors = match self {
-    //         BaseOutput::File{err, out} => &mut err.errors,
-    //         #[cfg(test)]
-    //         BaseOutput::Buffer{err, out} => &mut err.errors,
-    //     };
-
-    //     // if let GraphQLError::MultipleErrors(multiple) = error {
-    //     //     for error in multiple {
-    //     //         errors.push(error);
-    //     //     }
-    //     // }
-    //     // else {
-    //         errors.push(error);
-    //     // }
-    // }
-
-    // pub fn warning(&mut self, warning: BuildWarning) {
-    //     if let Err(_) = writeln!(self, "// WARNING {}", &warning) {
-    //         // oh dear.....
-    //     };
-    //     let warnings = match self {
-    //         BaseOutput::File{err, out: _} => &mut err.warnings,
-    //         #[cfg(test)]
-    //         BaseOutput::Buffer{err, out: _} => &mut err.warnings,
-    //     };
-
-    //     warnings.push(warning);
-    // }
-
     pub fn indent(&mut self) -> Output {
         Output {
             base: self,
@@ -463,14 +321,6 @@ impl BaseOutput {
             start_of_line: true,
         }
     }
-
-    // pub fn new_error_collector(&mut self) -> ErrorCollector {
-    //     match self {
-    //         BaseOutput::File { err, out: _ } => ErrorCollector::new(err),
-    //         #[cfg(test)]
-    //         BaseOutput::Buffer { err, out: _ } => ErrorCollector::new(err),
-    //     }
-    // }
 }
 
 #[cfg(test)]
@@ -510,13 +360,6 @@ impl Builder {
 
         self
     }
-    
-    // pub fn build(&mut self) {
-    //     match self.do_build() {
-    //         Ok(_) => (),
-    //         Err(error) => panic!("GraohQL Generation failed: {}", error),
-    //     }
-    // }
     
     pub fn build(&mut self) -> Result<String, Error> {
             
@@ -601,21 +444,6 @@ use serde::{{Deserialize, Serialize}};
     }
 
     fn do_build_schema<'p>(&'p self, err: &mut ErrorCollector, schema: &'p str) -> Result<validated_model::Schema, Error> {
-    //     match self.do_build_schema2(err, schema) {
-    //         Ok(schema) => Ok(schema),
-    //         Err(error) => {
-    //             let result = GraphQLError::BuildFailed(format!("{}", &error));
-    //             err.error(error);
-    //             Err(result)
-    //         },
-    //     }
-    // }
-
-    // fn do_build_schema2<'p>(&'p self, err: &mut ErrorCollector, schema: &'p str) -> Result<validated_model::Schema, Error> {
-        // let mut base = BaseErrorCollector::new();
-        // let mut err = ErrorCollector::new(&mut base);
-
-        // let mut err = out.new_error_collector();
 
         let ast = match parse_schema::<'p, String>(schema) {
             Ok(ast) => ast,
@@ -625,15 +453,6 @@ use serde::{{Deserialize, Serialize}};
                 return Err(Error::BuildFailed(msg))
             },
         };
-        // let ast = match parse_schema::<'p, String>(schema) {
-        //     Ok(ast) => ast,
-        //     Err(error) => {
-        //         writeln!(out, "ERROR: {}", error)?;
-        //         return Err(Box::new(error));
-        //     },
-        // };
-
-
         let model = parsed_model::Schema::new(err, ast)?;
         
         // writeln!(out, "/* Parsed Model *********************************************************************************************")?;
@@ -642,44 +461,7 @@ use serde::{{Deserialize, Serialize}};
 
 
 
-
-//         writeln!(out, "/* TEST *********************************************************************************************")?;
-
-//         let rc = std::rc::Rc::new(model);
-//         let mut names = Vec::new();
-        
-
-//         for defined_type in rc.named_types.values() {
-//             if let parsed_model::TypeDefinition::Interface(interface) = defined_type {
-//                 names.push(interface.name.clone());
-//             }
-//         }
-
-//         let list = parsed_model::InterfaceReferenceList {
-//             schema: rc.clone(),
-//             names,
-//         };
-
-//         for interface in &list {
-//             interface.print(out)?;
-//         }
-
-//         writeln!(out, " * *********************************************************************************************/")?;
-
-
-// panic!("TEST");
-
-
-
         let validated_model = validated_model::Schema::new(err, model)?;
-        // model.validate(out)?;
-
-        // writeln!(out, "/* Validated Model *********************************************************************************************")?;
-        // validated_model.print(out)?;
-        // writeln!(out, " * *********************************************************************************************/")?;
-
-
-        // validated_model.generate(out)?;
 
         Ok(validated_model)
     }
@@ -703,14 +485,6 @@ use serde::{{Deserialize, Serialize}};
         // writeln!(out, " * *********************************************************************************************/")?;
 
          let validated_model = validated_model::Operations::new(err, model, schema)?;
-
-
-
-        // writeln!(out, "/* Validated Model *********************************************************************************************")?;
-        // validated_model.print(out)?;
-        // writeln!(out, " * *********************************************************************************************/")?;
-
-        // validated_model.generate(err, schema)?;
         
         Ok(validated_model)
     }
