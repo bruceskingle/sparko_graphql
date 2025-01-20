@@ -124,6 +124,24 @@ impl BaseErrorCollector {
             None
         }
     }
+    
+    fn report(&self, f: &mut Output<'_>) -> std::io::Result<()> {
+        if ! self.errors.is_empty() {
+            writeln!(f, "    Errors")?;
+            for item in &self.errors {
+                writeln!(f, "        {}", item)?;
+            }
+        }
+
+        if ! self.warnings.is_empty() {
+            writeln!(f, "    Warnings")?;
+            for item in &self.warnings {
+                writeln!(f, "        {}", item)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub struct ErrorCollector<'a> {
@@ -534,13 +552,17 @@ impl Builder {
         let dest_path = Path::new(&out_dir).join(format!("{}.rs", self.model_name));
         let dest_path_string = format!("{}", dest_path.to_string_lossy());
 
-        if queries.is_empty() {
-            err.error(BuildError::NoOperations);
-        }
-        else {
-            let file = File::create(dest_path)?;
-            let mut base_out: BaseOutput = BaseOutput::from_file(file);
-            let mut out = base_out.indent();
+        let file = File::create(dest_path)?;
+        let mut base_out: BaseOutput = BaseOutput::from_file(file);
+        let mut out = base_out.indent();
+
+        base.report(&mut out)?;
+
+        if !queries.is_empty() {
+        //     err.error(BuildError::NoOperations);
+        // }
+        // else {
+            
             writeln!(out, 
                 r#"
 pub mod {} {{

@@ -1913,37 +1913,41 @@ impl SelectionField {
             arguments.push(parsed_argument);
         }
         
+        println!("SlectionField name={} alias={:?}", &parsed.name, &parsed.alias);
         let mut selections = Vec::new();
 
         if parsed.name == TYPE_NAME {
             println!("HERE1");
         }
         else {
-            if let Some(field) = context.get(&parsed.name) {
-                if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
-                    let optional_fields =  match defined_type {
-                        DefinedType::Enum(_) => None,
-                        DefinedType::Union(proxy) => Some(&proxy.get(schema).fields),
-                        DefinedType::Object(proxy) => Some(&proxy.get(schema).fields),
-                        DefinedType::Interface(proxy) => Some(&proxy.get(schema).fields),
-                        DefinedType::Scalar(_) => None,
-                    };
-    
-                    if let Some(fields) = optional_fields {
-                        for selection in parsed.selections {
-                            if let Ok(selection) = Selection::new(err, selection, schema, &fields) {
-                                selections.push(selection);
+            if ! parsed.selections.is_empty() {
+                if let Some(field) = context.get(&parsed.name) {
+                    if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
+                        let optional_fields =  match defined_type {
+                            DefinedType::Enum(_) => None,
+                            DefinedType::Union(proxy) => Some(&proxy.get(schema).fields),
+                            DefinedType::Object(proxy) => Some(&proxy.get(schema).fields),
+                            DefinedType::Interface(proxy) => Some(&proxy.get(schema).fields),
+                            DefinedType::Scalar(_) => None,
+                        };
+        
+                        if let Some(fields) = optional_fields {
+                            for selection in parsed.selections {
+                                if let Ok(selection) = Selection::new(err, selection, schema, &fields) {
+                                    selections.push(selection);
+                                }
                             }
                         }
+                        else {
+                            println!("Attribute selection given on incompatible type \"{}\"", field.ty);
+                            err.error(BuildError::TypeMismatchError(parsed.position, format!("Attribute selection given on incompatible type \"{}\"", field.ty)));
+                        }
                     }
-                    else {
-                        err.error(BuildError::TypeMismatchError(parsed.position, format!("Attribute selection given on incompatible type \"{}\"", field.ty)));
-                    }
+                    
                 }
-                
-            }
-            else {
-                err.error(BuildError::MissingFieldError(parsed.position,parsed.name.clone()));
+                else {
+                    err.error(BuildError::MissingFieldError(parsed.position,parsed.name.clone()));
+                }
             }
         }
 
