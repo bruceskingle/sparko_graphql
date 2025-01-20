@@ -1,5 +1,4 @@
 use std::fmt::Display;
-use std::rc::Rc;
 use std::collections::HashMap;
 use std::io::Write;
 
@@ -7,7 +6,8 @@ use inflections::case::{to_snake_case, to_constant_case};
 
 use crate::parsed_model::BuiltinType;
 use crate::utils::to_pascal_case;
-use crate::{error::GraphQLError, parsed_model, Output};
+use crate::{BuildError, Error, ErrorCollector};
+use crate::{parsed_model, Output};
 
 const TYPE_NAME: &str = "__typename";
 
@@ -20,7 +20,7 @@ pub enum ScalarType {
 }
 
 impl ScalarType {
-    fn new(parsed: &parsed_model::ScalarType, schema: &parsed_model::Schema) -> Result<ScalarType, GraphQLError> {
+    fn new(err: &mut ErrorCollector, parsed: &parsed_model::ScalarType, schema: &parsed_model::Schema) -> Result<ScalarType, Error> {
         match parsed {
             parsed_model::ScalarType::DefinedType{name, position} => {
                 if let Some(def) = schema.named_types.get(name) {
@@ -33,14 +33,14 @@ impl ScalarType {
                     })
                 }
                 else {
-                    Err(GraphQLError::UndefinedTypeError(position.clone(), format!("Missing type {}", name)))
+                    err.fail(BuildError::UndefinedTypeError(position.clone(), format!("Missing type {}", name)))
                 }
             },
             parsed_model::ScalarType::BuiltinType(builtin_type) => Ok(ScalarType::BuiltinType(*builtin_type)),
         }
     }
 
-    fn from_validated(parsed: &parsed_model::ScalarType, schema: &Schema) -> Result<ScalarType, GraphQLError> {
+    fn from_validated(err: &mut ErrorCollector, parsed: &parsed_model::ScalarType, schema: &Schema) -> Result<ScalarType, Error> {
         match parsed {
             parsed_model::ScalarType::DefinedType{name, position} => {
                 if let Some(def) = schema.defined_types.get(name) {
@@ -53,7 +53,7 @@ impl ScalarType {
                     })
                 }
                 else {
-                    Err(GraphQLError::UndefinedTypeError(position.clone(), format!("Missing type {}", name)))
+                    err.fail(BuildError::UndefinedTypeError(position.clone(), format!("Missing type {}", name)))
                 }
             },
             parsed_model::ScalarType::BuiltinType(builtin_type) => Ok(ScalarType::BuiltinType(*builtin_type)),
@@ -78,19 +78,19 @@ pub enum Type {
 }
 
 impl Type {
-    fn new(parsed: &parsed_model::Type, schema: &parsed_model::Schema) -> Result<Type, GraphQLError> {
+    fn new(err: &mut ErrorCollector, parsed: &parsed_model::Type, schema: &parsed_model::Schema) -> Result<Type, Error> {
        Ok( match parsed {
-            parsed_model::Type::Scalar(scalar_type) => Type::Scalar(ScalarType::new(scalar_type, schema)?),
-            parsed_model::Type::Required(wrapped) => Type::Required(Box::new(Type::new(wrapped, schema)?)),
-            parsed_model::Type::Array(wrapped) => Type::Array(Box::new(Type::new(wrapped, schema)?)),
+            parsed_model::Type::Scalar(scalar_type) => Type::Scalar(ScalarType::new(err, scalar_type, schema)?),
+            parsed_model::Type::Required(wrapped) => Type::Required(Box::new(Type::new(err, wrapped, schema)?)),
+            parsed_model::Type::Array(wrapped) => Type::Array(Box::new(Type::new(err, wrapped, schema)?)),
         })
     }
 
-    fn from_validated(parsed: &parsed_model::Type, schema: &Schema) -> Result<Type, GraphQLError> {
+    fn from_validated(err: &mut ErrorCollector, parsed: &parsed_model::Type, schema: &Schema) -> Result<Type, Error> {
         Ok( match parsed {
-             parsed_model::Type::Scalar(scalar_type) => Type::Scalar(ScalarType::from_validated(scalar_type, schema)?),
-             parsed_model::Type::Required(wrapped) => Type::Required(Box::new(Type::from_validated(wrapped, schema)?)),
-             parsed_model::Type::Array(wrapped) => Type::Array(Box::new(Type::from_validated(wrapped, schema)?)),
+             parsed_model::Type::Scalar(scalar_type) => Type::Scalar(ScalarType::from_validated(err, scalar_type, schema)?),
+             parsed_model::Type::Required(wrapped) => Type::Required(Box::new(Type::from_validated(err, wrapped, schema)?)),
+             parsed_model::Type::Array(wrapped) => Type::Array(Box::new(Type::from_validated(err, wrapped, schema)?)),
          })
      }
 
@@ -143,58 +143,7 @@ impl Type {
                 format!("Option<{}>", do_rust_type(self, nonnull))
             }
         }
-        // match self {
-            
-        //     Type::Scalar(scalar_type) => {
-        //         match scalar_type {
-        //             ScalarType::DefinedType(defined_type) => defined_type.rust_type().to_string(),
-        //             ScalarType::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
-        //         }
-        //     },
-        //     Type::Required(wrapped) => format!("{}!", wrapped.graphql_name()),
-        //     Type::Array(wrapped) => format!("[{}]", wrapped.graphql_name()),
-        // }
     }
-
-     
-    // fn rust_type(&self, multiple: bool, nonnull: bool, schema: &Schema, maybe_optional: Maybe, alias: &Option<String>) -> String {
-    //     let base_type = 
-    //     match alias {
-    //         Some(alias) => to_pascal_case(alias),
-    //         None =>
-    //          match self {
-    //             Type::DefinedType(defined_type) => match defined_type {
-    //                 DefinedType::Enum(proxy) => to_pascal_case(&proxy.get(schema).name),
-    //                 DefinedType::Union(proxy) => to_pascal_case(&proxy.get(schema).name),
-    //                 DefinedType::Object(proxy) => to_pascal_case(&proxy.get(schema).name),
-    //                 DefinedType::Interface(proxy) => to_pascal_case(&proxy.get(schema).name),
-    //                 DefinedType::Scalar(proxy) => proxy.get(schema).rust_name.clone(),
-    //             },
-    //             Type::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
-    //     }
-            
-    //     };
-
-    //     let type2 = if multiple {
-    //         format!("Vec<{}>", base_type)
-    //     }
-    //     else {
-    //         base_type
-    //     };
-
-    //     if maybe_optional.isit(!nonnull) {
-    //         format!("Option<{}>", type2)
-    //     }
-    //     else {
-    //         type2
-    //     }
-    //     // if nonnull || !maybe_optional {
-    //     //     type2
-    //     // }
-    //     // else {
-    //     //     format!("Option<{}>", type2)
-    //     // }
-    // }
 }
 
 impl Display for Type {
@@ -432,7 +381,7 @@ impl Scalar {
         }
     }
     
-    fn generate(&self, out: &mut Output<'_>, _schema: &Schema) -> Result<(), GraphQLError> {
+    fn generate(&self, out: &mut Output<'_>, _schema: &Schema) -> Result<(), Error> {
         writeln!(out, "type {} = {};", &self.rust_name, &self.rust_type)?;
         writeln!(out, "")?;
         Ok(())
@@ -491,7 +440,7 @@ impl TypeDefinition {
     //     }
     // }
 
-    pub fn generate(&self, out: &mut Output, schema: &Schema, selections: Option<&Vec<Selection>>) -> Result<(), GraphQLError> {
+    pub fn generate(&self, out: &mut Output, schema: &Schema, selections: Option<&Vec<Selection>>) -> Result<(), Error> {
         match self {
             TypeDefinition::Enum(content) => content.generate(out, schema, selections),
             TypeDefinition::Union(content) => content.generate(out, schema, selections, &None),
@@ -534,7 +483,7 @@ impl DefinedType {
         }
     }
 
-    pub fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), GraphQLError> {
+    pub fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), Error> {
         match self {
             DefinedType::Enum(proxy) => proxy.get(schema).generate(out, schema, selections,),
             DefinedType::Union(proxy) => proxy.get(schema).generate(out, schema, selections, alias),
@@ -582,11 +531,11 @@ impl Field {
         
     }
     
-    fn new(parsed: &parsed_model::Field, schema: &parsed_model::Schema) -> Result<Field, GraphQLError> {
+    fn new(err: &mut ErrorCollector, parsed: &parsed_model::Field, schema: &parsed_model::Schema) -> Result<Field, Error> {
         Ok(Field {
             name: parsed.name.clone(),
             position: parsed.position,
-            ty: Type::new(&parsed.ty, schema)?,
+            ty: Type::new(err, &parsed.ty, schema)?,
         })
     }
 
@@ -598,11 +547,11 @@ impl Field {
         self.ty.graphql_name()
     }
     
-    fn from_variable(parsed: &parsed_model::Field, schema: &Schema) -> Result<Field, GraphQLError> {
+    fn from_variable(err: &mut ErrorCollector, parsed: &parsed_model::Field, schema: &Schema) -> Result<Field, Error> {
         Ok(Field {
             name: parsed.name.clone(),
             position: parsed.position,
-            ty: Type::from_validated(&parsed.ty, schema)?,
+            ty: Type::from_validated(err, &parsed.ty, schema)?,
         })
     }
 }
@@ -643,7 +592,7 @@ impl Enum {
         }
     }
     
-    fn generate(&self, out: &mut Output<'_>, _schema: &Schema, _selections: Option<&Vec<Selection>>) -> Result<(), GraphQLError> {
+    fn generate(&self, out: &mut Output<'_>, _schema: &Schema, _selections: Option<&Vec<Selection>>) -> Result<(), Error> {
         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
         writeln!(out, "#[serde(rename = \"{}\")]", self.name)?;
         writeln!(out, "pub enum {} {{", to_pascal_case(&self.name))?;
@@ -688,42 +637,46 @@ impl Union {
         writeln!(out, "}}")
     }
     
-    fn new(parsed: &parsed_model::Union, schema: &parsed_model::Schema) -> Result<Union, GraphQLError> {
+    fn new(err: &mut ErrorCollector, parsed: &parsed_model::Union, schema: &parsed_model::Schema) -> Result<Union, Error> {
         let mut fields = HashMap::new();
-        let mut errors = Vec::new();
+        let mut err = err.child();
 
         for type_name in &parsed.types {
             if let Some(defined_type) = schema.named_types.get(type_name) {
                 if let parsed_model::TypeDefinition::Object(object) = defined_type {
                     for (name, field) in &object.fields {
-                        match Field::new(field, schema) {
-                            Ok(field) => { fields.insert(name.clone(), field);},
-                            Err(error) => {errors.push(error);},
-                        };
+                        if let Ok(field) = Field::new(&mut err, field, schema) {
+                            fields.insert(name.clone(), field);
+                        }
                     }
                 }
                 else {
-                    errors.push(GraphQLError::TypeMismatchError(parsed.position, format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
+                    err.error(BuildError::TypeMismatchError(parsed.position, format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
                 }
             }
             else {
-                errors.push(GraphQLError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
+                err.error(BuildError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
             };
         }
 
-        if errors.is_empty() {
-            Ok(Union {
-                position: parsed.position,
-                name: parsed.name.clone(),
-                fields,
-            })
-        }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
-        }
+        err.ok(Union {
+            position: parsed.position,
+            name: parsed.name.clone(),
+            fields,
+        })
+        // if errors.is_empty() {
+        //     Ok(Union {
+        //         position: parsed.position,
+        //         name: parsed.name.clone(),
+        //         fields,
+        //     })
+        // }
+        // else {
+        //     Err(Error::MultipleErrors(errors))
+        // }
     }
     
-    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), GraphQLError> {
+    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), Error> {
         generate_struct(out, schema, selections, alias, &self.name, &self.fields, false)
 
         // writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
@@ -793,9 +746,8 @@ impl Object {
         writeln!(out, "}}")
     }
     
-    fn new(parsed: &parsed_model::Object, schema: &parsed_model::Schema) -> Result<Object, GraphQLError> {
+    fn new(err: &mut ErrorCollector, parsed: &parsed_model::Object, schema: &parsed_model::Schema) -> Result<Object, Error> {
         let mut fully_implements = Vec::new();
-        let mut errors = Vec::new();
 
         for interface_name in &parsed.implements {
             if let Some(defined_type) = schema.named_types.get(interface_name) {
@@ -812,40 +764,32 @@ impl Object {
                     }
                 }
                 else {
-                    errors.push(GraphQLError::TypeMismatchError(parsed.position, format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
+                    err.error(BuildError::TypeMismatchError(parsed.position, format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
                 }
             }
             else {
-                errors.push(GraphQLError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
+                err.error(BuildError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
             };
         }
 
         let mut fields = HashMap::new();
 
         for (name, field) in &parsed.fields {
-            match Field::new(field, schema) {
-                Ok(field) => { fields.insert(name.clone(), field);},
-                Err(error) => {errors.push(error);},
-            };
+            if let Ok(field) = Field::new(err, field, schema) {
+                fields.insert(name.clone(), field);
+            }
         }
 
-        if errors.is_empty() {
-            Ok(Object {
+        err.ok(Object {
                 position: parsed.position,
                 name: parsed.name.clone(),
                 fully_implements: InterfaceListProxy::new(fully_implements),
                 fields,
                 is_input: parsed.is_input,
             })
-        }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
-        }
-
-        
     }
     
-    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), GraphQLError> {
+    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), Error> {
         generate_struct(out, schema, selections, alias, &self.name, &self.fields, self.is_input)
         // let name = if let Some(alias) = &alias {
         //     to_pascal_case(alias)
@@ -905,7 +849,7 @@ fn selections_to_fields<'a>(selections: &'a Vec<Selection>) -> Vec<&'a Selection
     selected_fields
 }
 
-fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>, name: &str, fields: &HashMap<String, Field>, is_input: bool) -> Result<(), GraphQLError> {
+fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>, name: &str, fields: &HashMap<String, Field>, is_input: bool) -> Result<(), Error> {
     let rust_name = if let Some(alias) = &alias {
         to_pascal_case(alias)
         // format!("{}{}", to_pascal_case(alias),to_pascal_case(&self.name))
@@ -1028,7 +972,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Ve
             writeln!(out, "pub struct {}Builder {{", rust_name)?;
 
             for (name, field) in fields {
-                writeln!(out, "    {}_: {},", to_snake_case(&name), field.ty.rust_type(false));
+                writeln!(out, "    {}_: {},", to_snake_case(&name), field.ty.rust_type(false))?;
             }
         
             writeln!(out, "}}")?;
@@ -1039,7 +983,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Schema, selections: Option<&Ve
                 let mut out = out.indent();
 
                 for (name, field) in fields {
-                    writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&name), field.ty.rust_type(false))?;
+                    writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&name), field.ty.rust_type(true))?;
                     {
                         let mut out = out.indent();
 
@@ -1117,9 +1061,8 @@ impl Interface {
         writeln!(out, "}}")
     }
 
-    fn new(parsed: &parsed_model::Interface, schema: &parsed_model::Schema) -> Result<Interface, GraphQLError> {
+    fn new(err: &mut ErrorCollector, parsed: &parsed_model::Interface, schema: &parsed_model::Schema) -> Result<Interface, Error> {
         let mut implemented_by = Vec::new();
-        let mut errors = Vec::new();
 
         for (_, defined_type) in &schema.named_types {
             if let parsed_model::TypeDefinition::Object(object_model) = defined_type {
@@ -1146,7 +1089,7 @@ impl Interface {
         //         }
         //     }
         //     else {
-        //         out.error(GraphQLError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
+        //         out.error(BuildError::MissingInterfaceError(parsed.position, format!("Interface {} Not Found", parsed.name)))
         //     };
 
             
@@ -1157,28 +1100,20 @@ impl Interface {
         let mut fields = HashMap::new();
 
         for (name, field) in &parsed.fields {
-            match Field::new(field, schema) {
-                Ok(field) => { fields.insert(name.clone(), field);},
-                Err(error) => {errors.push(error);},
-            };
+            if let Ok(field) = Field::new(err, field, schema) {
+                fields.insert(name.clone(), field);
+            }
         }
 
-        
-
-        if errors.is_empty() {
-            Ok(Interface {
+        err.ok(Interface {
                 position: parsed.position,
                 name: parsed.name.clone(),
                 implemented_by: ObjectListProxy::new(implemented_by),
                 fields,
             })
-        }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
-        }
     }
     
-    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), GraphQLError> {
+    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), Error> {
         if let Some(_) = selections {
             generate_struct(out, schema, selections, alias, &self.name, &self.fields, false)
         }
@@ -1550,7 +1485,7 @@ impl Schema {
     }
 
 
-    fn get_object(out: &mut Output, name: &Option<String>, position: graphql_parser::Pos, defined_types: &HashMap<String, TypeDefinition>) -> Option<ObjectProxy> {
+    fn get_object(out: &mut ErrorCollector, name: &Option<String>, position: graphql_parser::Pos, defined_types: &HashMap<String, TypeDefinition>) -> Option<ObjectProxy> {
         if let Some(name) = name {
             if let Some(type_definition) = &defined_types.get(name) {
                 if let TypeDefinition::Object(_) = type_definition {
@@ -1559,12 +1494,12 @@ impl Schema {
                     })
                 }
                 else {
-                    out.error(GraphQLError::TypeMismatchError(position, format!("Expected object \"{}\" but found {}", name, type_definition.type_name())));
+                    out.error(BuildError::TypeMismatchError(position, format!("Expected object \"{}\" but found {}", name, type_definition.type_name())));
                     None
                 }
             }
             else {
-                out.error(GraphQLError::MissingObjectError(position, format!("Missing schema reference \"{}\"", name)));
+                out.error(BuildError::MissingObjectError(position, format!("Missing schema reference \"{}\"", name)));
                 None
             }
         }
@@ -1573,7 +1508,7 @@ impl Schema {
         }
     }
 
-    fn get_default_object(out: &mut Output, name: &str, defined_types: &HashMap<String, TypeDefinition>, missing_error: Option<GraphQLError>) -> Option<ObjectProxy> {
+    fn get_default_object(out: &mut ErrorCollector, name: &str, defined_types: &HashMap<String, TypeDefinition>, missing_error: Option<BuildError>) -> Option<ObjectProxy> {
         if let Some(type_definition) = &defined_types.get(name) {
             if let TypeDefinition::Object(_) = type_definition {
                 Some(ObjectProxy{
@@ -1581,13 +1516,13 @@ impl Schema {
                 })
             }
             else {
-                out.error(GraphQLError::TypeMismatchError(graphql_parser::Pos { line: 0, column: 0 }, format!("Expected object \"{}\" but found {}", name, type_definition.type_name())));
+                out.error(BuildError::TypeMismatchError(graphql_parser::Pos { line: 0, column: 0 }, format!("Expected object \"{}\" but found {}", name, type_definition.type_name())));
                 None
             }
         }
         else {
-            if let Some(errror) = missing_error { 
-                out.error(errror);
+            if let Some(error) = missing_error { 
+                out.error(error);
             }
             None
         }
@@ -1605,64 +1540,54 @@ impl Schema {
     //     }
     // }
 
-    pub fn new(parsed: parsed_model::Schema, out: &mut Output) -> Result<Schema, GraphQLError> {
-
-        fn make_type(ty: &parsed_model::TypeDefinition, schema: &parsed_model::Schema) -> Result<TypeDefinition, GraphQLError> {
-            match ty {
-                parsed_model::TypeDefinition::Enum(enum_definition) => Ok(TypeDefinition::Enum(Enum::new(enum_definition))),
-                parsed_model::TypeDefinition::Union(union) => Ok(TypeDefinition::Union(Union::new(union, schema)?)),
-                parsed_model::TypeDefinition::Object(object) => Ok(TypeDefinition::Object(Object::new(object, schema)?)),
-                parsed_model::TypeDefinition::Interface(interface) => Ok(TypeDefinition::Interface(Interface::new(interface, schema)?)),
-                parsed_model::TypeDefinition::Scalar(type_def) => Ok(TypeDefinition::Scalar(Scalar::new(type_def))),
-            }
-        }
+    pub fn new(err: &mut ErrorCollector, parsed: parsed_model::Schema) -> Result<Schema, Error> {
 
         let mut defined_types: HashMap<String, TypeDefinition> = HashMap::new();
-        let mut errors = Vec::new();
         
         for(name, ty) in &parsed.named_types {
-            match make_type(ty, &parsed) {
-                Ok(defined_type) =>  {defined_types.insert(name.clone(), defined_type);},
-                Err(error) => errors.push(error),
+            if let Ok(defined_type) = match ty {
+                parsed_model::TypeDefinition::Enum(enum_definition) => Ok::<TypeDefinition, Error>(TypeDefinition::Enum(Enum::new(enum_definition))),
+                parsed_model::TypeDefinition::Union(union) => Ok(TypeDefinition::Union(Union::new(err, union, &parsed)?)),
+                parsed_model::TypeDefinition::Object(object) => Ok(TypeDefinition::Object(Object::new(err, object, &parsed)?)),
+                parsed_model::TypeDefinition::Interface(interface) => Ok(TypeDefinition::Interface(Interface::new(err, interface, &parsed)?)),
+                parsed_model::TypeDefinition::Scalar(type_def) => Ok(TypeDefinition::Scalar(Scalar::new(type_def))),
+            } 
+            {
+                defined_types.insert(name.clone(), defined_type);
             }
         }
 
-        let query = if let Some(schema_definition) = &parsed.schema_definition {
-            Self::get_object(out, &schema_definition.query, schema_definition.position, &defined_types)
-        }
-        else {
-            Self::get_default_object(out, "Query", &defined_types, Some(GraphQLError::NoQueryDefinition))
-        };
-
         let mutation = if let Some(schema_definition) = &parsed.schema_definition {
-            Self::get_object(out, &schema_definition.mutation, schema_definition.position, &defined_types) 
+            Self::get_object(err, &schema_definition.mutation, schema_definition.position, &defined_types) 
         }
         else {
-            Self::get_default_object(out, "Mutation", &defined_types, None)
+            Self::get_default_object(err, "Mutation", &defined_types, None)
         };
         
         let subscription = if let Some(schema_definition) = &parsed.schema_definition {
-            Self::get_object(out, &schema_definition.subscription, schema_definition.position, &defined_types)
+            Self::get_object(err, &schema_definition.subscription, schema_definition.position, &defined_types)
         }
         else {
-            Self::get_default_object(out, "Subscription", &defined_types, None)
+            Self::get_default_object(err, "Subscription", &defined_types, None)
         };
 
-        if errors.is_empty() {
-            Ok(Schema {
+        let query = if let Some(schema_definition) = &parsed.schema_definition {
+            Self::get_object(err, &schema_definition.query, schema_definition.position, &defined_types)
+        }
+        else {
+            Self::get_default_object(err, "Query", &defined_types, Some(BuildError::NoQueryDefinition))
+        };
+
+        err.ok(Schema {
                 defined_types,
-                query: query.ok_or(GraphQLError::ValidationError)?,
+                query: query.ok_or(Error::BuildFailed(format!("Failed to find previously validated query")))?,
                 mutation,
                 subscription,
             })
-        }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
-        }
     }
 
 
-    pub fn generate(&self, out: &mut Output) -> Result<(), GraphQLError> {
+    pub fn generate(&self, out: &mut Output) -> Result<(), Error> {
         for (_, defined_type) in &self.defined_types {
             defined_type.generate(out, self, None)?;
         }
@@ -1826,7 +1751,7 @@ impl Schema {
 // }
 
 // impl VariableDefinition {
-//     pub fn new(parsed: parsed_model::VariableDefinition, out: &mut Output) -> Result<VariableDefinition, GraphQLError> {
+//     pub fn new(parsed: parsed_model::VariableDefinition, out: &mut Output) -> Result<VariableDefinition, Error> {
 
 
 //         Ok(VariableDefinition {
@@ -1863,7 +1788,7 @@ impl Schema {
 //         writeln!(out, "VariableDefinition is empty")
 //     }
     
-//     pub fn generate(&mut self, out: &mut Output) -> Result<(), GraphQLError> {
+//     pub fn generate(&mut self, out: &mut Output) -> Result<(), Error> {
 //         // if !self.variables.is_empty() {
 
 //         //     writeln!(out, "struct {} {{", &to_pascal_case(&format!("{}Variables", &self.name)))?;
@@ -1889,7 +1814,7 @@ pub enum Selection {
 } 
 
 impl Selection {
-    pub fn new(selection: parsed_model::Selection, schema: &Schema, context: &HashMap<std::string::String, Field>) -> Result<Selection, GraphQLError> {
+    pub fn new(err: &mut ErrorCollector, selection: parsed_model::Selection, schema: &Schema, context: &HashMap<std::string::String, Field>) -> Result<Selection, Error> {
         match selection {
             parsed_model::Selection::Field(selection_field) => {
 
@@ -1899,7 +1824,7 @@ impl Selection {
             // context.print(out);
             // writeln!(out, "*/" );
 
-                Ok(Selection::Field(SelectionField::new(selection_field, schema, context)?))
+                Ok(Selection::Field(SelectionField::new(err, selection_field, schema, context)?))
             },
             parsed_model::Selection::Fragment(fragment_spread) => todo!(),
             
@@ -1920,19 +1845,19 @@ impl Selection {
     //     }
     // }
 
-    pub fn generate_query(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: Maybe) -> Result<(), GraphQLError> {
+    pub fn generate_query(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: Maybe) -> Result<(), Error> {
         match self {
             Selection::Field(selection_field) => selection_field.generate_query(out, context, schema, maybe_optional),
         }
     }
 
-    pub fn generate_fields(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: Maybe) -> Result<(), GraphQLError> {
+    pub fn generate_fields(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: Maybe) -> Result<(), Error> {
         match self {
             Selection::Field(selection_field) => selection_field.generate_fields(out, context, schema, maybe_optional),
         }
     }
     
-    fn generate_structs(&self, out: &mut Output<'_>, context: &HashMap<String, Field>, schema: &Schema) -> Result<(), GraphQLError> {
+    fn generate_structs(&self, out: &mut Output<'_>, context: &HashMap<String, Field>, schema: &Schema) -> Result<(), Error> {
         match self {
             Selection::Field(selection_field) => selection_field.generate_structs(out, context, schema),
         }
@@ -1980,9 +1905,8 @@ pub struct SelectionField {
 }
 
 impl SelectionField {
-    pub fn new(parsed: parsed_model::SelectionField, schema: &Schema, context: &HashMap<std::string::String, Field>) -> Result<SelectionField, GraphQLError> {
+    pub fn new(err: &mut ErrorCollector, parsed: parsed_model::SelectionField, schema: &Schema, context: &HashMap<std::string::String, Field>) -> Result<SelectionField, Error> {
         let mut arguments = Vec::new();
-        let mut errors = Vec::new();
         
         for parsed_argument in parsed.arguments {
             // arguments.push(Argument::new(prsed_argument));
@@ -2007,25 +1931,23 @@ impl SelectionField {
     
                     if let Some(fields) = optional_fields {
                         for selection in parsed.selections {
-                            match Selection::new(selection, schema, &fields) {
-                                Ok(selection) => selections.push(selection),
-                                Err(error) => errors.push(error),
-                            };
+                            if let Ok(selection) = Selection::new(err, selection, schema, &fields) {
+                                selections.push(selection);
+                            }
                         }
                     }
                     else {
-                        errors.push(GraphQLError::TypeMismatchError(parsed.position, format!("Attribute selection given on incompatible type \"{}\"", field.ty)));
+                        err.error(BuildError::TypeMismatchError(parsed.position, format!("Attribute selection given on incompatible type \"{}\"", field.ty)));
                     }
                 }
                 
             }
             else {
-                return Err(GraphQLError::MissingFieldError(parsed.position,parsed.name.clone()));
+                err.error(BuildError::MissingFieldError(parsed.position,parsed.name.clone()));
             }
         }
 
-        if errors.is_empty() {
-            Ok(SelectionField {
+        err.ok(SelectionField {
                 name: parsed.name,
                 alias: parsed.alias,
                 position: parsed.position,
@@ -2033,10 +1955,6 @@ impl SelectionField {
                 arguments,
                 selections,
             })
-        }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
-        }
     }
 
 
@@ -2071,7 +1989,7 @@ impl SelectionField {
         writeln!(out, "}}")
     }
 
-    pub fn generate_query(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: Maybe) -> Result<(), GraphQLError> {
+    pub fn generate_query(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: Maybe) -> Result<(), Error> {
         // let field = context.get(&self.name).unwrap();
         if let Some(alias) = &self.alias {
             writeln!(out, "{}: {}", alias, &self.name)?;
@@ -2108,7 +2026,7 @@ impl SelectionField {
         Ok(())
     }
 
-    pub fn generate_fields(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: Maybe) -> Result<(), GraphQLError> {
+    pub fn generate_fields(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema, maybe_optional: Maybe) -> Result<(), Error> {
         if &self.name == TYPE_NAME {
             println!("HERE");
         }
@@ -2120,12 +2038,19 @@ impl SelectionField {
             &self.name
         };
 
+        let rust_type = if let Some(alias) = &self.alias {
+            to_pascal_case(alias)
+        }
+        else {
+            field.ty.rust_type(self.nonnull)
+        };
+
         writeln!(out, "#[serde(rename = \"{}\")]", &name)?;
-        writeln!(out, "/* HERE1 */ pub {}: {},", to_snake_case(&name), field.ty.rust_type(self.nonnull))?;
+        writeln!(out, "/* HERE1 */ pub {}: {},", to_snake_case(&name), rust_type)?;
         Ok(())
     }
 
-    pub fn generate_structs(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema) -> Result<(), GraphQLError> {
+    pub fn generate_structs(&self, out: &mut Output, context: &HashMap<String, Field>, schema: &Schema) -> Result<(), Error> {
         let field = context.get(&self.name).unwrap();
 
         if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
@@ -2175,7 +2100,7 @@ impl SelectionField {
         Ok(())
     }
     
-    // pub fn generate(&mut self, out: &mut Output) -> Result<(), GraphQLError> {
+    // pub fn generate(&mut self, out: &mut Output) -> Result<(), Error> {
     //     // if !self.variables.is_empty() {
 
     //     //     writeln!(out, "struct {} {{", &to_pascal_case(&format!("{}Variables", &self.name)))?;
@@ -2225,35 +2150,35 @@ impl OperationType {
 }
 
 #[derive(Debug)]
-pub struct GenericOperation {
+pub struct GenericOperation<'a> {
     pub name: String,
     pub position: graphql_parser::Pos,
     pub operation: OperationType,
-    // context: &HashMap<String, Field>,
+    context: &'a HashMap<String, Field>,
     variables: HashMap<String, Field>,
     selections: Vec<Selection>,
 }
 
-impl GenericOperation {
-    pub fn from_query(parsed: parsed_model::Query, schema:  &Schema, out: &mut Output) ->  Result<GenericOperation, GraphQLError> {
-        Self::new(OperationType::Query, 
+impl<'a> GenericOperation<'a> {
+    pub fn from_query(err: &mut ErrorCollector, parsed: parsed_model::Query, schema:  &'a Schema) ->  Result<GenericOperation<'a>, Error> {
+        Self::new(err, OperationType::Query, 
             parsed.name, parsed.position,
             parsed.variables, parsed.selections, schema)
     }
 
-    pub fn from_mutation(parsed: parsed_model::Mutation, schema:  &Schema, out: &mut Output) ->  Result<GenericOperation, GraphQLError> {
-        Self::new(OperationType::Mutation, 
+    pub fn from_mutation(err: &mut ErrorCollector, parsed: parsed_model::Mutation, schema:  &'a Schema) ->  Result<GenericOperation<'a>, Error> {
+        Self::new(err, OperationType::Mutation, 
             parsed.name, parsed.position,
             parsed.variables, parsed.selections, schema)
     }
     
-    // pub fn from_subscription(parsed: graphql_parser::Subscription, schema:  &Schema, out: &mut Output) ->  Result<GenericOperation, GraphQLError> {
+    // pub fn from_subscription(parsed: graphql_parser::Subscription, schema:  &Schema, out: &mut Output) ->  Result<GenericOperation, Error> {
     //     Self::new("Subscription", 
     //         parsed.name, parsed.position,
     //         parsed.variables, parsed.selections, schema, out)
     // }
 
-    fn get_context2<'a>(operation: &OperationType, name: &String, position: &graphql_parser::Pos, schema: &'a Schema) -> Result<&'a HashMap<String, Field>, GraphQLError> {
+    fn get_context2(err: &mut ErrorCollector, operation: &OperationType, name: &String, position: &graphql_parser::Pos, schema: &'a Schema) -> Result<&'a HashMap<String, Field>, Error> {
         match operation {
             OperationType::Query => Ok(&schema.query.get(schema).fields),
             OperationType::Mutation => {
@@ -2261,58 +2186,47 @@ impl GenericOperation {
                     Ok(&mutation_proxy.get(schema).fields)
                 }
                 else {
-                    Err(GraphQLError::MissingObjectError(position.clone(), format!("Mutation {} used but no Mutation root found", name)))
+                    err.fail(BuildError::MissingObjectError(position.clone(), format!("Mutation {} used but no Mutation root found", name)))
                 }
             },
         }
     }
 
-    fn get_context<'a>(&self, schema: &'a Schema) -> Result<&'a HashMap<String, Field>, GraphQLError> {
-        Self::get_context2(&self.operation, &self.name, &self.position, schema)
+    fn get_context(&self, err: &mut ErrorCollector, schema: &'a Schema) -> Result<&'a HashMap<String, Field>, Error> {
+        Self::get_context2(err, &self.operation, &self.name, &self.position, schema)
     }
 
-    fn new(operation: OperationType, name: String, position: graphql_parser::Pos, parsed_variables: Vec<parsed_model::Field>, parsed_selections: Vec<parsed_model::Selection>, schema: &Schema) -> Result<GenericOperation, GraphQLError> {
+    fn new(err: &mut ErrorCollector, operation: OperationType, name: String, position: graphql_parser::Pos, parsed_variables: Vec<parsed_model::Field>, parsed_selections: Vec<parsed_model::Selection>, schema: &'a Schema) -> Result<GenericOperation<'a>, Error> {
 
         let mut variables = HashMap::new();
-        let mut errors = Vec::new();
 
         for variable in &parsed_variables {
-            match Field::from_variable(variable, schema) {
-                Ok(field) => {
-                    if let Some(existing) = variables.insert(variable.name.clone(), field) {
-                        errors.push(GraphQLError::DuplicateName(existing.position, variable.position, variable.name.clone()));
-                    }
-                },
-                Err(error) => errors.push(error),
+            if let Ok(field) = Field::from_variable(err, variable, schema) {
+                if let Some(existing) = variables.insert(variable.name.clone(), field) {
+                    err.error(BuildError::DuplicateName(existing.position, variable.position, variable.name.clone()));
+                }
             }
         }
 
-        let context= Self::get_context2(&operation, &name, &position, schema)?;
+        let context= Self::get_context2(err, &operation, &name, &position, schema)?;
         
         let mut selections = Vec::new();
         for selection in parsed_selections {
             
             // selections.push(Selection::new(selection, schema, &schema.query.get(schema).fields, out));
-            match Selection::new(selection, schema, context) {
-                Ok(selection) => selections.push(selection),
-                Err(error) => errors.push(error),
-            };
+            if let Ok(selection) = Selection::new(err, selection, schema, context) {
+                selections.push(selection);
+            }
         }
 
-        if errors.is_empty() {
-            Ok(GenericOperation {
-                // parsed,
+        err.ok(GenericOperation {
                 name,
                 position,
                 operation,
-                // context,
+                context,
                 variables,
                 selections,
             })
-        }
-        else {
-            Err(GraphQLError::MultipleErrors(errors))
-        }
     }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
@@ -2345,7 +2259,7 @@ impl GenericOperation {
         writeln!(out, "}}")
     }
     
-    pub fn generate(&self, out: &mut Output, schema: &Schema) -> Result<(), GraphQLError> {
+    pub fn generate(&self, out: &mut Output, schema: &Schema) -> Result<(), Error> {
         // if !self.variables.is_empty() {
 
         //     writeln!(out, "struct {} {{", &to_pascal_case(&format!("{}Variables", &self.name)))?;
@@ -2361,7 +2275,27 @@ impl GenericOperation {
 
         // let name = to_pascal_case(&self.name);
 
-        let context= self.get_context(schema)?;
+        // let context=  //self.get_context(schema)?;
+
+        // match &self.operation {
+        //     OperationType::Query => Ok(&schema.query.get(schema).fields),
+        //     OperationType::Mutation => {
+        //         if let Some(mutation_proxy) = &schema.mutation {
+        //             Ok(&mutation_proxy.get(schema).fields)
+        //         }
+        //         else {
+        //             err.fail(BuildError::MissingObjectError(&self.position.clone(), format!("Mutation {} used but no Mutation root found", name)))
+        //         }
+        //     },
+        // }
+
+        // fn get_context2<'a>(err: &mut ErrorCollector, operation: &OperationType, name: &String, position: &graphql_parser::Pos, schema: &'a Schema) -> Result<&'a HashMap<String, Field>, Error> {
+           
+        // }
+    
+        // fn get_context<'a>(&self, err: &mut ErrorCollector, schema: &'a Schema) -> Result<&'a HashMap<String, Field>, Error> {
+        //     Self::get_context2(err, &self.operation, &self.name, &self.position, schema)
+        // }
 
         writeln!(out, "pub mod {} {{", to_snake_case(&self.name))?;
         {
@@ -2428,7 +2362,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                     let mut out = out.indent();
     
                     for selection in &self.selections {
-                        selection.generate_query(&mut out, &context, schema, Maybe::Maybe)?;
+                        selection.generate_query(&mut out, &self.context, schema, Maybe::Maybe)?;
                     }
                 }
                 writeln!(out, "}}\"#;")?;
@@ -2510,7 +2444,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                 for selection in &self.selections {
                     // let context: HashMap<String, Field> = schema.query.get(schema).fields;
 
-                    selection.generate_fields(&mut out, &context, schema, Maybe::Maybe)?;
+                    selection.generate_fields(&mut out, &self.context, schema, Maybe::Maybe)?;
                     // writeln!(out, "    #[serde(rename = \"{}\")]", &selection.name)?;
                     // writeln!(out, "    {},", to_constant_case(&selection.name))?;
                 }
@@ -2525,7 +2459,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
             for selection in &self.selections {
                 // let context: HashMap<String, Field> = schema.query.get(schema).fields;
 
-                selection.generate_structs(&mut out, &context, schema)?;
+                selection.generate_structs(&mut out, &self.context, schema)?;
                 // writeln!(out, "    #[serde(rename = \"{}\")]", &selection.name)?;
                 // writeln!(out, "    {},", to_constant_case(&selection.name))?;
             }
@@ -2543,25 +2477,25 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
 
 
 #[derive(Debug)]
-pub struct Operations {
+pub struct Operations<'a> {
     name: String,
-    queries: Vec<GenericOperation>,
-    mutations: Vec<GenericOperation>,
+    queries: Vec<GenericOperation<'a>>,
+    mutations: Vec<GenericOperation<'a>>,
 }
 
-impl Operations {
-    pub fn new(parsed: parsed_model::Operations, out: &mut Output, schema: &Schema) ->  Result<Operations, GraphQLError>{
+impl<'a> Operations<'a> {
+    pub fn new(err: &mut ErrorCollector, parsed: parsed_model::Operations, schema: &'a Schema) ->  Result<Operations<'a>, Error>{
 
         let mut queries = Vec::new();
 
         for query in parsed.queries {
-            queries.push(GenericOperation::from_query(query, schema, out)?);
+            queries.push(GenericOperation::from_query(err, query, schema)?);
         }
 
         let mut mutations = Vec::new();
 
         for mutation in parsed.mutations {
-            mutations.push(GenericOperation::from_mutation(mutation, schema, out)?);
+            mutations.push(GenericOperation::from_mutation(err, mutation, schema)?);
         }
 
         Ok(Operations {
@@ -2599,7 +2533,7 @@ impl Operations {
         writeln!(out, "}}")
     }
 
-    pub fn generate(&self, out: &mut Output, schema: &Schema) -> Result<(), GraphQLError> {
+    pub fn generate(&self, out: &mut Output, schema: &Schema) -> Result<(), Error> {
         writeln!(out, "pub mod {} {{", self.name)?;
 
         {

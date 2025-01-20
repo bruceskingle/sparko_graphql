@@ -9,7 +9,10 @@ use graphql_parser::Pos;
 use inflections::case::to_snake_case;
 
 // use crate::utils::to_pascal_case;
-use crate::error::GraphQLError;
+use crate::BuildError;
+use crate::BuildWarning;
+use crate::Error;
+use crate::ErrorCollector;
 use crate::Output;
 use crate::validated_model;
 
@@ -117,29 +120,31 @@ impl Display for Type {
 
 #[cfg(test)]
 mod tests {
-    use crate::BaseOutput;
+    use crate::{BaseErrorCollector, BaseOutput};
 
     use super::*;
 
-    fn test_schema(schema: &str) -> BaseOutput {
+    fn test_schema(schema: &str) -> BaseErrorCollector {
 
-        let mut base_out = BaseOutput::new();
-        let mut out = base_out.indent();
+        let mut base = BaseErrorCollector::new();
+        let mut err = ErrorCollector::new(&mut base);
         let builder = crate::builder("test");
-        let _ = builder.do_build_schema(&mut out, schema);
+        let _ = builder.do_build_schema(&mut err, schema);
         
-        base_out
+        base
     }
 
-    fn test_query(schema: &str, query: &str) -> BaseOutput {
+    fn test_query(schema: &str, query: &str) -> BaseErrorCollector {
 
-        let mut base_out = BaseOutput::new();
-        let mut out = base_out.indent();
+        let mut base = BaseErrorCollector::new();
+        let mut err = ErrorCollector::new(&mut base);
+        // let mut base_out = BaseOutput::new();
+        // let mut out = base_out.indent();
         let builder = crate::builder("test");
-        let schema = builder.do_build_schema(&mut out, schema).unwrap();
-        let _q = builder.do_build_query(&mut out, &schema, query, "test_query");
+        let schema = builder.do_build_schema(&mut err, schema).unwrap();
+        let _q = builder.do_build_query(&mut err, &schema, query, "test_query");
         
-        base_out
+        base
     }
 
     #[test]
@@ -154,7 +159,7 @@ type Query {
 }
 "#);
         out.expect_ok();        
-        // if let Some(GraphQLError::MissingInterfaceError(..)) = out.expect_one_error() {
+        // if let Some(BuildError>::MissingInterfaceError(..)) = out.expect_one_error() {
         //     return;
         // }
         // println!("{}", out);
@@ -434,7 +439,7 @@ impl Enum {
         writeln!(out, "}}")
     }
 
-    pub fn new(_out: &mut Output, enum_type: graphql_parser::schema::EnumType<'_, String>) -> Enum {
+    pub fn new(_err: &mut ErrorCollector, enum_type: graphql_parser::schema::EnumType<'_, String>) -> Enum {
         let mut model = Enum {
             position: enum_type.position,
             name: enum_type.name.clone(),
@@ -531,7 +536,7 @@ impl Object {
         
     }
 
-    pub fn from_object(_out: &mut Output, object_type: graphql_parser::schema::ObjectType<'_, String>) -> Object {
+    pub fn from_object(_err: &mut ErrorCollector, object_type: graphql_parser::schema::ObjectType<'_, String>) -> Object {
         let mut field_names = Vec::new();
         let mut fields = HashMap::new();
 
@@ -550,7 +555,7 @@ impl Object {
         }
     }
     
-    fn from_input_object(out: &mut Output<'_>, object_type: graphql_parser::schema::InputObjectType<'_, String>) -> Object {
+    fn from_input_object(_err: &mut ErrorCollector<'_>, object_type: graphql_parser::schema::InputObjectType<'_, String>) -> Object {
         let mut field_names = Vec::new();
         let mut fields = HashMap::new();
 
@@ -611,7 +616,7 @@ impl Interface {
         writeln!(out, "}}")
     }
     
-    pub fn new(_out: &mut Output, interface_type: graphql_parser::schema::InterfaceType<'_, String>) -> Interface {
+    pub fn new(_out: &mut ErrorCollector, interface_type: graphql_parser::schema::InterfaceType<'_, String>) -> Interface {
         let mut field_names = Vec::new();
         let mut fields = HashMap::new();
 
@@ -640,7 +645,7 @@ pub struct SchemaDefinition {
 }
 
 impl SchemaDefinition {
-    fn new(schema_definition: graphql_parser::schema::SchemaDefinition<'_, String>, _out: &mut Output) -> SchemaDefinition {
+    fn new(_err: &mut ErrorCollector, schema_definition: graphql_parser::schema::SchemaDefinition<'_, String>) -> SchemaDefinition {
         SchemaDefinition {
             position: schema_definition.position,
             query: schema_definition.query,
@@ -752,35 +757,12 @@ impl<'a> Iterator for InterfaceReferenceListItertor<'a> {
 
 #[derive(Debug)]
 pub struct Schema {
-    // ast: graphql_parser::schema::Document<'p, String>,
     pub named_types: HashMap<String, TypeDefinition>,
     pub names: HashMap<String, graphql_parser::Pos>,
-    // pub objects: HashMap<String, Object>,
-    // pub interfaces: HashMap<String, Interface>,
-    // pub scalars: Vec<Field>,
-    // // pub enums: Vec<&Enum>,
-    // pub unions: HashMap<String, Union>,
-    // pub query: Option<String>,
-    // pub mutation: Option<String>,
-    // pub subscription: Option<String>,
-    // pub schema_position: Option<graphql_parser::Pos>,
     pub schema_definition: Option<SchemaDefinition>,
 }
 
 impl Schema {
-    // pub fn new_interface_ref_list<'a>(&'a self) ->  InterfaceReferenceList<'a> {
-    //     InterfaceReferenceList {
-    //         schema: self,
-    //         names: Vec::new(),
-    //     }
-    // }
-    // pub fn new_object_ref_list<'a>(&'a self) ->  ObjectReferenceList<'a> {
-    //     ObjectReferenceList {
-    //         schema: self,
-    //         names: Vec::new(),
-    //     }
-    // }
-
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "parsed_model::Schema {{")?;
         {
@@ -860,37 +842,27 @@ impl Schema {
         writeln!(out, "}}")
     }
 
-    // fn name_defined(&mut self, out: &mut Output, name: &String, position: graphql_parser::Pos) {
+    // fn name_defined(&mut self, out: &mut ErrorCollector, name: &String, position: graphql_parser::Pos) {
     //     if let Some(existing) = self.names.insert(name.clone(), position.clone()) {
-    //         out.error(GraphQLError::DuplicateName(existing, position, name.clone()));
+    //         out.error(BuildError>::DuplicateName(existing, position, name.clone()));
     //     }
     // }
 
 
 
-    fn new_global(&mut self, out: &mut Output, name: String, value: TypeDefinition) {
+    fn new_global(&mut self, err: &mut ErrorCollector, name: String, value: TypeDefinition) {
         let position = value.position().clone();
 
         if let Some(existing) = self.named_types.insert(name.clone(), value) {
-            out.error(GraphQLError::DuplicateName(existing.position().clone(), position, name));
+            err.error(BuildError::DuplicateName(existing.position().clone(), position, name));
         }
     }
 
-    pub fn new(out: &mut Output,
-        ast: graphql_parser::schema::Document<'_, String>) -> Result<Schema, GraphQLError> {
+    pub fn new(err: &mut ErrorCollector,
+        ast: graphql_parser::schema::Document<'_, String>) -> Result<Schema, Error> {
         let mut model = Schema {
-            // ast,
             named_types: HashMap::new(),
             names: HashMap::new(),
-            // objects: HashMap::new(),
-            // interfaces: HashMap::new(),
-            // scalars: Vec::new(),
-            // enums: Vec::new(),
-            // unions: HashMap::new(),
-            // query: None,
-            // mutation: None,
-            // subscription: None,
-            // schema_position: None,
             schema_definition: None,
         };
 
@@ -898,28 +870,11 @@ impl Schema {
             match def {
                 graphql_parser::schema::Definition::SchemaDefinition(schema_definition) => {
                     if let Some(existing) = &model.schema_definition {
-                        out.error(GraphQLError::DuplicateName(schema_definition.position, existing.position, "Schema".to_string()));
+                        err.error(BuildError::DuplicateName(schema_definition.position, existing.position, "Schema".to_string()));
                     }
                     else {
-                        model.schema_definition = Some(SchemaDefinition::new(schema_definition, out));
+                        model.schema_definition = Some(SchemaDefinition::new(err, schema_definition));
                     }
-                    // let schema_definition: graphql_parser::schema::SchemaDefinition<'_, String> = schema_definition;
-
-                    // model.query = schema_definition.query;
-                    // model.mutation = schema_definition.mutation;
-                    // model.subscription = schema_definition.subscription;
-                    // model.schema_position = Some(schema_definition.position);
-
-                    // if let Some(query) = & model.query {
-                    //     writeln!(out, "//query {}", query)?;
-                    // }
-                    // for directive in schema_definition.directives {
-                    //     writeln!(out, "//Directive {}", directive.name)?;
-                
-                    //     for arg in directive.arguments {
-                    //         writeln!(out, "//  Arg {} {}", arg.0, arg.1)?;
-                    //     }
-                    // }
                 },
                 graphql_parser::schema::Definition::TypeDefinition(type_definition) => {
                     let (name, value) = match type_definition {
@@ -927,181 +882,42 @@ impl Schema {
                             (scalar_type.name.clone(), TypeDefinition::Scalar(TypeDef::new(scalar_type)))
                         },
                         graphql_parser::schema::TypeDefinition::Object(ast) => {
-                            (ast.name.clone(), TypeDefinition::Object(Object::from_object(out, ast)))
+                            (ast.name.clone(), TypeDefinition::Object(Object::from_object(err, ast)))
                         },
                         graphql_parser::schema::TypeDefinition::Interface(ast) => {
-                            (ast.name.clone(), TypeDefinition::Interface(Interface::new(out, ast)))
+                            (ast.name.clone(), TypeDefinition::Interface(Interface::new(err, ast)))
                         },
                         graphql_parser::schema::TypeDefinition::Union(ast) => {
                             (ast.name.clone(), TypeDefinition::Union(Union::new(ast)))
                         },
                         graphql_parser::schema::TypeDefinition::Enum(ast) => {
-                            (ast.name.clone(), TypeDefinition::Enum(Enum::new(out, ast)))
+                            (ast.name.clone(), TypeDefinition::Enum(Enum::new(err, ast)))
                         },
                         graphql_parser::schema::TypeDefinition::InputObject(ast) => {
-                           (ast.name.clone(), TypeDefinition::Object(Object::from_input_object(out, ast)))
-                            // Self::named_type(out, model, input_object_type.name.clone(), Type::InputObject(ObjectModel::from_input_object(out, input_object_type)?));
+                           (ast.name.clone(), TypeDefinition::Object(Object::from_input_object(err, ast)))
                         },
                     };
-                    model.new_global(out, name, value);
+                    model.new_global(err, name, value);
                 },
                 graphql_parser::schema::Definition::TypeExtension(type_extension) => {
-                    writeln!(out, "//Type Extension {}", type_extension)?;
+                    err.warning(BuildWarning::UnsupportedFeature(match type_extension {
+                        graphql_parser::schema::TypeExtension::Scalar(value) => value.position,
+                        graphql_parser::schema::TypeExtension::Object(value) => value.position,
+                        graphql_parser::schema::TypeExtension::Interface(value) => value.position,
+                        graphql_parser::schema::TypeExtension::Union(value) => value.position,
+                        graphql_parser::schema::TypeExtension::Enum(value) => value.position,
+                        graphql_parser::schema::TypeExtension::InputObject(value) => value.position,
+                    }, "TypeExtension"));
                 },
                 graphql_parser::schema::Definition::DirectiveDefinition(directive_definition) => {
-                    writeln!(out, "//Directive Definition {}", directive_definition)?;
+                    err.warning(BuildWarning::UnsupportedFeature(directive_definition.position, "DirectiveDefinition"));
                 },
             }
         }
-        Ok(model)
+
+        err.ok(model)
+        // Ok(model)
     }
-
-    // pub fn validate(&mut self, out: &mut Output) -> Result<validated_model::Schema, Box<dyn Error>> {
-
-    //     // // Validate objects
-    //     // for (name, object_model) in &mut self.objects {
-
-    //     //     if name == "APICallType" {
-    //     //         println!("Validate APICallType");
-    //     //     }
-    //     //     for interface_name in &object_model.implements {
-    //     //         if let Some(interface) = self.interfaces.get(interface_name) {
-    //     //             let mut ok = true;
-    //     //             for field_name in &interface.field_names {
-    //     //                 if ! object_model.fields.contains_key(field_name) {
-    //     //                     ok = false;
-    //     //                     break;
-    //     //                 }
-    //     //             }
-    //     //             if ok {
-    //     //                 object_model.fully_implements.push(interface_name.clone());
-    //     //             }
-    //     //         }
-    //     //         else {
-    //     //             out.error(GraphQLError::MissingInterfaceError(object_model.position, format!("Interface {} Not Found", name)))
-    //     //         };
-
-                
-    //     //     }
-    //     // }
-
-    //     // // Validate interfaces
-    //     // for (interface_name, interface_model) in &mut self.interfaces {
-    //     //     for (object_name, object_model) in &mut self.objects {
-    //     //         for implements in &object_model.fully_implements {
-    //     //             if implements == interface_name {
-    //     //                 interface_model.implemented_by.push(object_name.clone());
-    //     //                 break;
-    //     //             }
-    //     //         }
-    //     //     }        
-    //     // }
-
-    //     // if let Some(query) = &self.query {
-    //     //     if let None = self.objects.get(query) {
-    //     //         out.error(GraphQLError::MissingObjectError(self.schema_position.unwrap(), format!("No query object \"{}\" defined", query)));
-    //     //     }
-    //     // }
-    //     // else {
-    //     //     if let Some(query) = self.objects.get("Query") {
-    //     //         self.query = Some(query.name.clone());
-    //     //     }
-    //     // }
-
-    //     // if let Some(mutation) = &self.mutation {
-    //     //     if let None = self.objects.get(mutation) {
-    //     //         out.error(GraphQLError::MissingObjectError(self.schema_position.unwrap(), format!("No mutation object \"{}\" defined", mutation)));
-    //     //     }
-    //     // }
-    //     // else {
-    //     //     if let Some(mutation) = self.objects.get("Mutation") {
-    //     //         self.mutation = Some(mutation.name.clone());
-    //     //     }
-    //     // }
-
-    //     // if let Some(subscription) = &self.subscription {
-    //     //     if let None = self.objects.get(subscription) {
-    //     //         out.error(GraphQLError::MissingObjectError(self.schema_position.unwrap(), format!("No subscription object \"{}\" defined", subscription)));
-    //     //     }
-    //     // }
-    //     // else {
-    //     //     if let Some(subscription) = self.objects.get("Subscription") {
-    //     //         self.subscription = Some(subscription.name.clone());
-    //     //     }
-    //     // }
-
-    //     // if self.query == None {
-    //     //     out.error(GraphQLError::NoQueryDefinition);
-    //     // }
-
-    //     Ok(validated_model::Schema::new(&self, out)?)
-    // }
-
-    // pub fn generate(&self, out: &mut Output) -> Result<(), Box<dyn Error>> {
-        
-
-    //     for scalar in &self.scalars {
-    //         writeln!(out, "type {} = {}; // HERE", to_pascal_case(&scalar.name), &scalar.ty)?;
-    //     }
-
-    //     for enum_model in &self.enums {
-    //         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-    //         writeln!(out, "#[serde(rename = \"{}\")]", &enum_model.name)?;
-    //         writeln!(out, "pub enum {} {{", to_pascal_case(&enum_model.name))?;
-    //         for v in &enum_model.variants {
-    //             writeln!(out, "    #[serde(rename = \"{}\")]", v)?;
-    //             writeln!(out, "    {},", to_pascal_case(v))?;
-    //         }
-    //         writeln!(out, "}}")?;
-    //         writeln!(out, "")?;
-    //     }
-
-    //     for (_name, interface_model) in &self.interfaces {
-    //         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-    //         writeln!(out, "pub enum {} {{", to_pascal_case(&interface_model.name))?;
-
-    //         for object_name in &interface_model.implemented_by {
-                
-    //             writeln!(out, "    {}({}),", to_pascal_case(&object_name), to_pascal_case(&object_name))?;
-    //         }
-
-    //         writeln!(out, "}}")?;
-    //         writeln!(out, "")?;
-    //     }
-
-    //     for (_name, object_model) in &self.objects {
-
-    //         if _name == "APICallType" {
-    //             println!("Generate APICallType");
-    //         }
-    //         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-    //         writeln!(out, "#[serde(rename = \"{}\")]", &object_model.name)?;
-    //         writeln!(out, "pub struct {} {{", to_pascal_case(&object_model.name))?;
-    
-    //         for name in &object_model.field_names {
-    //             if let Some(field) = object_model.fields.get(name) {
-    //                 writeln!(out, "    #[serde(rename = \"{}\")]", &field.name)?;
-    //                 writeln!(out, "    {}_: {},", to_snake_case(&field.name), field.ty)?;
-    //             }
-    //         }
-    //         writeln!(out, "}}")?;
-    //         writeln!(out, "")?;
-    //     }
-
-    //     for (_name, union_model) in &self.unions {
-    //         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-    //         writeln!(out, "pub enum {} {{", to_pascal_case(&union_model.name))?;
-    
-    //         for object_name in &union_model.implements {
-                
-    //             writeln!(out, "    {}({}),", to_pascal_case(&object_name), to_pascal_case(&object_name))?;
-    //         }
-    
-    //         writeln!(out, "}}")?;
-    //         writeln!(out, "")?;
-    //     }
-    //     Ok(())
-    // }
 }
 
 
@@ -1152,7 +968,7 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn new(_out: &mut Output, value: graphql_parser::query::Value<'_, String> ) -> Value {
+    pub fn new(_out: &mut ErrorCollector, value: graphql_parser::query::Value<'_, String> ) -> Value {
         match value {
             graphql_parser::query::Value::Variable(name) => Value::Variable(name),
             graphql_parser::query::Value::Int(number) => Value::Int(number.as_i64().unwrap()),
@@ -1191,7 +1007,7 @@ pub struct Argument {
 }
 
 impl Argument {
-    pub fn new(out: &mut Output, name: String, value: graphql_parser::query::Value<'_, String> ) -> Argument {
+    pub fn new(out: &mut ErrorCollector, name: String, value: graphql_parser::query::Value<'_, String> ) -> Argument {
         Argument {
             name,
             value: Value::new(out, value),
@@ -1209,7 +1025,7 @@ impl Argument {
         writeln!(out, "}}")
     }
     
-    pub(crate) fn generate_query(&self, out: &mut Output<'_>, fields: &HashMap<String, validated_model::Field>, schema: &validated_model::Schema, arg: bool) -> Result<(), GraphQLError> {
+    pub(crate) fn generate_query(&self, out: &mut Output<'_>, fields: &HashMap<String, validated_model::Field>, schema: &validated_model::Schema, arg: bool) -> Result<(), Error> {
         writeln!(out, "{}: {}", self.name, self.value)?;
         Ok(())
     }
@@ -1260,7 +1076,7 @@ impl Argument {
 //      }
 
 
-//     pub fn new(out: &mut Output, f: graphql_parser::query::VariableDefinition<'_, String> ) -> VariableDefinition {
+//     pub fn new(out: &mut ErrorCollector, f: graphql_parser::query::VariableDefinition<'_, String> ) -> VariableDefinition {
 //         Self::do_new(f.position, f.name, f.field_type, false, false)
         
 //     }
@@ -1292,7 +1108,7 @@ pub struct SelectionField {
 }
 
 impl SelectionField {
-    pub fn new(out: &mut Output, field: graphql_parser::query::Field<'_, String>, optional: bool) -> SelectionField {
+    pub fn new(out: &mut ErrorCollector, field: graphql_parser::query::Field<'_, String>, optional: bool) -> SelectionField {
         SelectionField {
             position: field.position,
             name: field.name,
@@ -1342,7 +1158,7 @@ pub struct FragmentSpread {
 }
 
 impl FragmentSpread {
-    pub fn new(out: &mut Output, fragment: graphql_parser::query::FragmentSpread<'_, String>) -> FragmentSpread {
+    pub fn new(out: &mut ErrorCollector, fragment: graphql_parser::query::FragmentSpread<'_, String>) -> FragmentSpread {
         FragmentSpread {
             position: fragment.position,
             name: fragment.fragment_name,
@@ -1369,12 +1185,12 @@ pub enum Selection {
 } 
 
 impl Selection {
-    pub fn new(out: &mut Output, selection: graphql_parser::query::Selection<'_, String> ) -> Selection {
+    pub fn new(err: &mut ErrorCollector, selection: graphql_parser::query::Selection<'_, String> ) -> Selection {
         match selection {
             graphql_parser::query::Selection::OptionalField(field) => 
-                Selection::Field(SelectionField::new(out, *field, true)),
-            graphql_parser::query::Selection::Field(field) => Selection::Field(SelectionField::new(out, field, false)),
-            graphql_parser::query::Selection::FragmentSpread(fragment) => Selection::Fragment(FragmentSpread::new(out, fragment)),
+                Selection::Field(SelectionField::new(err, *field, true)),
+            graphql_parser::query::Selection::Field(field) => Selection::Field(SelectionField::new(err, field, false)),
+            graphql_parser::query::Selection::FragmentSpread(fragment) => Selection::Fragment(FragmentSpread::new(err, fragment)),
             graphql_parser::query::Selection::InlineFragment(_inline_fragment) => todo!(),
         }
     }
@@ -1408,19 +1224,19 @@ pub struct Query {
 }
 
 impl Query {
-    pub fn new(out: &mut Output, query: graphql_parser::query::Query<'_, String>, _schema: &validated_model::Schema ) -> Result<Query, GraphQLError> {
+    pub fn new(err: &mut ErrorCollector, query: graphql_parser::query::Query<'_, String>, _schema: &validated_model::Schema ) -> Result<Query, Error> {
         let name = match query.name {
             Some(name) => name,
             None => {
-                return Err(GraphQLError::UnsupportedError(query.position, String::from("Anonymous query")))
+                return err.fail(BuildError::UnsupportedError(query.position, String::from("Anonymous query")))
             },
         };
 
-        let selections = build_selections(out, query.selection_set);
-        let variables = build_variables(out, query.variable_definitions);
+        let selections = build_selections(err, query.selection_set);
+        let variables = build_variables(err, query.variable_definitions);
 
         if selections.is_empty() {
-            return Err(GraphQLError::InvalidQueryError(query.position, format!("Query {} has no selection set", name)));
+            return err.fail(BuildError::InvalidQueryError(query.position, format!("Query {} has no selection set", name)));
         }
 
         // for selection in selections {
@@ -1436,11 +1252,11 @@ impl Query {
         //             query_object
         //         }
         //         else {
-        //             return Err(GraphQLError::MissingObjectError(selection.position(), format!("Query {} has mising selection \"{}\"", name, selection_field.name)));
+        //             return Err(BuildError>::MissingObjectError(selection.position(), format!("Query {} has mising selection \"{}\"", name, selection_field.name)));
         //         }
         //     }
         //     else {
-        //         return Err(GraphQLError::InvalidQueryError(selection.position(), format!("Query {} has invalid selection set, expected a field name", name)));
+        //         return Err(BuildError>::InvalidQueryError(selection.position(), format!("Query {} has invalid selection set, expected a field name", name)));
         //     };
         // }
         
@@ -1454,7 +1270,7 @@ impl Query {
         })
     }
     
-    // pub fn validate(&mut self, _out: &mut Output) -> Result<(), GraphQLError> {
+    // pub fn validate(&mut self, _out: &mut ErrorCollector) -> Result<(), Error> {
     //     Ok(())
     // }
 
@@ -1489,7 +1305,7 @@ impl Query {
     }
 }
 
-fn build_variables(_out: &mut Output, variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>) -> Vec<Field> {
+fn build_variables(_out: &mut ErrorCollector, variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>) -> Vec<Field> {
     let mut variables = Vec::new();
 
     for variable in variable_definitions {
@@ -1499,7 +1315,7 @@ fn build_variables(_out: &mut Output, variable_definitions: Vec<graphql_parser::
     variables
 }
 
-fn build_selections(out: &mut Output, selection_set: graphql_parser::query::SelectionSet<'_, String>) -> Vec<Selection> {
+fn build_selections(out: &mut ErrorCollector, selection_set: graphql_parser::query::SelectionSet<'_, String>) -> Vec<Selection> {
 
     let mut selections = Vec::new();
 
@@ -1512,7 +1328,7 @@ fn build_selections(out: &mut Output, selection_set: graphql_parser::query::Sele
 
 
 
-fn build_arguments(out: &mut Output, arguments: Vec<(String, graphql_parser::query::Value<'_, String>)>) -> Vec<Argument> {
+fn build_arguments(out: &mut ErrorCollector, arguments: Vec<(String, graphql_parser::query::Value<'_, String>)>) -> Vec<Argument> {
     let mut result = Vec::new();
 
     for (name, value) in arguments {
@@ -1530,7 +1346,7 @@ pub struct Operations {
 }
 
 impl Operations {
-    pub fn new(out: &mut Output,
+    pub fn new(out: &mut ErrorCollector,
         schema: &validated_model::Schema,
         definitions: Vec<graphql_parser::query::Definition<'_, String>>, model_name: &str) -> Operations {
 
@@ -1575,15 +1391,13 @@ impl Operations {
                             }
                         },
                         graphql_parser::query::OperationDefinition::Query(query) => {
-                            match Query::new(out, query, schema) {
-                                Ok(query) => queries.push(query),
-                                Err(error) => out.error(error),
+                            if let  Ok(query) = Query::new(out, query, schema) {
+                                queries.push(query);
                             }
                         },
                         graphql_parser::query::OperationDefinition::Mutation(mutation) => {
-                            match Mutation::new(out, mutation, schema) {
-                                Ok(mutation) => mutations.push(mutation),
-                                Err(error) => out.error(error),
+                            if let Ok(mutation) = Mutation::new(out, mutation, schema) {
+                                mutations.push(mutation);
                             }
                         },
                         graphql_parser::query::OperationDefinition::Subscription(_subscription) => {
@@ -1593,9 +1407,8 @@ impl Operations {
                     }
                 },
                 graphql_parser::query::Definition::Fragment(fragment_definition) => {
-                    match FragmentDefinition::new(out, fragment_definition, schema) {
-                        Ok(fragment) => fragments.push(fragment),
-                        Err(error) => out.error(error),
+                    if let Ok(fragment) = FragmentDefinition::new(out, fragment_definition, schema) {
+                        fragments.push(fragment);
                     }
                 },
             }
@@ -1609,7 +1422,7 @@ impl Operations {
             }
     }
 
-    // pub fn validate(&mut self, out: &mut Output, schema: Rc<validated_model::Schema>) -> Result<validated_model::Operations, Box<dyn Error>> {
+    // pub fn validate(&mut self, out: &mut ErrorCollector, schema: Rc<validated_model::Schema>) -> Result<validated_model::Operations, Box<dyn Error>> {
     //     // for query in &mut self.queries {
     //     //     query.validate(out)?;
     //     // }
@@ -1654,19 +1467,19 @@ pub struct Mutation {
 }
 
 impl Mutation {
-    pub fn new(out: &mut Output, query: graphql_parser::query::Mutation<'_, String>, _schema: &validated_model::Schema ) -> Result<Mutation, GraphQLError> {
+    pub fn new(err: &mut ErrorCollector, query: graphql_parser::query::Mutation<'_, String>, _schema: &validated_model::Schema ) -> Result<Mutation, Error> {
         let name = match query.name {
             Some(name) => name,
             None => {
-                return Err(GraphQLError::UnsupportedError(query.position, String::from("Anonymous query")))
+                return err.fail(BuildError::UnsupportedError(query.position, String::from("Anonymous query")))
             },
         };
 
-        let selections = build_selections(out, query.selection_set);
-        let variables = build_variables(out, query.variable_definitions);
+        let selections = build_selections(err, query.selection_set);
+        let variables = build_variables(err, query.variable_definitions);
 
         if selections.is_empty() {
-            return Err(GraphQLError::InvalidQueryError(query.position, format!("Query {} has no selection set", name)));
+            return err.fail(BuildError::InvalidQueryError(query.position, format!("Query {} has no selection set", name)));
         }
 
         // for selection in selections {
@@ -1682,11 +1495,11 @@ impl Mutation {
         //             query_object
         //         }
         //         else {
-        //             return Err(GraphQLError::MissingObjectError(selection.position(), format!("Query {} has mising selection \"{}\"", name, selection_field.name)));
+        //             return Err(BuildError>::MissingObjectError(selection.position(), format!("Query {} has mising selection \"{}\"", name, selection_field.name)));
         //         }
         //     }
         //     else {
-        //         return Err(GraphQLError::InvalidQueryError(selection.position(), format!("Query {} has invalid selection set, expected a field name", name)));
+        //         return Err(BuildError>::InvalidQueryError(selection.position(), format!("Query {} has invalid selection set, expected a field name", name)));
         //     };
         // }
         
@@ -1700,7 +1513,7 @@ impl Mutation {
         })
     }
     
-    // pub fn validate(&mut self, _out: &mut Output) -> Result<(), GraphQLError> {
+    // pub fn validate(&mut self, _out: &mut ErrorCollector) -> Result<(), Error> {
     //     Ok(())
     // }
 
@@ -1744,12 +1557,12 @@ pub struct FragmentDefinition {
 }
 
 impl FragmentDefinition {
-    pub fn new(out: &mut Output, fragment_definition: graphql_parser::query::FragmentDefinition<'_, String>, _schema: &validated_model::Schema ) -> Result<FragmentDefinition, GraphQLError> {
+    pub fn new(err: &mut ErrorCollector, fragment_definition: graphql_parser::query::FragmentDefinition<'_, String>, _schema: &validated_model::Schema ) -> Result<FragmentDefinition, Error> {
 
-        let selections = build_selections(out, fragment_definition.selection_set);
+        let selections = build_selections(err, fragment_definition.selection_set);
 
         if selections.is_empty() {
-            return Err(GraphQLError::InvalidQueryError(fragment_definition.position, format!("FragmentDefinition {} has no selection set", &fragment_definition.name)));
+            return err.fail(BuildError::InvalidQueryError(fragment_definition.position, format!("FragmentDefinition {} has no selection set", &fragment_definition.name)));
         }
 
         let type_condition = match fragment_definition.type_condition {
@@ -1770,11 +1583,11 @@ impl FragmentDefinition {
         //             query_object
         //         }
         //         else {
-        //             return Err(GraphQLError::MissingObjectError(selection.position(), format!("Query {} has mising selection \"{}\"", name, selection_field.name)));
+        //             return Err(BuildError>::MissingObjectError(selection.position(), format!("Query {} has mising selection \"{}\"", name, selection_field.name)));
         //         }
         //     }
         //     else {
-        //         return Err(GraphQLError::InvalidQueryError(selection.position(), format!("Query {} has invalid selection set, expected a field name", name)));
+        //         return Err(BuildError>::InvalidQueryError(selection.position(), format!("Query {} has invalid selection set, expected a field name", name)));
         //     };
         // }
         
@@ -1788,7 +1601,7 @@ impl FragmentDefinition {
         })
     }
     
-    // pub fn validate(&mut self, _out: &mut Output) -> Result<(), GraphQLError> {
+    // pub fn validate(&mut self, _out: &mut ErrorCollector) -> Result<(), Error> {
     //     Ok(())
     // }
 

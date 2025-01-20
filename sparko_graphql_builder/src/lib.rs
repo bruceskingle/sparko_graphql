@@ -1,5 +1,4 @@
-use error::GraphQLError;
-use graphql_parser::parse_query;
+use graphql_parser::{parse_query, Pos};
 use graphql_parser::schema::parse_schema;
 use inflections::case::to_snake_case;
 use std::fmt::Display;
@@ -13,45 +12,194 @@ use std::io::Write;
 mod utils;
 mod parsed_model;
 mod validated_model;
-mod error;
+// mod error;
 
 
-// #[derive(Debug)]
-// pub enum Error {
-//     InternalError(Box<dyn std::error::Error>),
-//     BuildFailed(String),
+#[derive(Debug)]
+pub enum Error {
+    InternalError(Box<dyn std::error::Error>),
+    BuildFailed(String),
+    BuildErrors{errors: u32, warnings: u32}
+}
+
+impl std::error::Error for Error {
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::InternalError(Box::new(err))
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{:?}", self)
+    }
+}
+
+#[derive(Debug)]
+pub enum BuildError {
+    SchemaSyntaxError(graphql_parser::schema::ParseError),
+    QuerySyntaxError(graphql_parser::query::ParseError),
+    UndefinedTypeError(Pos, String),
+    TypeMismatchError(Pos, String),
+    MissingInterfaceError(Pos, String),
+    MissingFieldError(Pos, String),
+    OptionalNonNullFieldError(Pos, String),
+    MissingObjectError(Pos, String),
+    InvalidQueryError(Pos, String),
+    UnsupportedError(Pos, String),
+    DuplicateName(Pos, Pos, String),
+    NoQueryDefinition,
+    NoOperations,
+    ValidationError,
+}
+
+impl Display for BuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{:?}", self)
+    }
+}
+
+#[derive(Debug)]
+pub enum BuildWarning {
+    UnsupportedFeature(Pos, &'static str),
+    NameCollision(Pos, Pos, String),
+}
+
+impl Display for BuildWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{:?}", self)
+    }
+}
+
+pub struct BaseErrorCollector {
+    errors: Vec<BuildError>,
+    warnings: Vec<BuildWarning>,
+}
+
+impl Display for BaseErrorCollector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "    Errors")?;
+        for item in &self.errors {
+            writeln!(f, "        {}", item)?;
+        }
+
+        writeln!(f, "    Warnings")?;
+        for item in &self.warnings {
+            writeln!(f, "        {}", item)?;
+        }
+        Ok(())
+    }
+}
+
+impl BaseErrorCollector {
+    pub fn new() -> BaseErrorCollector {
+        BaseErrorCollector {
+            errors: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    pub fn new_error_collector(&mut self) -> ErrorCollector {
+        ErrorCollector::new(self)
+    }
+    
+    // fn err(&self) -> Result<(), Error> {
+    //     Err(Error::BuildErrors { errors: self.errors.len() as u32, warnings: self.warnings.len() as u32 })
+    // }
+
+    pub fn expect_ok(&self) {
+        if self.warnings.len() != 0 || self.errors.len() != 0 {
+            println!("{}", self);
+            panic!("Expected OK");
+        }
+    }
+
+    pub fn expect_one_error(&self) -> Option<&BuildError> {
+        if self.warnings.len() == 0 && self.errors.len() == 1 {
+            self.errors.get(0)
+        }
+        else {
+            None
+        }
+    }
+}
+
+pub struct ErrorCollector<'a> {
+    base: &'a mut BaseErrorCollector,
+    errors: u32,
+    warnings: u32,
+}
+
+impl ErrorCollector<'_> {
+    pub fn new<'a>(base: &'a mut BaseErrorCollector) -> ErrorCollector<'a> {
+        ErrorCollector {
+            base,
+            errors: 0,
+            warnings: 0,
+        }
+    }
+
+    pub fn child(&mut self) -> ErrorCollector<'_> {
+        ErrorCollector {
+            base: self.base,
+            errors: 0,
+            warnings: 0,
+        }
+    }
+
+    pub fn fail<T>(&mut self, error: BuildError) -> Result<T, Error> {
+        let msg = format!("{}", error);
+        self.error(error);
+        Err(Error::BuildFailed(msg))
+    }
+
+    pub fn error(&mut self, error: BuildError) {
+        self.base.errors.push(error);
+        self.errors += 1;
+    }
+
+    pub fn warning(&mut self, warning: BuildWarning) {
+        self.base.warnings.push(warning);
+        self.warnings += 1;
+    }
+
+    pub fn ok_then<T>(&self, ok: &dyn Fn() -> T) -> Result<T, Error> {
+        if self.errors == 0 {
+            Ok(ok())
+        }
+        else {
+            Err(Error::BuildErrors { errors: self.errors, warnings: self.warnings })
+        }
+    } 
+
+    pub fn ok<T>(&self, ok: T) -> Result<T, Error> {
+        if self.errors == 0 {
+            Ok(ok)
+        }
+        else {
+            Err(Error::BuildErrors { errors: self.errors, warnings: self.warnings })
+        }
+    } 
+}
+
+// fn test() -> Result<String, Error>{
+//     let mut base = BaseErrorCollector::new();
+//     let mut err = ErrorCollector::new(&mut base);
+
+//     err.error(BuildError::NoQueryDefinition);
+
+//     err.ok_then(&||{String::new()})
 // }
 
-// impl From<std::io::Error> for Error {
-//     fn from(err: std::io::Error) -> Self {
-//         GraphQLError::InternalError(Box::new(err))
-//     }
-// }
+// fn test2() -> Result<String, Error>{
+//     let mut base = BaseErrorCollector::new();
+//     let mut err = ErrorCollector::new(&mut base);
 
-// #[derive(Debug)]
-// pub enum BuildError {
-//     SchemaSyntaxError(graphql_parser::schema::ParseError),
-//     QuerySyntaxError(graphql_parser::query::ParseError),
-//     UndefinedTypeError(Pos, String),
-//     TypeMismatchError(Pos, String),
-//     MissingInterfaceError(Pos, String),
-//     MissingFieldError(Pos, String),
-//     OptionalNonNullFieldError(Pos, String),
-//     MissingObjectError(Pos, String),
-//     InvalidQueryError(Pos, String),
-//     UnsupportedError(Pos, String),
-//     DuplicateName(Pos, Pos, String),
-//     NoQueryDefinition,
-//     ValidationError,
-// }
+//     err.error(BuildError::NoQueryDefinition);
 
-// impl Display for BuildError {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         writeln!(f, "{:?}", self)
-//     }
-// }
-// pub struct ErrorCollector {
-
+//     err.ok(String::new())
 // }
 
 pub struct Output<'a> {
@@ -69,12 +217,16 @@ impl Output<'_> {
         }
     }
 
-    pub fn error(&mut self, error: GraphQLError) {
-        self.base.error(error);
-    }
+    // pub fn error(&mut self, error: BuildError) {
+    //     self.base.error(error);
+    // }
 
-    // pub fn warning(&mut self, error: GraphQLError) {
-    //     self.base.warning(error);
+    // pub fn warning(&mut self, warning: BuildWarning) {
+    //     self.base.warning(warning);
+    // }
+
+    // pub fn new_error_collector(&mut self) -> ErrorCollector {
+    //     self.base.new_error_collector()
     // }
 }
 
@@ -118,140 +270,173 @@ impl Write for Output<'_> {
     }
 }
 
-impl Display for Output<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.base.fmt(f)
-    }
-}
+// impl Display for Output<'_> {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         self.base.fmt(f)
+//     }
+// }
 
-#[cfg(test)]
-struct TestOutput {
-    buf: Vec<u8>,
-    errors: Vec<GraphQLError>,
-    warnings: Vec<GraphQLError>,
-}
+// #[cfg(test)]
+// struct TestOutput {
+//     buf: Vec<u8>,
+//     errors: Vec<GraphQLError>,
+//     warnings: Vec<GraphQLError>,
+// }
 
-struct FileOutput {
-    buf: BufWriter<File>,
-    errors: Vec<GraphQLError>,
-    warnings: Vec<GraphQLError>,
-}
+// struct FileOutput {
+//     buf: BufWriter<File>,
+//     errors: Vec<GraphQLError>,
+//     warnings: Vec<GraphQLError>,
+// }
 
 enum BaseOutput {
-    File(FileOutput),
+    File(BufWriter<File>),
     #[cfg(test)]
-    Buffer(TestOutput),
+    Buffer(Vec<u8>),
 }
 
-impl Display for BaseOutput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+// impl Display for BaseOutput {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 
-        fn fmt_errors(f: &mut std::fmt::Formatter<'_>, name: &str, errors: &Vec<GraphQLError>)  -> std::fmt::Result {
-            writeln!(f, "    {}", name)?;
-            for item in errors {
-                writeln!(f, "        {}", item)?;
-            }
-            Ok(())
-        }
+//         fn fmt_errors(f: &mut std::fmt::Formatter<'_>, errors: &Vec<BuildError>)  -> std::fmt::Result {
+//             writeln!(f, "    Errors")?;
+//             for item in errors {
+//                 writeln!(f, "        {}", item)?;
+//             }
+//             Ok(())
+//         }
 
-        writeln!(f, "Output")?;
+//         fn fmt_warnings(f: &mut std::fmt::Formatter<'_>, warnings: &Vec<BuildWarning>)  -> std::fmt::Result {
+//             writeln!(f, "    Warnings")?;
+//             for item in warnings {
+//                 writeln!(f, "        {}", item)?;
+//             }
+//             Ok(())
+//         }
+
+//         writeln!(f, "Output")?;
+//         match self {
+//             BaseOutput::File(out) => {
+//                 fmt_errors(f, &err.errors)?;
+//                 fmt_warnings(f, &err.warnings)?;
+//             }
+//             #[cfg(test)]
+//             BaseOutput::Buffer{err, out} => {
+//                 fmt_errors(f, &err.errors)?;
+//                 fmt_warnings(f, &err.warnings)?;
+//                 writeln!(f, "    Output")?;
+//                 let buf = &out;
+//                 for item in std::str::from_utf8(buf).unwrap().lines() {
+//                     writeln!(f, "        {}", item)?;
+//                 }
+//             },
+//         }
+
         
-        match self {
-            BaseOutput::File(output) => {
-                fmt_errors(f, "Errors", &output.errors)?;
-                fmt_errors(f, "Warnings", &output.warnings)?;
-            }
-            #[cfg(test)]
-            BaseOutput::Buffer(output) => {
-                fmt_errors(f, "Errors", &output.errors)?;
-                fmt_errors(f, "Warnings", &output.warnings)?;
-                writeln!(f, "    Output")?;
-                let buf = &output.buf;
-                for item in std::str::from_utf8(buf).unwrap().lines() {
-                    writeln!(f, "        {}", item)?;
-                }
-            },
-        }
-
-        
-        Ok(())
-    }
-}
+//         Ok(())
+//     }
+// }
 
 impl Write for BaseOutput {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            BaseOutput::File(output) => output.buf.write(buf),
+            BaseOutput::File(out) => out.write(buf),
             #[cfg(test)]
-            BaseOutput::Buffer(output) => output.buf.write(buf),
+            BaseOutput::Buffer(out) => out.write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         
         match self {
-            BaseOutput::File(output) => output.buf.flush(),
+            BaseOutput::File(out) => out.flush(),
             #[cfg(test)]
-            BaseOutput::Buffer(output) => output.buf.flush(),
+            BaseOutput::Buffer(out) => out.flush(),
         }
     }
 }
 
-impl From<File> for BaseOutput {
-    fn from(value: File) -> Self {
-        BaseOutput::File(FileOutput {
-            buf: BufWriter::new(value),
-            errors: Vec::new(),
-            warnings: Vec::new(),
-        })
-    }
-}
+// impl From<File> for BaseOutput {
+//     fn from(value: File) -> Self {
+//         BaseOutput::File{
+//             err: BaseErrorCollector::new(),
+//             out: BufWriter::new(value),
+//         }
+//     }
+// }
 
 impl BaseOutput {
-    pub fn has_errors(&self) -> bool {
-        match self {
-            BaseOutput::File(output) => output.errors.len()>0,
-            #[cfg(test)]
-            BaseOutput::Buffer(output) => output.errors.len()>0,
-        }
+
+    pub fn from_file(file: File) -> BaseOutput {
+        BaseOutput::File(BufWriter::new(file))
     }
 
-    pub fn errors(&self) -> &Vec<error::GraphQLError> {
-        match self {
-            BaseOutput::File(file_output) => &file_output.errors,
-            #[cfg(test)]
-            BaseOutput::Buffer(test_output) => &test_output.errors,
-        }
-    }
 
-    pub fn warnings(&self) -> &Vec<error::GraphQLError> {
-        match self {
-            BaseOutput::File(file_output) => &file_output.warnings,
-            #[cfg(test)]
-            BaseOutput::Buffer(test_output) => &test_output.warnings,
-        }
-    }
-    
 
-    pub fn error(&mut self, error: GraphQLError) {
-        if let Err(_) = writeln!(self, "ERROR //{}", &error) {
-            // oh dear.....
-        };
-        let errors = match self {
-            BaseOutput::File(output) => &mut output.errors,
-            #[cfg(test)]
-            BaseOutput::Buffer(output) => &mut output.errors,
-        };
+    // pub fn new_error_collector(&mut self) -> ErrorCollector {
+    //     match self{
+    //         BaseOutput::File { err, out: _ } => err.new_error_collector(),
+    //         #[cfg(test)]
+    //         BaseOutput::Buffer { err, out: _ } => err.new_error_collector(),
+    //     }
+    // }
 
-        if let GraphQLError::MultipleErrors(multiple) = error {
-            for error in multiple {
-                errors.push(error);
-            }
-        }
-        else {
-            errors.push(error);
-        }
-    }
+    // pub fn has_errors(&self) -> bool {
+    //     match self {
+    //         BaseOutput::File{err, out} => err.errors.len()>0,
+    //         #[cfg(test)]
+    //         BaseOutput::Buffer{err, out} => err.errors.len()>0,
+    //     }
+    // }
+
+    // pub fn errors(&self) -> &Vec<BuildError> {
+    //     match self {
+    //         BaseOutput::File{err, out} => &err.errors,
+    //         #[cfg(test)]
+    //         BaseOutput::Buffer{err, out} => &err.errors,
+    //     }
+    // }
+
+    // pub fn warnings(&self) -> &Vec<BuildWarning> {
+    //     match self {
+    //         BaseOutput::File{err, out} => &err.warnings,
+    //         #[cfg(test)]
+    //         BaseOutput::Buffer{err, out} => &err.warnings,
+    //     }
+    // }
+
+    // pub fn error(&mut self, error: BuildError) {
+    //     if let Err(_) = writeln!(self, "ERROR //{}", &error) {
+    //         // oh dear.....
+    //     };
+    //     let errors = match self {
+    //         BaseOutput::File{err, out} => &mut err.errors,
+    //         #[cfg(test)]
+    //         BaseOutput::Buffer{err, out} => &mut err.errors,
+    //     };
+
+    //     // if let GraphQLError::MultipleErrors(multiple) = error {
+    //     //     for error in multiple {
+    //     //         errors.push(error);
+    //     //     }
+    //     // }
+    //     // else {
+    //         errors.push(error);
+    //     // }
+    // }
+
+    // pub fn warning(&mut self, warning: BuildWarning) {
+    //     if let Err(_) = writeln!(self, "// WARNING {}", &warning) {
+    //         // oh dear.....
+    //     };
+    //     let warnings = match self {
+    //         BaseOutput::File{err, out: _} => &mut err.warnings,
+    //         #[cfg(test)]
+    //         BaseOutput::Buffer{err, out: _} => &mut err.warnings,
+    //     };
+
+    //     warnings.push(warning);
+    // }
 
     pub fn indent(&mut self) -> Output {
         Output {
@@ -260,12 +445,12 @@ impl BaseOutput {
             start_of_line: true,
         }
     }
-    
-    // pub fn warning(&mut self, error: GraphQLError) {
+
+    // pub fn new_error_collector(&mut self) -> ErrorCollector {
     //     match self {
-    //         Output::File(output) => output.warnings.push(error),
+    //         BaseOutput::File { err, out: _ } => ErrorCollector::new(err),
     //         #[cfg(test)]
-    //         Output::Buffer(output) => output.warnings.push(error),
+    //         BaseOutput::Buffer { err, out: _ } => ErrorCollector::new(err),
     //     }
     // }
 }
@@ -274,62 +459,7 @@ impl BaseOutput {
 
 impl BaseOutput {
     pub fn new() -> BaseOutput {
-        BaseOutput::Buffer(TestOutput {
-            buf: Vec::new(),
-            errors: Vec::new(),
-            warnings: Vec::new(),
-        })
-    }
-
-    pub fn expect_ok(&self) {
-        match self {
-            BaseOutput::File(output) => Self::do_check_ok(self, &output.errors, &output.warnings),
-            BaseOutput::Buffer(output) => Self::do_check_ok(self, &output.errors, &output.warnings),
-        }
-    }
-    
-    fn do_check_ok<'a>(self: &BaseOutput, errors: &'a Vec<GraphQLError>,
-        warnings: &'a Vec<GraphQLError>) {
-        if warnings.len() != 0 || errors.len() != 0 {
-            println!("{}", self);
-            panic!("Expected OK");
-        }
-    }
-
-    pub fn expect_one_error(&self) -> Option<&GraphQLError> {
-        self.expect_one(true)
-    }
-
-    // pub fn expect_one_warning(&self) -> &GraphQLError {
-    //     self.expect_one(false)
-    // }
-
-    fn expect_one(&self, error: bool) -> Option<&GraphQLError> {
-        match self {
-            BaseOutput::File(output) => Self::do_check_one(error, &output.errors, &output.warnings),
-            BaseOutput::Buffer(output) => Self::do_check_one(error, &output.errors, &output.warnings),
-        }
-    }
-
-    fn do_check_one<'a>(error: bool, errors: &'a Vec<GraphQLError>,
-        warnings: &'a Vec<GraphQLError>) -> Option<&'a GraphQLError> {
-        if error {
-            if warnings.len() == 0 && errors.len() == 1 {
-                errors.get(0)
-            }
-            else {
-                None
-            }
-        }
-        else {
-
-            if warnings.len() == 1 && errors.len() == 0 {
-                warnings.get(0)
-            }
-            else {
-                None
-            }
-        }
+        BaseOutput::Buffer(Vec::new())
     }
 }
 
@@ -370,80 +500,109 @@ impl Builder {
     //     }
     // }
     
-    pub fn build(&mut self) -> Result<(), GraphQLError> {
+    pub fn build(&mut self) -> Result<String, Error> {
             
+        let mut base = BaseErrorCollector::new();
+        let mut err = ErrorCollector::new(&mut base);
 
+        let schema: String;
+        let schema = if let Some(file_name) = &self.schema {
+            schema = fs::read_to_string(file_name)?;
+                    
+            // Tell Cargo that if the given file changes, to rerun this build script.
+            println!("cargo::rerun-if-changed={}", file_name);
+            
+            self.do_build_schema(&mut err, &schema)?
+        }
+        else {
+            return Err(Error::BuildFailed(format!("No schema defined")));
+        };
+
+        let mut queries = Vec::new();
+
+        for (file_name, model_name) in &self.queries {
+            let query: String = fs::read_to_string(file_name)?;
+                    
+            // Tell Cargo that if the given file changes, to rerun this build script.
+            println!("cargo::rerun-if-changed={}", file_name);
+            
+            if let Ok(query) = self.do_build_query(&mut err, &schema, &query, model_name) {
+                queries.push(query);
+            }
+        }
         let out_dir = env::var_os("OUT_DIR").unwrap();
         let dest_path = Path::new(&out_dir).join(format!("{}.rs", self.model_name));
+        let dest_path_string = format!("{}", dest_path.to_string_lossy());
 
-        let file = File::create(dest_path)?;
-        let mut base_out: BaseOutput = BaseOutput::from(file);
-        let mut out = base_out.indent();
-        writeln!(out, 
-            r#"
+        if queries.is_empty() {
+            err.error(BuildError::NoOperations);
+        }
+        else {
+            let file = File::create(dest_path)?;
+            let mut base_out: BaseOutput = BaseOutput::from_file(file);
+            let mut out = base_out.indent();
+            writeln!(out, 
+                r#"
 pub mod {} {{
 use display_json::DisplayAsJsonPretty;
 use serde::{{Deserialize, Serialize}};
 "#, to_snake_case(&self.model_name)
-        )?;
+            )?;
 
-        let schema: String;
-        let schema = if let Some(file_name) = &self.schema {
-            schema = read_to_string(&mut out, file_name)?;
-                    
-            // Tell Cargo that if the given file changes, to rerun this build script.
-            println!("cargo::rerun-if-changed={}", file_name);
-            writeln!(out, "// cargo::rerun-if-changed={}", file_name)?;
-            
-                self.do_build_schema(&mut out, &schema)?
-        }
-        else {
-            panic!("No schema defined");
-        };
+            for query in queries {
+                query.generate(&mut out, &schema)?;
+            }
 
-        for (file_name, model_name) in &self.queries {
-            let query: String = read_to_string(&mut out, file_name)?;
-                    
-            // Tell Cargo that if the given file changes, to rerun this build script.
-            println!("cargo::rerun-if-changed={}", file_name);
-            writeln!(out, "// cargo::rerun-if-changed={}", file_name)?;
-            
-            self.do_build_query(&mut out, &schema, &query, model_name)?;
+
+
+
+            writeln!(out, 
+                r#"
+    }} // End model {}
+    "#, to_snake_case(&self.model_name)
+            )?;
         }
 
-        writeln!(out, 
-            r#"
-}} // End model {}
-"#, to_snake_case(&self.model_name)
-        )?;
 
-        if base_out.has_errors() {
-            for error in  base_out.errors() {
+        if !base.errors.is_empty() {
+            for error in  &base.errors {
                 // println!("cargo::error={}", error);
                 println!("cargo::error={}", error);
             }
             // panic!("GraohQL Generation completed with errors: {}", base_out);
-            println!("cargo::warning=Build failed with {} errors and {} warnings", base_out.errors().len(), base_out.warnings().len());
-            Err(GraphQLError::BuildFailed(format!("Build failed with {} errors and {} warnings", base_out.errors().len(), base_out.warnings().len())))
+            println!("cargo::warning=Build failed with {} errors and {} warnings", &base.errors.len(), &base.warnings.len());
+            Err(Error::BuildFailed(format!("Build failed with {} errors and {} warnings", &base.errors.len(), &base.warnings.len())))
         }
         else {
-            Ok(())
+            Ok(dest_path_string)
         }
     }
 
-    fn do_build_schema<'p>(&'p self, out: &mut Output, schema: &'p str) -> Result<validated_model::Schema, GraphQLError> {
-        match self.do_build_schema2(out, schema) {
-            Ok(schema) => Ok(schema),
-            Err(error) => {
-                let result = GraphQLError::BuildFailed(format!("{}", &error));
-                out.error(error);
-                Err(result)
+    fn do_build_schema<'p>(&'p self, err: &mut ErrorCollector, schema: &'p str) -> Result<validated_model::Schema, Error> {
+    //     match self.do_build_schema2(err, schema) {
+    //         Ok(schema) => Ok(schema),
+    //         Err(error) => {
+    //             let result = GraphQLError::BuildFailed(format!("{}", &error));
+    //             err.error(error);
+    //             Err(result)
+    //         },
+    //     }
+    // }
+
+    // fn do_build_schema2<'p>(&'p self, err: &mut ErrorCollector, schema: &'p str) -> Result<validated_model::Schema, Error> {
+        // let mut base = BaseErrorCollector::new();
+        // let mut err = ErrorCollector::new(&mut base);
+
+        // let mut err = out.new_error_collector();
+
+        let ast = match parse_schema::<'p, String>(schema) {
+            Ok(ast) => ast,
+            Err(parse_error) => {
+                let msg = format!("Schema syntax error: {}", parse_error);
+                err.error(BuildError::SchemaSyntaxError(parse_error));
+                return Err(Error::BuildFailed(msg))
             },
-        }
-    }
-
-    fn do_build_schema2<'p>(&'p self, out: &mut Output, schema: &'p str) -> Result<validated_model::Schema, GraphQLError> {
-        let ast = parse_schema::<'p, String>(schema)?;
+        };
         // let ast = match parse_schema::<'p, String>(schema) {
         //     Ok(ast) => ast,
         //     Err(error) => {
@@ -453,7 +612,7 @@ use serde::{{Deserialize, Serialize}};
         // };
 
 
-        let model = parsed_model::Schema::new(out, ast)?;
+        let model = parsed_model::Schema::new(err, ast)?;
         
         // writeln!(out, "/* Parsed Model *********************************************************************************************")?;
         // model.print(out)?;
@@ -490,7 +649,7 @@ use serde::{{Deserialize, Serialize}};
 
 
 
-        let validated_model = validated_model::Schema::new(model, out)?;
+        let validated_model = validated_model::Schema::new(err, model)?;
         // model.validate(out)?;
 
         // writeln!(out, "/* Validated Model *********************************************************************************************")?;
@@ -503,16 +662,25 @@ use serde::{{Deserialize, Serialize}};
         Ok(validated_model)
     }
 
-    fn do_build_query(&self, out: &mut Output,  schema: &validated_model::Schema, query: &str, model_name: &str) -> Result<(), GraphQLError> {
-        let ast = parse_query::<String>(query)?.to_owned();
+    fn do_build_query<'a>(&self, err: &mut ErrorCollector,  schema: &'a validated_model::Schema, query: &str, model_name: &str) -> Result<validated_model::Operations<'a>, Error> {
+        // let ast = parse_query::<String>(query)?.to_owned();
 
-        let model = parsed_model::Operations::new(out, schema, ast.definitions, model_name);
+        let ast = match parse_query::<String>(query) {
+            Ok(ast) => ast,
+            Err(parse_error) => {
+                let msg = format!("Query syntax error: {}", parse_error);
+                err.error(BuildError::QuerySyntaxError(parse_error));
+                return Err(Error::BuildFailed(msg))
+            },
+        };
+
+        let model = parsed_model::Operations::new(err, schema, ast.definitions, model_name);
         
         // writeln!(out, "/* *********************************************************************************************")?;
         // model.print(out)?;
         // writeln!(out, " * *********************************************************************************************/")?;
 
-         let validated_model = validated_model::Operations::new(model, out, schema)?;
+         let validated_model = validated_model::Operations::new(err, model, schema)?;
 
 
 
@@ -520,112 +688,46 @@ use serde::{{Deserialize, Serialize}};
         // validated_model.print(out)?;
         // writeln!(out, " * *********************************************************************************************/")?;
 
-        validated_model.generate(out, schema)?;
+        // validated_model.generate(err, schema)?;
         
-        Ok(())
+        Ok(validated_model)
     }
 }
-
-fn read_to_string(out: &mut Output, file_name: &str) -> Result<String, std::io::Error> {
-    let result = fs::read_to_string(file_name);
-
-    if let Err(error) = &result {
-        out.error(GraphQLError::BuildFailed(format!("Unable to open file \"{}\" ({})", file_name, error)));
-    }
-    result
-}
-
-// fn visit_fields(out: &mut BufWriter<&File>, 
-//     object_model: &mut ObjectModel,
-//     fields: Vec<graphql_parser::schema::Field<'_, String>>) -> Result<(), Box<dyn Error>> {
-//     for f in fields {
-//         writeln!(out, "//  field {} type {}", f.name,  visit_type(&f.field_type, false)?)?;
-
-//         object_model.fields.push(FieldModel {
-//             name: f.name,
-//             ty: visit_type(&f.field_type, false)?,
-//         });
-        
-//     }
-//     Ok(())
-// }
-
-// fn visit_type(field_type: &graphql_parser::query::Type<'_, String>, non_null: bool) -> Result<String, Box<dyn Error>> {
-   
-//    Ok( match field_type {
-//         graphql_parser::query::Type::NamedType(v) => {
-//             let t = match v as &str {
-//                 "Boolean" => String::from("bool"),
-//                 "Date" => String::from("time::Date"),
-//                 "DateTime" => String::from("time::OffsetDateTime"),
-//                 "Float" => String::from("f64"),
-//                 "ID" => String::from("String"),
-//                 "Int" => String::from("i32"),
-//                 "String" => { String::from("String")},
-
-//                 _ => { String::from(v)},
-//             };
-
-//             if non_null {
-//                 t
-//             }
-//             else {
-//                 format!("Option<{}>", t)
-//             }
-//         },
-//         graphql_parser::query::Type::ListType(t) => {
-//             format!("Vec<{}>", visit_type(&*t, non_null)?)
-//         },
-//         graphql_parser::query::Type::NonNullType(t) => {
-//             visit_type(&*t, true)?
-//         },
-//     })
-// }
-
-// fn visit_directives(out: &mut BufWriter<&File>, directives: Vec<graphql_parser::query::Directive<'_, String>>) -> Result<(), Box<dyn Error>> {
-//     for directive in directives {
-//         writeln!(out, "//Directive {}", directive.name)?;
-
-//         for arg in directive.arguments {
-//             writeln!(out, "//  Arg {} {}", arg.0, arg.1)?;
-//         }
-//     }
-//     Ok(())
-// }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_schema(schema: &str) -> BaseOutput {
+    fn test_schema(schema: &str) -> BaseErrorCollector {
 
-        let mut base_out = BaseOutput::new();
-        let mut out = base_out.indent();
+        let mut base = BaseErrorCollector::new();
+        let mut err = ErrorCollector::new(&mut base);
+
         let builder = builder("test");
-        let _ = builder.do_build_schema(&mut out, schema);
+        let _ = builder.do_build_schema(&mut err, schema);
         
-        base_out
+        base
     }
 
     fn get_schema(schema: &str) -> validated_model::Schema {
 
-        let mut base_out = BaseOutput::new();
-        let mut out = base_out.indent();
+        let mut base = BaseErrorCollector::new();
+        let mut err = ErrorCollector::new(&mut base);
         let builder = builder("test");
-        let schema = builder.do_build_schema(&mut out, schema);
+        let schema = builder.do_build_schema(&mut err, schema);
         
         schema.unwrap()
     }
 
-    fn test_query(schema: &str, query: &str) -> BaseOutput {
+    fn test_query(schema: &str, query: &str) -> BaseErrorCollector {
 
-        let mut base_out = BaseOutput::new();
-        let mut out = base_out.indent();
+        let mut base = BaseErrorCollector::new();
+        let mut err = ErrorCollector::new(&mut base);
         let builder = builder("test");
-        let schema = builder.do_build_schema(&mut out, schema).unwrap();
-        let _q = builder.do_build_query(&mut out, &schema, query, "test_query");
+        let schema = builder.do_build_schema(&mut err, schema).unwrap();
+        let _q = builder.do_build_query(&mut err, &schema, query, "test_query");
         
-        base_out
+        base
     }
 
     #[test]
@@ -636,7 +738,7 @@ type Query implements Foo {
 }
 "#);
                 
-        if let Some(GraphQLError::MissingInterfaceError(..)) = out.expect_one_error() {
+        if let Some(BuildError::MissingInterfaceError(..)) = out.expect_one_error() {
             return;
         }
         println!("{}", out);
@@ -650,7 +752,7 @@ type Object {
     name: String,
 }
 "#);
-        if let Some(GraphQLError::NoQueryDefinition) = out.expect_one_error() {
+        if let Some(BuildError::NoQueryDefinition) = out.expect_one_error() {
             return;
         }
         println!("{}", out);
@@ -668,7 +770,7 @@ type Object {
     name: String,
 }
 "#);
-        if let Some(GraphQLError::MissingObjectError(..)) = out.expect_one_error() {
+        if let Some(BuildError::MissingObjectError(..)) = out.expect_one_error() {
             return;
         }
         println!("{}", out);
@@ -686,7 +788,7 @@ type Object {
     name: String,
 }
 "#);
-        if let Some(GraphQLError::MissingObjectError(..)) = out.expect_one_error() {
+        if let Some(BuildError::MissingObjectError(..)) = out.expect_one_error() {
             return;
         }
         println!("{}", out);
@@ -725,7 +827,7 @@ r#"query GetPerson {
 }"#);
         
         
-        if let Some(GraphQLError::MissingFieldError(..)) = out.expect_one_error() {
+        if let Some(BuildError::MissingFieldError(..)) = out.expect_one_error() {
             return;
         }
         println!("{}", out);
@@ -742,7 +844,7 @@ r#"query GetPerson {
 }"#);
         
         
-        if let Some(GraphQLError::MissingFieldError(..)) = out.expect_one_error() {
+        if let Some(BuildError::MissingFieldError(..)) = out.expect_one_error() {
             return;
         }
         println!("{}", out);
