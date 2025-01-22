@@ -9,6 +9,7 @@ use std::{env, fs};
 use std::io::Write;
 
 mod utils;
+mod model;
 mod parsed_model;
 mod validated_model;
 // mod error;
@@ -17,6 +18,7 @@ mod validated_model;
 #[derive(Debug)]
 pub enum Error {
     InternalError(Box<dyn std::error::Error>),
+    FatalBuildError(&'static str),
     BuildFailed(String),
     BuildErrors{errors: u32, warnings: u32}
 }
@@ -46,6 +48,7 @@ pub enum BuildError {
     MissingFieldError(Pos, String),
     OptionalNonNullFieldError(Pos, String),
     MissingObjectError(Pos, String),
+    MissingFragmentError(Pos, String),
     InvalidQueryError(Pos, String),
     UnsupportedError(Pos, String),
     DuplicateName(Pos, Pos, String),
@@ -466,7 +469,7 @@ use serde::{{Deserialize, Serialize}};
         Ok(validated_model)
     }
 
-    fn do_build_query<'a>(&self, err: &mut ErrorCollector,  schema: &'a validated_model::Schema, query: &str, model_name: &str) -> Result<validated_model::Operations<'a>, Error> {
+    fn do_build_query(&self, err: &mut ErrorCollector,  schema: &validated_model::Schema, query: &str, model_name: &str) -> Result<validated_model::ExecutableDocument, Error> {
         // let ast = parse_query::<String>(query)?.to_owned();
 
         let ast = match parse_query::<String>(query) {
@@ -478,13 +481,13 @@ use serde::{{Deserialize, Serialize}};
             },
         };
 
-        let model = parsed_model::Operations::new(err, schema, ast.definitions, model_name);
+        let model = parsed_model::ExecutableDocument::new(err, schema, ast.definitions, model_name);
         
         // writeln!(out, "/* *********************************************************************************************")?;
         // model.print(out)?;
         // writeln!(out, " * *********************************************************************************************/")?;
 
-         let validated_model = validated_model::Operations::new(err, model, schema)?;
+         let validated_model = validated_model::ExecutableDocument::new(err, model, schema)?;
         
         Ok(validated_model)
     }
