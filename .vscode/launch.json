@@ -7,39 +7,22 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug test_missing_mutation in library 'sparko_graphql_builder'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--lib",
-                    "--package=sparko_graphql_builder"
-                ],
-                "filter": {
-                    "name": "sparko_graphql_builder",
-                    "kind": "lib"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
             "name": "Debug unit tests in library 'sparko_graphql_builder'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
                     "--lib",
-                    "--package=sparko_graphql_builder"
+                    "--package=sparko_graphql_builder",
+                    "--",
+                    "--test-threads=1"
                 ],
                 "filter": {
                     "name": "sparko_graphql_builder",
                     "kind": "lib"
                 }
             },
-            "args": [],
+            "args": ["--test-threads=1"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -58,7 +41,7 @@
                     "kind": "lib"
                 }
             },
-            "args": [],
+            "args": ["--test-threads=1"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -77,7 +60,7 @@
                     "kind": "lib"
                 }
             },
-            "args": [],
+            "args": ["--test-threads=1"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -88,7 +71,7 @@
                 "args": [
                     "build",
                     "--bin=test_build",
-                    "--package=sparko_graphql_builder_test"
+                    "--package=sparko_graphql_builder"
                 ],
                 "filter": {
                     "name": "test_build",
@@ -98,7 +81,7 @@
             "env": {
                 "OUT_DIR": "/tmp"
             },
-            "cwd": "${workspaceFolder}/sparko_graphql_builder_test"
+            "cwd": "${workspaceFolder}/sparko_graphql_builder"
         },
         {
             "type": "lldb",

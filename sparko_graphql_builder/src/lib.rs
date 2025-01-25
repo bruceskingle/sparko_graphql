@@ -1,6 +1,7 @@
 use graphql_parser::{parse_query, Pos};
 use graphql_parser::schema::parse_schema;
 use inflections::case::to_snake_case;
+// use model::{ExecutableDocument, Schema};
 use std::fmt::Display;
 use std::fs::File;
 use std::io::BufWriter;
@@ -9,18 +10,21 @@ use std::{env, fs};
 use std::io::Write;
 
 mod utils;
-mod model;
+// mod model;
 mod parsed_model;
 mod validated_model;
 // mod error;
 
+const STARS: &str = "***************************************************************************************************************************************************";
 
 #[derive(Debug)]
 pub enum Error {
     InternalError(Box<dyn std::error::Error>),
     FatalBuildError(&'static str),
     BuildFailed(String),
-    BuildErrors{errors: u32, warnings: u32}
+    BuildErrors{errors: u32, warnings: u32},
+    FileReadError{file_name: String, reason: std::io::Error},
+    FileWriteError{file_name: String, reason: std::io::Error},
 }
 
 impl std::error::Error for Error {
@@ -40,6 +44,7 @@ impl Display for Error {
 
 #[derive(Debug)]
 pub enum BuildError {
+    Unimplemented(Pos, &'static str),
     SchemaSyntaxError(graphql_parser::schema::ParseError),
     QuerySyntaxError(graphql_parser::query::ParseError),
     UndefinedTypeError(Pos, String),
@@ -59,7 +64,7 @@ pub enum BuildError {
 
 impl Display for BuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{:?}", self)
+        write!(f, "{:?}", self)
     }
 }
 
@@ -71,11 +76,12 @@ pub enum BuildWarning {
 
 impl Display for BuildWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{:?}", self)
+        write!(f, "{:?}", self)
     }
 }
 
 pub struct BaseErrorCollector {
+    file_name: String,
     errors: Vec<BuildError>,
     warnings: Vec<BuildWarning>,
 }
@@ -96,11 +102,16 @@ impl Display for BaseErrorCollector {
 }
 
 impl BaseErrorCollector {
-    pub fn new() -> BaseErrorCollector {
+    pub fn new(file_name: String) -> BaseErrorCollector {
         BaseErrorCollector {
+            file_name,
             errors: Vec::new(),
             warnings: Vec::new(),
         }
+    }
+
+    pub fn new_test() -> BaseErrorCollector {
+        Self::new(String::from("Test"))
     }
 
     pub fn new_error_collector(&mut self) -> ErrorCollector {
@@ -122,20 +133,47 @@ impl BaseErrorCollector {
             None
         }
     }
-    
-    fn report(&self, f: &mut Output<'_>) -> std::io::Result<()> {
-        if ! self.errors.is_empty() {
-            writeln!(f, "    Errors")?;
+
+
+    fn report_errors(&self) {
+        if !self.errors.is_empty() {
+            println!("Errors");
             for item in &self.errors {
-                writeln!(f, "        {}", item)?;
+                println!("    {}", item);
             }
         }
 
         if ! self.warnings.is_empty() {
-            writeln!(f, "    Warnings")?;
+            println!("Warnings");
             for item in &self.warnings {
-                writeln!(f, "        {}", item)?;
+                println!("    {}", item);
             }
+        }
+    }
+    
+    fn report(&self, f: &mut dyn Write) -> std::io::Result<()> {
+        if self.errors.is_empty() {
+            writeln!(f, "//{} built OK", self.file_name)?;
+        }
+        else {
+            writeln!(f, "compile_warning!(\"{} built with Errors\");", self.file_name)?;
+            // writeln!(f, "compile_error!(\"{} built with Errors\");", self.file_name)?;
+            writeln!(f, "/{}", STARS)?;
+            for item in &self.errors {
+                writeln!(f, "    {}", item)?;
+                println!("cargo::warning={}", item);
+            }
+            writeln!(f, "{}/", STARS)?;
+        }
+
+        if ! self.warnings.is_empty() {
+            writeln!(f, "/{}", STARS)?;
+            writeln!(f, "Warnings")?;
+            for item in &self.warnings {
+                writeln!(f, "    {}", item)?;
+                println!("cargo::warning={}", item);
+            }
+            writeln!(f, "{}/", STARS)?;
         }
 
         Ok(())
@@ -336,65 +374,41 @@ impl BaseOutput {
 
 pub struct Builder {
     model_name: String,
-    schema: Option<String>,
-    queries: Vec<(String, String)>,
+    schema_file_name: Option<String>,
+    query_file_names: Vec<(String, String)>,
 }
 
 pub fn builder(model_name: impl Into<String>) -> Builder {
     Builder {
         model_name: model_name.into(),
-        schema: None,
-        queries: Vec::new(),
+        schema_file_name: None,
+        query_file_names: Vec::new(),
     }
 }
 
 impl Builder {
     pub fn with_schema(&mut self, file_name: &str) -> &mut Builder {
-        if let Some(schema) = &self.schema {
+        if let Some(schema) = &self.schema_file_name {
             panic!("Multiple schemas defined ({} and {})", schema, file_name);
         }
-        self.schema = Some(file_name.to_string());
+        self.schema_file_name = Some(file_name.to_string());
 
         self
     }
 
     pub fn with_query(&mut self, file_name: &str, model_name: &str) -> &mut Builder {
-        self.queries.push((file_name.to_string(), model_name.to_string()));
+        self.query_file_names.push((file_name.to_string(), model_name.to_string()));
 
         self
     }
     
     pub fn build(&mut self) -> Result<String, Error> {
-            
-        let mut base = BaseErrorCollector::new();
-        let mut err = ErrorCollector::new(&mut base);
-
-        let schema: String;
-        let schema = if let Some(file_name) = &self.schema {
-            schema = fs::read_to_string(file_name)?;
-                    
-            // Tell Cargo that if the given file changes, to rerun this build script.
-            println!("cargo::rerun-if-changed={}", file_name);
-            
-            self.do_build_schema(&mut err, &schema)?
+        let out_dir = if let Some(dir) = env::var_os("OUT_DIR") {
+            dir
         }
         else {
-            return Err(Error::BuildFailed(format!("No schema defined")));
+            std::ffi::OsString::from("/tmp")
         };
-
-        let mut queries = Vec::new();
-
-        for (file_name, model_name) in &self.queries {
-            let query: String = fs::read_to_string(file_name)?;
-                    
-            // Tell Cargo that if the given file changes, to rerun this build script.
-            println!("cargo::rerun-if-changed={}", file_name);
-            
-            if let Ok(query) = self.do_build_query(&mut err, &schema, &query, model_name) {
-                queries.push(query);
-            }
-        }
-        let out_dir = env::var_os("OUT_DIR").unwrap();
         let dest_path = Path::new(&out_dir).join(format!("{}.rs", self.model_name));
         let dest_path_string = format!("{}", dest_path.to_string_lossy());
 
@@ -402,13 +416,58 @@ impl Builder {
         let mut base_out: BaseOutput = BaseOutput::from_file(file);
         let mut out = base_out.indent();
 
-        base.report(&mut out)?;
+        if let Some(schema_file_name) = &self.schema_file_name {
+            let schema_string = match fs::read_to_string(schema_file_name) {
+                Ok(str) => Ok(str),
+                Err(err) => {
+                    Err(Error::FileReadError { file_name: schema_file_name.clone(), reason: err })
+                },
+            }?;
+                    
+            // Tell Cargo that if the given file changes, to rerun this build script.
+            println!("cargo::rerun-if-changed={}", schema_file_name);
 
-        if !queries.is_empty() {
-        //     err.error(BuildError::NoOperations);
-        // }
-        // else {
-            
+            let mut base = BaseErrorCollector::new(schema_file_name.clone());
+            let mut err = ErrorCollector::new(&mut base);
+
+            // let schema = self.do_build_schema(&mut err, &schema_string)?;
+
+            let ast = match parse_schema::<'_, String>(&schema_string) {
+                Ok(ast) => ast,
+                Err(parse_error) => {
+                    // let msg = format!("Schema syntax error: {}", parse_error);
+                    return err.fail(BuildError::SchemaSyntaxError(parse_error));
+                    // return Err(Error::BuildFailed(msg))
+                },
+            };
+            // let mut model = Schema::new(err, ast)?;
+            // model.validate(err);
+    
+            let parsed_schema = match parsed_model::Schema::new(&mut err, &ast) {
+                Ok(result) => result,
+                Err(error) => {
+                    base.report_errors();
+                    return Err(error);
+                },
+            };
+            writeln!(out, "/* Parsed Schema *********************************************************************************************")?;
+            parsed_schema.print(&mut out)?;
+            writeln!(out, " * *********************************************************************************************/")?;
+
+            let validated_schema = match validated_model::Schema::new(&mut err, &parsed_schema) {
+                Ok(result) => result,
+                Err(error) => {
+                    base.report_errors();
+                    return Err(error);
+                },
+            };
+
+            writeln!(out, "/* Validated Schema *********************************************************************************************")?;
+            validated_schema.print(&mut out)?;
+            writeln!(out, " * *********************************************************************************************/")?;
+
+            base.report(&mut out);
+
             writeln!(out, 
                 r#"
 pub mod {} {{
@@ -416,117 +475,330 @@ use display_json::DisplayAsJsonPretty;
 use serde::{{Deserialize, Serialize}};
 "#, to_snake_case(&self.model_name)
             )?;
+    
+            // let mut query_string_vec = Vec::new();
 
-            for query in queries {
-                query.generate(&mut out, &schema)?;
+            // for (query_file_name, query_model_name) in &self.query_file_names 
+            // {
+            //     let query_string = match fs::read_to_string(query_file_name) {
+            //         Ok(str) => Ok(str),
+            //         Err(err) => {
+            //             Err(Error::FileReadError { file_name: query_file_name.clone(), reason: err })
+            //         },
+            //     }?;
+
+            //     query_string_vec.push((query_string, query_model_name));
+            // }
+
+            // let mut query_ast_vec = Vec::new();
+
+            // for (query_string, query_model_name) in &query_string_vec {
+            //     let parse_result = parse_query::<String>(&query_string);
+
+            //     match parse_result {
+            //         Ok(query_ast) => {
+            //             query_ast_vec.push((query_ast, query_model_name));
+            //         },
+            //         Err(parse_error) => {
+            //             // let msg = format!("Query syntax error: {}", parse_error);
+            //             err.error(BuildError::QuerySyntaxError(parse_error));
+            //             // return Err(Error::BuildFailed(msg))
+            //         },
+            //     };
+            // }
+
+            // let mut query_parsed_model_vec = Vec::new();
+
+            // for (query_ast, query_model_name) in &query_ast_vec {
+            //     let query_parsed_model = parsed_model::ExecutableDocument::new(&mut err, &query_ast.definitions, query_model_name, &validated_schema);
+                
+            //     query_parsed_model_vec.push(query_parsed_model);
+            // }
+
+            // for query_parsed_model
+
+
+            // let mut executable_documents = Vec::new();
+
+            
+
+            // bar(&self.query_file_names, &validated_schema, out);
+
+            // let (query_file_name, query_model_name) = &self.query_file_names.get(0).unwrap();
+            for (query_file_name, query_model_name) in &self.query_file_names 
+            {
+                let query_string = match fs::read_to_string(query_file_name) {
+                    Ok(str) => Ok(str),
+                    Err(err) => {
+                        Err(Error::FileReadError { file_name: query_file_name.clone(), reason: err })
+                    },
+                }?;
+                        
+                // Tell Cargo that if the given file changes, to rerun this build script.
+                println!("cargo::rerun-if-changed={}", query_file_name);
+                
+                let mut base = BaseErrorCollector::new(query_file_name.clone());
+                let mut err = ErrorCollector::new(&mut base);
+                
+                let parse_result = parse_query::<String>(&query_string);
+
+                match parse_result {
+                    Ok(query_ast) => {
+                        let query_parsed_model = parsed_model::ExecutableDocument::new(&mut err, &query_ast.definitions, query_model_name, &validated_schema);
+                
+                        // writeln!(out, "/* *********************************************************************************************")?;
+                        // query_parsed_model.print(&mut out)?;
+                        // writeln!(out, " * *********************************************************************************************/")?;
+                
+                        // let validated_executable = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema)?;
+                            
+                        // validated_executable.generate(&mut out, &validated_schema)?;
+                
+                        if let Ok(validated_executable) = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema) {
+                            validated_executable.generate(&mut out, &validated_schema)?;
+
+                            // drop(validated_executable);
+                        }
+                    },
+                    Err(parse_error) => {
+                        // let msg = format!("Query syntax error: {}", parse_error);
+                        err.error(BuildError::QuerySyntaxError(parse_error));
+                        // return Err(Error::BuildFailed(msg))
+                    },
+                };
+    
+                base.report(&mut out)?;
+    
+                
+                println!("query_string={}", query_string);
             }
 
 
 
 
+
+
+
+
+
+
+            
             writeln!(out, 
                 r#"
-    }} // End model {}
-    "#, to_snake_case(&self.model_name)
+}} // End model {}
+"#, to_snake_case(&self.model_name)
             )?;
         }
-
-
-        if !base.errors.is_empty() {
-            for error in  &base.errors {
-                // println!("cargo::error={}", error);
-                println!("cargo::error={}", error);
-            }
-            // panic!("GraohQL Generation completed with errors: {}", base_out);
-            println!("cargo::warning=Build failed with {} errors and {} warnings", &base.errors.len(), &base.warnings.len());
-            Err(Error::BuildFailed(format!("Build failed with {} errors and {} warnings", &base.errors.len(), &base.warnings.len())))
-        }
         else {
-            Ok(dest_path_string)
-        }
-    }
-
-    fn do_build_schema<'p>(&'p self, err: &mut ErrorCollector, schema: &'p str) -> Result<validated_model::Schema, Error> {
-
-        let ast = match parse_schema::<'p, String>(schema) {
-            Ok(ast) => ast,
-            Err(parse_error) => {
-                let msg = format!("Schema syntax error: {}", parse_error);
-                err.error(BuildError::SchemaSyntaxError(parse_error));
-                return Err(Error::BuildFailed(msg))
-            },
-        };
-        let model = parsed_model::Schema::new(err, ast)?;
-        
-        // writeln!(out, "/* Parsed Model *********************************************************************************************")?;
-        // model.print(out)?;
-        // writeln!(out, " * *********************************************************************************************/")?;
-
-
-
-        let validated_model = validated_model::Schema::new(err, model)?;
-
-        Ok(validated_model)
-    }
-
-    fn do_build_query(&self, err: &mut ErrorCollector,  schema: &validated_model::Schema, query: &str, model_name: &str) -> Result<validated_model::ExecutableDocument, Error> {
-        // let ast = parse_query::<String>(query)?.to_owned();
-
-        let ast = match parse_query::<String>(query) {
-            Ok(ast) => ast,
-            Err(parse_error) => {
-                let msg = format!("Query syntax error: {}", parse_error);
-                err.error(BuildError::QuerySyntaxError(parse_error));
-                return Err(Error::BuildFailed(msg))
-            },
+            return Err(Error::BuildFailed(format!("No schema defined")));
         };
 
-        let model = parsed_model::ExecutableDocument::new(err, schema, ast.definitions, model_name);
         
-        // writeln!(out, "/* *********************************************************************************************")?;
-        // model.print(out)?;
-        // writeln!(out, " * *********************************************************************************************/")?;
 
-         let validated_model = validated_model::ExecutableDocument::new(err, model, schema)?;
-        
-        Ok(validated_model)
+        Ok(dest_path_string)
     }
+
+    // fn do_build_schema<'p>(&'p self, err: &mut ErrorCollector, schema: &'p str) -> Result<(graphql_parser::schema::Document<'p, String>, parsed_model::Schema<'p>, validated_model::Schema), Error> {
+
+    //     let ast = match parse_schema::<'p, String>(schema) {
+    //         Ok(ast) => ast,
+    //         Err(parse_error) => {
+    //             let msg = format!("Schema syntax error: {}", parse_error);
+    //             err.error(BuildError::SchemaSyntaxError(parse_error));
+    //             return Err(Error::BuildFailed(msg))
+    //         },
+    //     };
+    //     // let mut model = Schema::new(err, ast)?;
+    //     // model.validate(err);
+
+    //     let parsed_schema = parsed_model::Schema::new(err, &ast)?;
+    //     // writeln!(out, "/* Parsed Model *********************************************************************************************")?;
+    //     // model.print(out)?;
+    //     // writeln!(out, " * *********************************************************************************************/")?;
+
+    //     Ok((ast, parsed_schema, validated_model::Schema::new(err, &parsed_schema)?))
+
+    //     // Ok(model)
+    // }
+
+    // fn do_build_query(&self, err: &mut ErrorCollector,  schema: &validated_model::Schema, query: &str, model_name: &str) -> Result<validated_model::ExecutableDocument, Error> {
+    //     // let ast = parse_query::<String>(query)?.to_owned();
+
+    //     let ast = match parse_query::<String>(query) {
+    //         Ok(ast) => ast,
+    //         Err(parse_error) => {
+    //             let msg = format!("Query syntax error: {}", parse_error);
+    //             err.error(BuildError::QuerySyntaxError(parse_error));
+    //             return Err(Error::BuildFailed(msg))
+    //         },
+    //     };
+
+    //     let mut parsed_model = parsed_model::ExecutableDocument::new(err, ast.definitions, model_name, schema);
+        
+    //     // writeln!(out, "/* *********************************************************************************************")?;
+    //     // model.print(out)?;
+    //     // writeln!(out, " * *********************************************************************************************/")?;
+
+    //     // model.validate(err)?
+
+    //     validated_model::ExecutableDocument::new(err, parsed_model, schema)
+        
+    // }
 }
+
+// fn bar(query_file_names: &[(String, String)], validated_schema: &validated_model::Schema<'_>, out: Output<'_>) -> Result<(), Error>{
+//     for (query_file_name, query_model_name) in query_file_names 
+//             {
+//                 let query_string = match fs::read_to_string(query_file_name) {
+//                     Ok(str) => Ok(str),
+//                     Err(err) => {
+//                         Err(Error::FileReadError { file_name: query_file_name.clone(), reason: err })
+//                     },
+//                 }?;
+                        
+//                 // Tell Cargo that if the given file changes, to rerun this build script.
+//                 println!("cargo::rerun-if-changed={}", query_file_name);
+                
+//                 let mut base = BaseErrorCollector::new(query_file_name.clone());
+//                 let mut err = ErrorCollector::new(&mut base);
+                
+//                 let parse_result = parse_query::<String>(&query_string);
+
+//                 match parse_result {
+//                     Ok(query_ast) => {
+//                         let query_parsed_model = parsed_model::ExecutableDocument::new(&mut err, &query_ast.definitions, query_model_name, &validated_schema);
+                
+//                         // writeln!(out, "/* *********************************************************************************************")?;
+//                         // query_parsed_model.print(&mut out)?;
+//                         // writeln!(out, " * *********************************************************************************************/")?;
+                
+//                         // let validated_executable = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema)?;
+                            
+//                         // validated_executable.generate(&mut out, &validated_schema)?;
+                
+//                         if let Ok(validated_executable) = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema) {
+//                             validated_executable.generate(&mut out, &validated_schema)?;
+
+//                             drop(validated_executable);
+//                         }
+//                     },
+//                     Err(parse_error) => {
+//                         // let msg = format!("Query syntax error: {}", parse_error);
+//                         err.error(BuildError::QuerySyntaxError(parse_error));
+//                         // return Err(Error::BuildFailed(msg))
+//                     },
+//                 };
+    
+//                 base.report(&mut out)?;
+    
+                
+//                 println!("query_string={}", query_string);
+//             }
+//             Ok(())
+// }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_schema(schema: &str) -> BaseErrorCollector {
+    // fn test_schema(schema: &str) -> BaseErrorCollector {
 
-        let mut base = BaseErrorCollector::new();
-        let mut err = ErrorCollector::new(&mut base);
+    //     let mut base = BaseErrorCollector::new_test();
+    //     let mut err = ErrorCollector::new(&mut base);
 
-        let builder = builder("test");
-        let _ = builder.do_build_schema(&mut err, schema);
+    //     let builder = builder("test");
+    //     let _ = builder.do_build_schema(&mut err, schema);
         
+    //     base
+    // }
+
+    // fn get_schema(schema: &str) -> validated_model::Schema {
+
+    //     let mut base = BaseErrorCollector::new_test();
+    //     let mut err = ErrorCollector::new(&mut base);
+    //     let builder = builder("test");
+    //     let schema = builder.do_build_schema(&mut err, schema);
+        
+    //     schema.unwrap()
+    // }
+
+    pub fn test_schema(schema_string: &str) -> BaseErrorCollector {
+        let mut base = BaseErrorCollector::new_test();
+        let mut err: ErrorCollector<'_> = ErrorCollector::new(&mut base);
+
+        // let x = do_test_query(schema_string, query, &mut err);
+
+        match do_test_schema(schema_string, &mut err) {
+            Ok(_) => (),
+            Err(_) => {
+                // let mut stderr = std::io::stderr();
+                // base.report(&mut stderr).unwrap();
+            },
+        }
+
         base
     }
 
-    fn get_schema(schema: &str) -> validated_model::Schema {
+    fn do_test_schema(schema_string: &str, mut err:  &mut ErrorCollector<'_>) -> Result<(), Error> {
 
-        let mut base = BaseErrorCollector::new();
-        let mut err = ErrorCollector::new(&mut base);
-        let builder = builder("test");
-        let schema = builder.do_build_schema(&mut err, schema);
-        
-        schema.unwrap()
+         match parse_schema::<'_, String>(&schema_string) {
+            Ok(ast) => {
+                let parsed_schema = parsed_model::Schema::new(&mut err, &ast)?;
+
+                validated_model::Schema::new(&mut err, &parsed_schema)?;
+            },
+            Err(parse_error) => {
+                err.error(BuildError::SchemaSyntaxError(parse_error));
+            },
+        };
+
+        Ok(())
     }
 
-    fn test_query(schema: &str, query: &str) -> BaseErrorCollector {
+    pub fn test_query(schema_string: &str, query: &str) -> BaseErrorCollector {
+        let mut base = BaseErrorCollector::new_test();
+        let mut err: ErrorCollector<'_> = ErrorCollector::new(&mut base);
 
-        let mut base = BaseErrorCollector::new();
-        let mut err = ErrorCollector::new(&mut base);
-        let builder = builder("test");
-        let schema = builder.do_build_schema(&mut err, schema).unwrap();
-        let _q = builder.do_build_query(&mut err, &schema, query, "test_query");
-        
+        // let x = do_test_query(schema_string, query, &mut err);
+
+        match do_test_query(schema_string, query, &mut err) {
+            Ok(_) => (),
+            Err(_) => {
+                // let mut stderr = std::io::stderr();
+                // base.report(&mut stderr).unwrap();
+            },
+        }
+
         base
+    }
+
+    fn do_test_query(schema_string: &str, query: &str, mut err:  &mut ErrorCollector<'_>) -> Result<(), Error> {
+
+        
+
+        match parse_schema::<'_, String>(&schema_string) {
+            Ok(ast) => {
+                let parsed_schema = parsed_model::Schema::new(&mut err, &ast)?;
+                let validated_schema = validated_model::Schema::new(&mut err, &parsed_schema)?;
+        
+                match parse_query::<String>(&query) {
+                    Ok(ast) => {
+                        let parsed_model = parsed_model::ExecutableDocument::new(&mut err, &ast.definitions, "test", &validated_schema);
+                        validated_model::ExecutableDocument::new(&mut err, &parsed_model, &validated_schema)?;
+                    },
+                    Err(parse_error) => {
+                        // let msg = format!("Query syntax error: {}", parse_error);
+                        err.error(BuildError::QuerySyntaxError(parse_error));
+                        // return Err(Error::BuildFailed(msg))
+                    },
+                };
+            },
+            Err(parse_error) => {
+                err.error(BuildError::SchemaSyntaxError(parse_error));
+            },
+        };
+
+        Ok(())
     }
 
     #[test]
@@ -540,7 +812,7 @@ type Query implements Foo {
         if let Some(BuildError::MissingInterfaceError(..)) = out.expect_one_error() {
             return;
         }
-        println!("{}", out);
+        out.report_errors();
         panic!("Expected missing interface");
     }
 
@@ -554,7 +826,7 @@ type Object {
         if let Some(BuildError::NoQueryDefinition) = out.expect_one_error() {
             return;
         }
-        println!("{}", out);
+       out.report_errors();
         panic!("Expected NoQueryDefinition");
     }
 
@@ -572,7 +844,7 @@ type Object {
         if let Some(BuildError::MissingObjectError(..)) = out.expect_one_error() {
             return;
         }
-        println!("{}", out);
+       out.report_errors();
         panic!("Expected MissingObjectError");
     }
 
@@ -590,7 +862,7 @@ type Object {
         if let Some(BuildError::MissingObjectError(..)) = out.expect_one_error() {
             return;
         }
-        println!("{}", out);
+       out.report_errors();
         panic!("Expected MissingObjectError");
     }
 
@@ -629,7 +901,7 @@ r#"query GetPerson {
         if let Some(BuildError::MissingFieldError(..)) = out.expect_one_error() {
             return;
         }
-        println!("{}", out);
+       out.report_errors();
         panic!("Expected MissingFieldError");
     }
 
@@ -646,7 +918,7 @@ r#"query GetPerson {
         if let Some(BuildError::MissingFieldError(..)) = out.expect_one_error() {
             return;
         }
-        println!("{}", out);
+       out.report_errors();
         panic!("Expected MissingFieldError");
     }
 
@@ -679,7 +951,7 @@ r#"query GetPerson {
 // }
 // "#) {
 //             Ok(out)  => {
-//                 println!("{}", out);
+//                out.report_test();
 //                 if let GraphQLError::OverlappingInterfaceError(..) = out.expect_one_warning() {
 //                     return;
 //                 }
@@ -704,7 +976,7 @@ r#"query GetPerson {
 // }
 // "#) {
 //             Ok(out)  => {
-//                 println!("{}", out);
+//                out.report_test();
 //                 if let GraphQLError::IncompatibleInterfaceError(..) = out.expect_one_error() {
 //                     return;
 //                 }

@@ -1170,7 +1170,7 @@ impl InterfaceListProxy {
         InterfaceListProxy { names }
     }
 
-    fn _iterator<'a>(&'a self, schema: &'a Schema) -> InterfaceListProxyItertor<'a> {
+    fn _iterator<'a>(&self, schema: &'a Schema) -> InterfaceListProxyItertor<'a> {
         InterfaceListProxyItertor {
             list: self,
             schema,
@@ -1234,7 +1234,7 @@ impl ObjectListProxy {
         ObjectListProxy { names }
     }
 
-    fn iterator<'a>(&'a self, schema: &'a Schema) -> ObjectListProxyItertor<'a> {
+    fn iterator<'a>(&self, schema: &'a Schema) -> ObjectListProxyItertor<'a> {
         ObjectListProxyItertor {
             list: self,
             schema,

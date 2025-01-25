@@ -33,7 +33,7 @@ fn build()  -> Result<(), Box<dyn Error>> {
         .with_query("graphql/query/swapi/get-luke.graphql", "luke")
         .with_query("graphql/query/swapi/get-person.graphql", "person")
         .with_query("graphql/query/swapi/get-luke-strikes-back.graphql", "strikes")
-        .with_query("graphql/query/swapi/fragment.graphql", "fragment")
+        // .with_query("graphql/query/swapi/fragment.graphql", "fragment")
         .build()?;
 
     sparko_graphql_builder::builder("octopus")
