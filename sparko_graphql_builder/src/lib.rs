@@ -6,6 +6,7 @@ use std::fmt::Display;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
+use std::rc::Rc;
 use std::{env, fs};
 use std::io::Write;
 
@@ -16,6 +17,29 @@ mod validated_model;
 // mod error;
 
 const STARS: &str = "***************************************************************************************************************************************************";
+
+type Atom = Rc<String>;
+
+pub fn intern(value: String) -> Atom {
+    Rc::new(value)
+}
+
+pub fn intern_option(value: Option<String>) -> Option<Atom> {
+    match value {
+        Some(value) => Some( Rc::new(value)),
+        None => None,
+    }
+}
+
+fn intern_vec(input: Vec<String>) -> Vec<Rc<String>> {
+    let mut result = Vec::new();
+
+    for value in input {
+        result.push(intern(value));
+    }
+
+    result
+}
 
 #[derive(Debug)]
 pub enum Error {
@@ -49,10 +73,14 @@ pub enum BuildError {
     QuerySyntaxError(graphql_parser::query::ParseError),
     UndefinedTypeError(Pos, String),
     TypeMismatchError(Pos, String),
+    MissingScalarError(Pos, String),
+    MissingObjectError(Pos, String),
     MissingInterfaceError(Pos, String),
+    MissingUnionError(Pos, String),
+    MissingEnumError(Pos, String),
+    MissingInputObjectError(Pos, String),
     MissingFieldError(Pos, String),
     OptionalNonNullFieldError(Pos, String),
-    MissingObjectError(Pos, String),
     MissingFragmentError(Pos, String),
     InvalidQueryError(Pos, String),
     UnsupportedError(Pos, String),
@@ -443,7 +471,7 @@ impl Builder {
             // let mut model = Schema::new(err, ast)?;
             // model.validate(err);
     
-            let parsed_schema = match parsed_model::Schema::new(&mut err, &ast) {
+            let parsed_schema = match parsed_model::Schema::new(&mut err, ast) {
                 Ok(result) => result,
                 Err(error) => {
                     base.report_errors();
@@ -544,7 +572,7 @@ use serde::{{Deserialize, Serialize}};
 
                 match parse_result {
                     Ok(query_ast) => {
-                        let query_parsed_model = parsed_model::ExecutableDocument::new(&mut err, &query_ast.definitions, query_model_name, &validated_schema);
+                        let query_parsed_model = parsed_model::ExecutableDocument::new(&mut err, query_ast.definitions, query_model_name, &validated_schema);
                 
                         // writeln!(out, "/* *********************************************************************************************")?;
                         // query_parsed_model.print(&mut out)?;
@@ -743,7 +771,7 @@ mod tests {
 
          match parse_schema::<'_, String>(&schema_string) {
             Ok(ast) => {
-                let parsed_schema = parsed_model::Schema::new(&mut err, &ast)?;
+                let parsed_schema = parsed_model::Schema::new(&mut err, ast)?;
 
                 validated_model::Schema::new(&mut err, &parsed_schema)?;
             },
@@ -778,12 +806,12 @@ mod tests {
 
         match parse_schema::<'_, String>(&schema_string) {
             Ok(ast) => {
-                let parsed_schema = parsed_model::Schema::new(&mut err, &ast)?;
+                let parsed_schema = parsed_model::Schema::new(&mut err, ast)?;
                 let validated_schema = validated_model::Schema::new(&mut err, &parsed_schema)?;
         
                 match parse_query::<String>(&query) {
                     Ok(ast) => {
-                        let parsed_model = parsed_model::ExecutableDocument::new(&mut err, &ast.definitions, "test", &validated_schema);
+                        let parsed_model = parsed_model::ExecutableDocument::new(&mut err, ast.definitions, "test", &validated_schema);
                         validated_model::ExecutableDocument::new(&mut err, &parsed_model, &validated_schema)?;
                     },
                     Err(parse_error) => {

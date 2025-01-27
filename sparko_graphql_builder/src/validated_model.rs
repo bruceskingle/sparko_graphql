@@ -1,69 +1,132 @@
 use std::fmt::Display;
 use std::io::Write;
+use std::rc::Rc;
 
 use graphql_parser::Pos;
 use indexmap::IndexMap;
 use inflections::case::{to_snake_case, to_constant_case};
 
-use crate::parsed_model::{BuiltinType, OperationType};
+use crate::parsed_model::{BuiltinType, DefinedTypeName, OperationType};
 use crate::utils::to_pascal_case;
-use crate::{BuildError, Error, ErrorCollector};
+use crate::{intern, Atom, BuildError, Error, ErrorCollector};
 use crate::{parsed_model, Output};
 
 const TYPE_NAME: &str = "__typename";
-pub type FieldMap<'a> = IndexMap<&'a str, Field<'a>>;
-pub type FieldMapRef<'a> = &'a FieldMap<'a>;
-
+pub type FieldMap = IndexMap<Atom, Rc<Field>>;
 
 #[derive(Debug)]
-pub enum ScalarType<'a> {
-    DefinedType(DefinedType<'a>),
+pub enum DefinedType {
+    Scalar(Atom),
+    Object(Atom),
+    Interface(Atom),
+    Union(Atom),
+    Enum(Atom),
+    InputObject(Atom),
+}
+
+impl Display for DefinedType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DefinedType::Scalar(name) => write!(f, "Scalar {}", name),
+            DefinedType::Object(name) => write!(f, "Object {}", name),
+            DefinedType::Interface(name) => write!(f, "Interface {}", name),
+            DefinedType::Union(name) => write!(f, "Union {}", name),
+            DefinedType::Enum(name) => write!(f, "Enum {}", name),
+            DefinedType::InputObject(name) => write!(f, "InputObject {}", name),
+        }
+    }
+}
+
+impl DefinedType {
+    pub fn defined_type_name(&self) -> DefinedTypeName {
+        match self {
+            DefinedType::Scalar(_) => DefinedTypeName::Scalar,
+            DefinedType::Object(_) => DefinedTypeName::Object,
+            DefinedType::Interface(_) => DefinedTypeName::Interface,
+            DefinedType::Union(_) => DefinedTypeName::Union,
+            DefinedType::Enum(_) => DefinedTypeName::Enum,
+            DefinedType::InputObject(_) => DefinedTypeName::InputObject,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        self.defined_type_name().name()
+    }
+
+    pub fn generate(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&Vec<Selection>>, alias: &Option<Atom>) -> Result<(), Error> {
+        match self {
+            DefinedType::Scalar(name) => schema.get_scalar(name)?.generate(out, schema),
+            DefinedType::Object(name) => schema.get_object(name)?.generate(out, schema, executable_document, selections, alias),
+            DefinedType::Interface(name) => schema.get_interface(name)?.generate(out, schema, selections, alias),
+            DefinedType::Union(name) => schema.get_union(name)?.generate(out, schema, executable_document, selections, alias),
+            DefinedType::Enum(name) => schema.get_enum(name)?.generate(out, schema, executable_document, selections, alias),
+            DefinedType::InputObject(name) => schema.get_input_object(name)?.generate(out, schema, executable_document, selections, alias),
+        }
+    }
+    
+    fn rust_type(&self) -> String {
+        match self {
+            DefinedType::Scalar(name) => to_pascal_case(name),
+            DefinedType::Object(name) => to_pascal_case(name),
+            DefinedType::Interface(name) => to_pascal_case(name),
+            DefinedType::Union(name) => to_pascal_case(name),
+            DefinedType::Enum(name) => to_pascal_case(name),
+            DefinedType::InputObject(name) => to_pascal_case(name),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ScalarType {
+    DefinedType(DefinedType),
     BuiltinType(BuiltinType),
 }
 
-impl<'a> ScalarType<'a> {
-    fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::ScalarType<'a>, schema: &'a parsed_model::Schema) -> Result<Self, Error> {
+impl ScalarType {
+    fn new(err: &mut ErrorCollector, parsed: &parsed_model::ScalarType, schema: &Rc<parsed_model::Schema>) -> Result<Self, Error> {
         match parsed {
-            parsed_model::ScalarType::DefinedType{name, position} => {
-                if let Some(def) = schema.named_types.get(name) {
+            parsed_model::ScalarType::DefinedType(defined_type) => {
+                if let Some(def) = schema.named_types.get(&defined_type.name) {
                     Ok(match def {
-                        parsed_model::TypeDefinition::Scalar(content) =>ScalarType::DefinedType(DefinedType::Scalar(content.name)),
-                        parsed_model::TypeDefinition::Object(content) =>ScalarType::DefinedType(DefinedType::Object(content.name)),
-                        parsed_model::TypeDefinition::Interface(content) =>ScalarType::DefinedType(DefinedType::Interface(content.name)),
-                        parsed_model::TypeDefinition::Union(content) =>ScalarType::DefinedType(DefinedType::Union(content.name)),
-                        parsed_model::TypeDefinition::Enum(content) => ScalarType::DefinedType(DefinedType::Enum(content.name)),
+                        parsed_model::TypeDefinition::Scalar(content) =>ScalarType::DefinedType(DefinedType::Scalar(content.name.clone())),
+                        parsed_model::TypeDefinition::Object(content) =>ScalarType::DefinedType(DefinedType::Object(content.name.clone())),
+                        parsed_model::TypeDefinition::Interface(content) =>ScalarType::DefinedType(DefinedType::Interface(content.name.clone())),
+                        parsed_model::TypeDefinition::Union(content) =>ScalarType::DefinedType(DefinedType::Union(content.name.clone())),
+                        parsed_model::TypeDefinition::Enum(content) => ScalarType::DefinedType(DefinedType::Enum(content.name.clone())),
+                        parsed_model::TypeDefinition::InputObject(content) =>ScalarType::DefinedType(DefinedType::InputObject(content.name.clone())),
                     })
                 }
                 else {
-                    err.fail(BuildError::UndefinedTypeError(*position.clone(), format!("Missing type {}", name)))
+                    err.fail(BuildError::UndefinedTypeError(defined_type.position.clone(), format!("Missing type {}", defined_type.name.clone())))
                 }
             },
-            parsed_model::ScalarType::BuiltinType(builtin_type) => Ok(ScalarType::BuiltinType(*builtin_type)),
+            parsed_model::ScalarType::BuiltinType(builtin_type) => Ok(ScalarType::BuiltinType(builtin_type.clone())),
         }
     }
 
-    fn from_validated(err: &mut ErrorCollector, parsed: &parsed_model::ScalarType, schema: &'a Schema) -> Result<Self, Error> {
+    fn from_validated(err: &mut ErrorCollector, parsed: &parsed_model::ScalarType, schema: &Rc<Schema>) -> Result<Self, Error> {
         match parsed {
-            parsed_model::ScalarType::DefinedType{name, position} => {
-                if let Some(def) = schema.defined_types.get(*name) {
+            parsed_model::ScalarType::DefinedType(defined_type) => {
+                if let Some(def) = schema.defined_types.get(&defined_type.name) {
                     Ok(match def {
-                        TypeDefinition::Scalar(content) =>ScalarType::DefinedType(DefinedType::Scalar(content.parsed.name)),
-                        TypeDefinition::Object(content) =>ScalarType::DefinedType(DefinedType::Object(content.parsed.name)),
-                        TypeDefinition::Interface(content) =>ScalarType::DefinedType(DefinedType::Interface(content.parsed.name)),
-                        TypeDefinition::Union(content) =>ScalarType::DefinedType(DefinedType::Union(content.parsed.name)),
-                        TypeDefinition::Enum(content) => ScalarType::DefinedType(DefinedType::Enum(content.parsed.name)),
+                        TypeDefinition::Scalar(content) =>ScalarType::DefinedType(DefinedType::Scalar(content.parsed.name.clone())),
+                        TypeDefinition::Object(content) =>ScalarType::DefinedType(DefinedType::Object(content.parsed.name.clone())),
+                        TypeDefinition::Interface(content) =>ScalarType::DefinedType(DefinedType::Interface(content.parsed.name.clone())),
+                        TypeDefinition::Union(content) =>ScalarType::DefinedType(DefinedType::Union(content.parsed.name.clone())),
+                        TypeDefinition::Enum(content) => ScalarType::DefinedType(DefinedType::Enum(content.parsed.name.clone())),
+                        TypeDefinition::InputObject(content) =>ScalarType::DefinedType(DefinedType::InputObject(content.parsed.name.clone())),
                     })
                 }
                 else {
-                    err.fail(BuildError::UndefinedTypeError(*position.clone(), format!("Missing type {}", name)))
+                    err.fail(BuildError::UndefinedTypeError(defined_type.position.clone(), format!("Missing type {}", defined_type.name.clone())))
                 }
             },
-            parsed_model::ScalarType::BuiltinType(builtin_type) => Ok(ScalarType::BuiltinType(*builtin_type)),
+            parsed_model::ScalarType::BuiltinType(builtin_type) => Ok(ScalarType::BuiltinType(builtin_type.clone())),
         }
     }
 }
 
-impl Display for ScalarType<'_> {
+impl Display for ScalarType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ScalarType::DefinedType(defined_type) => write!(f, "{}", defined_type),
@@ -73,14 +136,14 @@ impl Display for ScalarType<'_> {
 }
 
 #[derive(Debug)]
-pub enum Type<'a> {
-    Scalar(ScalarType<'a>),
-    Required(Box<Type<'a>>),
-    Array(Box<Type<'a>>),
+pub enum Type {
+    Scalar(ScalarType),
+    Required(Box<Type>),
+    Array(Box<Type>),
 }
 
-impl<'a> Type<'a> {
-    fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::Type, schema: &'a parsed_model::Schema) -> Result<Self, Error> {
+impl Type {
+    fn new(err: &mut ErrorCollector, parsed: &parsed_model::Type, schema: &Rc<parsed_model::Schema>,) -> Result<Self, Error> {
        Ok( match parsed {
             parsed_model::Type::Scalar(scalar_type) => Type::Scalar(ScalarType::new(err, scalar_type, schema)?),
             parsed_model::Type::Required(wrapped) => Type::Required(Box::new(Type::new(err, wrapped, schema)?)),
@@ -88,7 +151,7 @@ impl<'a> Type<'a> {
         })
     }
 
-    fn from_validated(err: &mut ErrorCollector, parsed: &'a parsed_model::Type, schema: &'a Schema) -> Result<Self, Error> {
+    fn from_validated(err: &mut ErrorCollector, parsed: &parsed_model::Type, schema: &Rc<Schema>) -> Result<Self, Error> {
         Ok( match parsed {
              parsed_model::Type::Scalar(scalar_type) => Type::Scalar(ScalarType::from_validated(err, scalar_type, schema)?),
              parsed_model::Type::Required(wrapped) => Type::Required(Box::new(Type::from_validated(err, wrapped, schema)?)),
@@ -148,7 +211,7 @@ impl<'a> Type<'a> {
     }
 }
 
-impl Display for Type<'_> {
+impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Scalar(scalar_type) => scalar_type.fmt(f),
@@ -159,15 +222,16 @@ impl Display for Type<'_> {
 }
 
 #[derive(Debug)]
-pub enum TypeDefinition<'a> {
-    Scalar(Scalar<'a>),
-    Object(Object<'a>),
-    Interface(Interface<'a>),
-    Union(Union<'a>),
-    Enum(Enum<'a>),
+pub enum TypeDefinition {
+    Scalar(Rc<Scalar>),
+    Object(Rc<Object>),
+    Interface(Rc<Interface>),
+    Union(Rc<Union>),
+    Enum(Rc<Enum>),
+    InputObject(Rc<Object>),
 }
 
-impl<'a> TypeDefinition<'a> {
+impl TypeDefinition {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         match self {
             TypeDefinition::Scalar(content) => content.print(out),
@@ -175,17 +239,23 @@ impl<'a> TypeDefinition<'a> {
             TypeDefinition::Interface(content) => content.print(out),
             TypeDefinition::Union(content) => content.print(out),
             TypeDefinition::Enum(content) => content.print(out),
+            TypeDefinition::InputObject(content) => content.print(out),
+        }
+    }
+
+    pub fn defined_type_name(&self) -> DefinedTypeName {
+        match self {
+            TypeDefinition::Scalar(_) => DefinedTypeName::Scalar,
+            TypeDefinition::Object(_) => DefinedTypeName::Object,
+            TypeDefinition::Interface(_) => DefinedTypeName::Interface,
+            TypeDefinition::Union(_) => DefinedTypeName::Union,
+            TypeDefinition::Enum(_) => DefinedTypeName::Enum,
+            TypeDefinition::InputObject(_) => DefinedTypeName::InputObject,
         }
     }
 
     pub fn type_name(&self) -> &str {
-        match self {
-            TypeDefinition::Scalar(_) => "scalar",
-            TypeDefinition::Object(_) => "object",
-            TypeDefinition::Interface(_) => "interface",
-            TypeDefinition::Union(_) => "union",
-            TypeDefinition::Enum(_) => "enum",
-        }
+        self.defined_type_name().name()
     }
 
     // fn validate2(out: &mut Output, name: &String, defined_types: IndexMap<String, TypeDefinition>, parsed_types: IndexMap<String, parsed_model::TypeDefinition>, loop_detect: HashSet<String>) {
@@ -210,7 +280,7 @@ impl<'a> TypeDefinition<'a> {
     //     }
     // }
 
-    // pub fn generate(&self, out: &mut Output, schema: &Schema, selections: Option<&Vec<Selection>>) -> Result<(), Error> {
+    // pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>, selections: Option<&Vec<Selection>>) -> Result<(), Error> {
     //     match self {
     //         TypeDefinition::Enum(content) => content.generate(out, schema, selections),
     //         TypeDefinition::Union(content) => content.generate(out, schema, selections, &None),
@@ -221,18 +291,18 @@ impl<'a> TypeDefinition<'a> {
     // }
 }
 
-trait Context<'a> {
-    fn get_context(&'a self, schema: &'a Schema) -> Result<IndexMap<&'a str, &'a IndexMap<&'a str, Field<'a>>>, Error>;
+trait Context {
+    fn get_context(&self, schema: &Rc<Schema>) -> Result<IndexMap<Atom, &FieldMap>, Error>;
 }
 
 #[derive(Debug)]
-pub struct Scalar<'a> {
-    pub parsed: &'a parsed_model::Scalar<'a>,
+pub struct Scalar {
+    pub parsed: Rc<parsed_model::Scalar>,
     pub rust_name: String,
     pub rust_type: String,
 }
 
-impl<'a> Scalar<'a> {
+impl Scalar {
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "TypeDef {{")?;
@@ -250,18 +320,18 @@ impl<'a> Scalar<'a> {
         
     }
     
-    fn new(parsed: &'a parsed_model::Scalar<'a>) -> Self {
+    fn new(parsed: &Rc<parsed_model::Scalar>) -> TypeDefinition {
 
         let rust_type = "serde_json::Value".to_string(); // TODO: get proper types
 
-        Scalar {
-            parsed,
+        TypeDefinition::Scalar(Rc::new(Scalar {
+            parsed: parsed.clone(),
             rust_name: to_pascal_case(&parsed.name),
             rust_type,
-        }
+        }))
     }
     
-    fn generate(&self, out: &mut Output<'_>, _schema: &Schema) -> Result<(), Error> {
+    fn generate(&self, out: &mut Output<'_>, _schema: &Rc<Schema>) -> Result<(), Error> {
         writeln!(out, "type {} = {};", &self.rust_name, &self.rust_type)?;
         writeln!(out, "")?;
         Ok(())
@@ -269,24 +339,24 @@ impl<'a> Scalar<'a> {
 }
 
 #[derive(Debug)]
-pub struct Object<'a> {
-    pub parsed: &'a parsed_model::Object<'a>,
-    pub fully_implements: Vec<&'a str>,
-    pub fields: IndexMap<&'a str, Field<'a>>,
+pub struct Object {
+    pub parsed: Rc<parsed_model::Object>,
+    pub fully_implements: Vec<Atom>,
+    pub fields: FieldMap,
     pub is_input: bool,
 }
 
-impl<'a> Context<'a> for Object<'a> {
-    fn get_context(&'a self, _schema: &'a Schema) -> Result<IndexMap<&'a str, &'a IndexMap<&'a str, Field<'a>>>, Error> {
+impl Context for Object {
+    fn get_context(&self, schema: &Rc<Schema>) -> Result<IndexMap<Atom, &FieldMap>, Error> {
         let mut context = IndexMap::new();
 
-        context.insert(self.parsed.name, &self.fields);
+        context.insert(self.parsed.name.clone(), &self.fields);
 
         Ok(context)
     }
 }
 
-impl<'a> Object<'a> {
+impl Object {
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "validated_model::Object {{")?;
@@ -318,68 +388,58 @@ impl<'a> Object<'a> {
         writeln!(out, "}}")
     }
     
-    fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::Object<'a>, schema: &'a parsed_model::Schema<'a>) -> Result<Self, Error> {
+    fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Object>, schema: &Rc<parsed_model::Schema>,) -> Result<Rc<Self>, Error> {
         let mut fully_implements = Vec::new();
 
-        if let Some(implements) = parsed.implements {
-            for interface_name in implements {
-                if let Some(defined_type) = schema.named_types.get(interface_name as &str) {
-                    if let parsed_model::TypeDefinition::Interface(interface) = defined_type {
-                        let mut ok = true;
-                        for field_name in interface.fields.keys() {
-                            if ! parsed.fields.contains_key(field_name as &str) {
-                                ok = false;
-                                break;
-                            }
-                        }
-                        if ok {
-                            fully_implements.push(interface_name as &str);
+        for interface_name in &parsed.implements {
+            if let Some(interface) = schema.get_interface(err, &parsed.position, &interface_name) {
+                let mut ok = true;
+                    for field_name in interface.fields.keys() {
+                        if ! parsed.fields.contains_key(field_name) {
+                            ok = false;
+                            break;
                         }
                     }
-                    else {
-                        err.error(BuildError::TypeMismatchError(parsed.position.clone(), format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
+                    if ok {
+                        fully_implements.push(interface_name.clone());
                     }
-                }
-                else {
-                    err.error(BuildError::MissingInterfaceError(parsed.position.clone(), format!("Interface {} Not Found", parsed.name)))
-                };
             }
         }
 
-        let mut fields: IndexMap<&str, Field<'_>> = IndexMap::new();
+        let mut fields = IndexMap::new();
 
         for (name, field) in &parsed.fields {
             if let Ok(field) = Field::new(err, field, schema) {
-                fields.insert(name, field);
+                fields.insert(name.clone(), field);
             }
         }
 
-        err.ok(Object {
-                parsed,
+        err.ok(Rc::new(Object {
+                parsed: parsed.clone(),
                 fully_implements,
                 fields,
                 is_input: parsed.is_input,
-            })
+            }))
     }
     
-    fn generate(&'a self, out: &mut Output<'_>, schema: &'a Schema<'a>, executable_document: &ExecutableDocument<'_>, selections: Option<&'a Vec<Selection<'a>>>, alias: &'a Option<String>) -> Result<(), Error> {
-    //(&self, out: &mut Output<'_>, schema: &Schema, executable_document: &ExecutableDocument, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), Error> {
+    fn generate(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&Vec<Selection>>, alias: &Option<Atom>) -> Result<(), Error> {
+    //(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), Error> {
         generate_struct(out, schema, executable_document, selections, alias, &self.parsed.name, &self.fields, self.is_input)
     }
 }
 
-fn selections_to_fields<'a>(selections: &'a Vec<Selection>, executable_document: &ExecutableDocument, context: FieldMapRef<'a>) -> Result<Vec<&'a SelectionField<'a>>, Error> {
+fn selections_to_fields(selections: &Vec<Selection>, executable_document: &ExecutableDocument, context: &FieldMap) -> Result<Vec<Rc<SelectionField>>, Error> {
     let mut selected_fields = Vec::new();
     for selection in selections {
         match selection {
             Selection::Field(selection_field) => {
-                selected_fields.push(selection_field);
+                selected_fields.push(selection_field.clone());
                 // writeln!(out, "// selected field {} = {}", selection_field.name, selection_field.optional)?;
             },
             Selection::FragmentSpread(fragment_spread) => {
-                let fragment = executable_document.get_fragment(fragment_spread.parsed.name)?;
+                let fragment = executable_document.get_fragment(&fragment_spread.parsed.name)?;
 
-                let type_condition = fragment.parsed.type_condition;
+                let type_condition = &fragment.parsed.type_condition;
                 // let object = context.get(type_condition)
                 todo!()
             },
@@ -388,7 +448,7 @@ fn selections_to_fields<'a>(selections: &'a Vec<Selection>, executable_document:
     Ok(selected_fields)
 }
 
-fn generate_struct<'a>(out: &mut Output<'_>, schema: &'a Schema<'a>, executable_document: &ExecutableDocument<'_>, selections: Option<&'a Vec<Selection<'a>>>, alias: &'a Option<String>, name: &'a str, fields: FieldMapRef<'a>, is_input: bool) -> Result<(), Error> {
+fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&Vec<Selection>>, alias: &Option<Atom>, name: &Atom, fields: &FieldMap, is_input: bool) -> Result<(), Error> {
     let rust_name = if let Some(alias) = &alias {
         to_pascal_case(alias)
         // format!("{}{}", to_pascal_case(alias),to_pascal_case(&self.name))
@@ -411,7 +471,7 @@ fn generate_struct<'a>(out: &mut Output<'_>, schema: &'a Schema<'a>, executable_
         }
 
         for selection_field in &selected_fields {
-            if &selection_field.parsed.name == &TYPE_NAME {
+            if *selection_field.parsed.name == TYPE_NAME {
                 writeln!(out, "    #[serde(rename = \"{}\")]", &selection_field.parsed.name)?;
                 writeln!(out, "    {}: String,", &selection_field.parsed.name)?;
             }
@@ -431,7 +491,7 @@ fn generate_struct<'a>(out: &mut Output<'_>, schema: &'a Schema<'a>, executable_
         writeln!(out, "")?;
 
         for selection_field in &selected_fields {
-            if &selection_field.parsed.name == &TYPE_NAME {}
+            if *selection_field.parsed.name == TYPE_NAME {}
             else {
                 if let Some(field) = fields.get(&selection_field.parsed.name) {
                     if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
@@ -570,14 +630,14 @@ fn generate_struct<'a>(out: &mut Output<'_>, schema: &'a Schema<'a>, executable_
 }
 
 #[derive(Debug)]
-pub struct Interface<'a> {
-    pub parsed: &'a parsed_model::Interface<'a>,
-    pub implemented_by: Vec<&'a str>,
-    pub fields: IndexMap<&'a str, Field<'a>>,
+pub struct Interface {
+    pub parsed: Rc<parsed_model::Interface>,
+    pub implemented_by: Vec<Atom>,
+    pub fields: FieldMap,
 }
 
-// impl<'a> Context<'a> for Interface<'a> {
-//     fn get_context(&self, schema: &'a Schema) -> Result<IndexMap<&'a str, &'a IndexMap<&'a str, Field<'a>>>, Error> {
+// impl Context for Interface {
+//     fn get_context(&self, schema: &Rc<Schema>) -> Result<IndexMap<Atom, &FieldMap>, Error> {
 //         let mut context = IndexMap::new();
 
 //         for name in self.implemented_by {
@@ -599,7 +659,7 @@ pub struct Interface<'a> {
 //     }
 // }
 
-impl<'a> Interface<'a> {
+impl Interface {
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "validated_model::Interface {{")?;
@@ -621,18 +681,16 @@ impl<'a> Interface<'a> {
         writeln!(out, "}}")
     }
 
-    fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::Interface<'a>, schema: &'a parsed_model::Schema) -> Result<Self, Error> {
+    fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Interface>, schema: &Rc<parsed_model::Schema>,) -> Result<TypeDefinition, Error> {
         let mut implemented_by = Vec::new();
 
         
-        for (_, defined_type) in &schema.named_types {
+        for defined_type in schema.named_types.values() {
             if let parsed_model::TypeDefinition::Object(object_model) = defined_type {
-                if let Some(implements) = &object_model.implements {
-                    for implements in *implements {
-                        if implements == &parsed.name {
-                            implemented_by.push(object_model.name.clone());
-                            break;
-                        }
+                for implements in &object_model.implements {
+                    if implements == &parsed.name {
+                        implemented_by.push(object_model.name.clone());
+                        break;
                     }
                 }
             }
@@ -664,18 +722,18 @@ impl<'a> Interface<'a> {
 
         for (name, field) in &parsed.fields {
             if let Ok(field) = Field::new(err, field, schema) {
-                fields.insert(name as &str, field);
+                fields.insert(name.clone(), field);
             }
         }
 
-        err.ok(Interface {
-                parsed,
+        err.ok(TypeDefinition::Interface(Rc::new(Interface {
+                parsed: parsed.clone(),
                 implemented_by,
                 fields,
-            })
+            })))
     }
     
-    fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), Error> {
+    fn generate(&self, out: &mut Output<'_>, schema: &Rc<Schema>, selections: Option<&Vec<Selection>>, alias: &Option<Atom>) -> Result<(), Error> {
 
         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
         writeln!(out, "pub enum {} {{", to_pascal_case(&self.parsed.name))?;
@@ -692,22 +750,44 @@ impl<'a> Interface<'a> {
 }
 
 #[derive(Debug)]
-pub struct Union<'a> {
-    pub parsed: &'a parsed_model::Union<'a>,
-    pub fields: IndexMap<&'a str, Field<'a>>,
+pub struct Union {
+    pub parsed: Rc<parsed_model::Union>,
+    pub fields: FieldMap,
 }
 
-impl<'a> Context<'a> for Union<'a> {
-    fn get_context(&'a self, schema: &'a Schema) -> Result<IndexMap<&'a str, &'a IndexMap<&'a str, Field<'a>>>, Error> {
+impl Context for Union {
+    fn get_context(&self, schema: &Rc<Schema>) -> Result<IndexMap<Atom, &FieldMap>, Error> {
         let mut context = IndexMap::new();
 
-        context.insert(self.parsed.name, &self.fields);
+        context.insert(self.parsed.name.clone(), &self.fields);
 
         Ok(context)
     }
 }
 
-impl<'a> Union<'a> {
+impl Union {
+    fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Union>, schema: &Rc<parsed_model::Schema>,) -> Result<TypeDefinition, Error> {
+        let mut fields = IndexMap::new();
+        let mut err = err.child();
+
+        for type_name in &parsed.types {
+            if let Some(object) = schema.get_object(&mut err, &parsed.position, type_name) {
+                for (name, field) in &object.fields {
+                    if let Ok(field) = Field::new(&mut err, field, schema) {
+                        fields.insert(name.clone(), field);
+                    }
+                }
+            }
+            else {
+                err.error(BuildError::MissingInterfaceError(parsed.position.clone(), format!("Interface {} Not Found", parsed.name)))
+            };
+        }
+
+        err.ok(TypeDefinition::Union(Rc::new(Union {
+            parsed: parsed.clone(),
+            fields,
+        })))
+    }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "validated_model::Union {{")?;
@@ -729,39 +809,12 @@ impl<'a> Union<'a> {
         writeln!(out, "}}")
     }
     
-    fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::Union, schema: &'a parsed_model::Schema) -> Result<Self, Error> {
-        let mut fields = IndexMap::new();
-        let mut err = err.child();
 
-        for type_name in parsed.types {
-            if let Some(defined_type) = schema.named_types.get(type_name as &str) {
-                if let parsed_model::TypeDefinition::Object(object) = defined_type {
-                    for (name, field) in &object.fields {
-                        if let Ok(field) = Field::new(&mut err, field, schema) {
-                            fields.insert(name.clone(), field);
-                        }
-                    }
-                }
-                else {
-                    err.error(BuildError::TypeMismatchError(parsed.position.clone(), format!("Expected interface {} but found {}", parsed.name, defined_type.type_name())));
-                }
-            }
-            else {
-                err.error(BuildError::MissingInterfaceError(parsed.position.clone(), format!("Interface {} Not Found", parsed.name)))
-            };
-        }
-
-        err.ok(Union {
-            parsed,
-            fields,
-        })
-    }
-
-    fn generate(&'a self, out: &mut Output<'_>, schema: &'a Schema<'a>, executable_document: &ExecutableDocument<'_>, selections: Option<&'a Vec<Selection<'a>>>, alias: &'a Option<String>) -> Result<(), Error> {
+    fn generate(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&Vec<Selection>>, alias: &Option<Atom>) -> Result<(), Error> {
         generate_struct(out, schema, executable_document, selections, alias, &self.parsed.name, &self.fields, false)
     }
     
-    // fn generate(&self, out: &mut Output<'_>, schema: &Schema, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), Error> {
+    // fn generate(&self, out: &mut Output<'_>, schema: &Rc<Schema>, selections: Option<&Vec<Selection>>, alias: &Option<String>) -> Result<(), Error> {
     //     generate_struct(out, schema, selections, alias, &self.name, &self.fields, false)
 
     //     // writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
@@ -789,11 +842,11 @@ impl<'a> Union<'a> {
 }
 
 #[derive(Debug)]
-pub struct Enum<'a> {
-    pub parsed: &'a parsed_model::Enum<'a>,
+pub struct Enum {
+    pub parsed: Rc<parsed_model::Enum>,
 }
 
-impl<'a> Enum<'a> {
+impl Enum {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "Enum {{")?;
         {
@@ -804,19 +857,19 @@ impl<'a> Enum<'a> {
         writeln!(out, "}}")
     }
 
-    pub fn new(parsed: &'a parsed_model::Enum<'a>) -> Self {
-        Enum {
-            parsed,
-        }
+    pub fn new(parsed: &Rc<parsed_model::Enum>) -> TypeDefinition {
+        TypeDefinition::Enum(Rc::new(Enum {
+            parsed: parsed.clone(),
+        }))
     }
     
-    fn generate(&self, out: &mut Output<'_>, _schema: &Schema, _executable_document: &ExecutableDocument, _selections: Option<&Vec<Selection>>, _alias: &Option<String>) -> Result<(), Error> {
-    // fn generate(&self, out: &mut Output<'_>, _schema: &Schema, _selections: Option<&Vec<Selection>>) -> Result<(), Error> {
+    fn generate(&self, out: &mut Output<'_>, _schema: &Rc<Schema>, _executable_document: &ExecutableDocument, _selections: Option<&Vec<Selection>>, _alias: &Option<Atom>) -> Result<(), Error> {
+    // fn generate(&self, out: &mut Output<'_>, _schema: &Rc<Schema>, _selections: Option<&Vec<Selection>>) -> Result<(), Error> {
         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
         writeln!(out, "#[serde(rename = \"{}\")]", self.parsed.name)?;
         writeln!(out, "pub enum {} {{", to_pascal_case(&self.parsed.name))?;
 
-        for variant in self.parsed.variants {
+        for variant in &self.parsed.variants {
             writeln!(out, "    #[serde(rename = \"{}\")]", &variant.name)?;
             writeln!(out, "    {},", to_constant_case(&variant.name))?;
         }
@@ -826,72 +879,19 @@ impl<'a> Enum<'a> {
     }
 }
 
-#[derive(Debug)]
-pub enum DefinedType<'a> {
-    Scalar(&'a str),
-    Object(&'a str),
-    Interface(&'a str),
-    Union(&'a str),
-    Enum(&'a str),
-}
-
-impl Display for DefinedType<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DefinedType::Scalar(name) => write!(f, "Scalar {}", name),
-            DefinedType::Object(name) => write!(f, "Object {}", name),
-            DefinedType::Interface(name) => write!(f, "Interface {}", name),
-            DefinedType::Union(name) => write!(f, "Union {}", name),
-            DefinedType::Enum(name) => write!(f, "Enum {}", name),
-        }
-    }
-}
-
-impl<'a> DefinedType<'a> {
-    pub fn name(&self) -> &str {
-        match self {
-            DefinedType::Scalar(name) => name,
-            DefinedType::Object(name) => name,
-            DefinedType::Interface(name) => name,
-            DefinedType::Union(name) => name,
-            DefinedType::Enum(name) => name,
-        }
-    }
-
-    pub fn generate(&self, out: &mut Output<'_>, schema: &'a Schema<'a>, executable_document: &ExecutableDocument<'_>, selections: Option<&'a Vec<Selection<'a>>>, alias: &'a Option<String>) -> Result<(), Error> {
-        match self {
-            DefinedType::Scalar(name) => schema.get_scalar(name)?.generate(out, schema),
-            DefinedType::Object(name) => schema.get_object(name)?.generate(out, schema, executable_document, selections, alias),
-            DefinedType::Interface(name) => schema.get_interface(name)?.generate(out, schema, selections, alias),
-            DefinedType::Union(name) => schema.get_union(name)?.generate(out, schema, executable_document, selections, alias),
-            DefinedType::Enum(name) => schema.get_enum(name)?.generate(out, schema, executable_document, selections, alias),
-        }
-    }
-    
-    fn rust_type(&self) -> String {
-        match self {
-            DefinedType::Scalar(name) => to_pascal_case(name),
-            DefinedType::Object(name) => to_pascal_case(name),
-            DefinedType::Interface(name) => to_pascal_case(name),
-            DefinedType::Union(name) => to_pascal_case(name),
-            DefinedType::Enum(name) => to_pascal_case(name),
-        }
-    }
-}
-
 // #[derive(Debug)]
-// pub struct ObjectProxy<'a> {
-//     pub name: &'a str,
+// pub struct ObjectProxy {
+//     pub name: Atom,
 // }
 
-// impl<'a> ObjectProxy<'a> {
-//     pub fn new(name: &'a str) -> Self {
+// impl ObjectProxy {
+//     pub fn new(name: Atom) -> Self {
 //         ObjectProxy {
 //             name,
 //         }
 //     }
     
-//     pub fn get(&self, schema: &'a Schema) -> Result<&'a Object<'a>, Error> {
+//     pub fn get(&self, schema: &Rc<Schema>) -> Result<&'a Object, Error> {
 //         match schema.defined_types.get(self.name) {
 //             Some(type_definition) => {
 //                 if let TypeDefinition::Object(object) = type_definition {
@@ -909,7 +909,7 @@ impl<'a> DefinedType<'a> {
 //         &self.name
 //     }
 
-//     pub fn option_as_str(proxy: &'a Option<ObjectProxy<'a>>) -> &'a str {
+//     pub fn option_as_str(proxy: &'a Option<ObjectProxy>) -> Atom {
 //         match proxy {
 //             Some(proxy) => proxy.as_str(),
 //             None => "None",
@@ -918,18 +918,18 @@ impl<'a> DefinedType<'a> {
 // }
 
 // #[derive(Debug)]
-// pub struct InterfaceProxy<'a> {
-//     pub name: &'a str,
+// pub struct InterfaceProxy {
+//     pub name: Atom,
 // }
 
-// impl<'a> InterfaceProxy<'a> {
-//     pub fn new(name: &'a str) -> Self {
+// impl InterfaceProxy {
+//     pub fn new(name: Atom) -> Self {
 //         InterfaceProxy {
 //             name,
 //         }
 //     }
     
-//     pub fn get(&self, schema: &'a Schema) -> Result<&'a Interface<'a>, Error> {
+//     pub fn get(&self, schema: &Rc<Schema>) -> Result<&'a Interface, Error> {
 //         match schema.defined_types.get(&self.name as &str) {
 //             Some(type_definition) => {
 //                 if let TypeDefinition::Interface(content) = type_definition {
@@ -945,18 +945,18 @@ impl<'a> DefinedType<'a> {
 // }
 
 // #[derive(Debug)]
-// pub struct ScalarProxy<'a> {
-//     pub name: &'a str,
+// pub struct ScalarProxy {
+//     pub name: Atom,
 // }
 
-// impl<'a> ScalarProxy<'a> {
-//     pub fn new(name: &'a str) -> Self {
+// impl ScalarProxy {
+//     pub fn new(name: Atom) -> Self {
 //         ScalarProxy {
 //             name,
 //         }
 //     }
     
-//     pub fn get(&self, schema: &'a Schema) -> Result<&'a Scalar<'a>, Error>{
+//     pub fn get(&self, schema: &Rc<Schema>) -> Result<&'a Scalar, Error>{
 //         match schema.defined_types.get(self.name) {
 //             Some(type_definition) => {
 //                 if let TypeDefinition::Scalar(content) = type_definition {
@@ -972,16 +972,16 @@ impl<'a> DefinedType<'a> {
 // }
 
 // #[derive(Debug)]
-// pub struct ObjectListProxy<'a> {
-//     pub names: Vec<&'a str>,
+// pub struct ObjectListProxy {
+//     pub names: Vec<Atom>,
 // }
 
-// impl<'a> ObjectListProxy<'a> {
-//     pub fn new(names: Vec<&'a str>) -> Self {
+// impl ObjectListProxy {
+//     pub fn new(names: Vec<Atom>) -> Self {
 //         ObjectListProxy { names }
 //     }
 
-//     fn iterator(&self, schema: &'a Schema) -> ObjectListProxyItertor<'a> {
+//     fn iterator(&self, schema: &Rc<Schema>) -> ObjectListProxyItertor {
 //         ObjectListProxyItertor {
 //             list: self,
 //             schema,
@@ -991,9 +991,9 @@ impl<'a> DefinedType<'a> {
 //     }
 // }
 
-// // impl<'a> IntoIterator for &'a ObjectListProxy {
+// // impl IntoIterator for &'a ObjectListProxy {
 // //     type Item = &'a Interface;
-// //     type IntoIter = ObjectListProxyItertor<'a>;
+// //     type IntoIter = ObjectListProxyItertor;
     
 // //     fn into_iter(self) -> Self::IntoIter {
 // //         ObjectListProxyItertor {
@@ -1004,13 +1004,13 @@ impl<'a> DefinedType<'a> {
 // //     }
 // // }
 
-// pub struct ObjectListProxyItertor<'a> {
-//     list: &'a ObjectListProxy<'a>,
-//     schema: &'a Schema<'a>,
+// pub struct ObjectListProxyItertor {
+//     list: &'a ObjectListProxy,
+//     schema: &Rc<Schema>,
 //     index: usize,
 // }
 
-// impl<'a> /*Iterator for*/ ObjectListProxyItertor<'a> {
+// impl /*Iterator for*/ ObjectListProxyItertor {
 //     // type Item = &'a Object;
 
 //     fn next(&mut self) -> Result<Option<&'a Object>, Error> {        
@@ -1045,7 +1045,7 @@ impl<'a> DefinedType<'a> {
 //         InterfaceListProxy { names }
 //     }
 
-//     fn _iterator<'a>(&self, schema: &'a Schema) -> InterfaceListProxyItertor<'a> {
+//     fn _iterator(&self, schema: &Rc<Schema>) -> InterfaceListProxyItertor {
 //         InterfaceListProxyItertor {
 //             list: self,
 //             schema,
@@ -1055,9 +1055,9 @@ impl<'a> DefinedType<'a> {
 //     }
 // }
 
-// // impl<'a> IntoIterator for &'a InterfaceListProxy {
+// // impl IntoIterator for &'a InterfaceListProxy {
 // //     type Item = &'a Interface;
-// //     type IntoIter = InterfaceListProxyItertor<'a>;
+// //     type IntoIter = InterfaceListProxyItertor;
     
 // //     fn into_iter(self) -> Self::IntoIter {
 // //         InterfaceListProxyItertor {
@@ -1068,13 +1068,13 @@ impl<'a> DefinedType<'a> {
 // //     }
 // // }
 
-// pub struct InterfaceListProxyItertor<'a> {
+// pub struct InterfaceListProxyItertor {
 //     list: &'a InterfaceListProxy,
-//     schema: &'a Schema<'a>,
+//     schema: &Rc<Schema>,
 //     index: usize,
 // }
 
-// impl<'a> InterfaceListProxyItertor<'a> {
+// impl InterfaceListProxyItertor {
 //     fn next(&mut self) -> Result<Option<&'a Interface>, Error> {        
 //         match self.list.names.get(self.index) {
 //             Some(name) => {
@@ -1097,18 +1097,18 @@ impl<'a> DefinedType<'a> {
 // }
 
 // // #[derive(Debug)]
-// // pub struct FragmentProxy<'a> {
-// //     pub name: &'a str,
+// // pub struct FragmentProxy {
+// //     pub name: Atom,
 // // }
 
-// // impl<'a> FragmentProxy<'a> {
-// //     pub fn new(name: &'a str) -> Self {
+// // impl FragmentProxy {
+// //     pub fn new(name: Atom) -> Self {
 // //         FragmentProxy {
 // //             name,
 // //         }
 // //     }
     
-// //     pub fn get(&self, executable_document: &'a parsed_model::ExecutableDocument) -> Result<&'a parsed_model::FragmentDefinition, Error> {
+// //     pub fn get(&self, executable_document: &Rc<parsed_model::ExecutableDocument>) -> Result<&'a parsed_model::FragmentDefinition, Error> {
 // //         match executable_document.fragments.get(self.name) {
 // //             Some(fragment_definition) => {
 // //                 Ok(fragment_definition)
@@ -1119,12 +1119,12 @@ impl<'a> DefinedType<'a> {
 // // }
 
 #[derive(Debug)]
-pub struct Field<'a> {
-    pub parsed: &'a parsed_model::Field<'a>,
-    pub ty: Type<'a>,
+pub struct Field {
+    pub parsed: Rc<parsed_model::Field>,
+    pub ty: Type,
 }
 
-impl<'a> Field<'a>{
+impl Field{
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "Field {{")?;
         {
@@ -1137,14 +1137,14 @@ impl<'a> Field<'a>{
         writeln!(out, "}}")
     }
     
-    fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::Field<'a>, schema: &'a parsed_model::Schema) -> Result<Self, Error> {
-        Ok(Field {
-            parsed,
+    fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Field>, schema: &Rc<parsed_model::Schema>) -> Result<Rc<Field>, Error> {
+        Ok(Rc::new(Field {
+            parsed: parsed.clone(),
             ty: Type::new(err, &parsed.ty, schema)?,
-        })
+        }))
     }
 
-    // pub fn rust_type(&self, schema: &Schema, maybe_optional: Maybe, alias: &Option<String>) -> String {
+    // pub fn rust_type(&self, schema: &Rc<Schema>, maybe_optional: Maybe, alias: &Option<String>) -> String {
     //     self.ty.rust_type()   .rust_type(self.multiple, self.nonnull, schema, maybe_optional, alias)
     // }
 
@@ -1152,23 +1152,23 @@ impl<'a> Field<'a>{
         self.ty.graphql_name()
     }
     
-    fn from_variable(err: &mut ErrorCollector, parsed: &'a parsed_model::Field<'a>, schema: &'a Schema) -> Result<Self, Error> {
-        Ok(Field {
-            parsed,
+    fn from_variable(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Field>, schema: &Rc<Schema>) -> Result<Rc<Self>, Error> {
+        Ok(Rc::new(Field {
+            parsed: parsed.clone(),
             ty: Type::from_validated(err, &parsed.ty, schema)?,
-        })
+        }))
     }
 }
 
 #[derive(Debug)]
-pub struct Schema<'a> {
-    pub defined_types: IndexMap<&'a str, TypeDefinition<'a>>,
-    pub query: &'a str,
-    pub mutation: Option<&'a str>,
-    pub subscription: Option<&'a str>,
+pub struct Schema {
+    pub defined_types: IndexMap<Atom, TypeDefinition>,
+    pub query: Atom,
+    pub mutation: Option<Atom>,
+    pub subscription: Option<Atom>,
 }
 
-impl<'a> Schema<'a> {
+impl Schema {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "validated_model::Schema {{")?;
         {
@@ -1191,7 +1191,7 @@ impl<'a> Schema<'a> {
         writeln!(out, "}}")
     }
 
-    pub fn get_scalar(&'a self, name: &str) -> Result<&'a Scalar<'a>, Error> {
+    pub fn get_scalar(&self, name: &Atom) -> Result<&Rc<Scalar>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::Scalar(type_definition) = type_definition {
                 Ok(type_definition)
@@ -1205,7 +1205,7 @@ impl<'a> Schema<'a> {
         }
     }
 
-    pub fn get_object(&'a self, name: &str) -> Result<&'a Object<'a>, Error> {
+    pub fn get_object(&self, name: &Atom) -> Result<&Rc<Object>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::Object(object) = type_definition {
                 Ok(object)
@@ -1219,7 +1219,7 @@ impl<'a> Schema<'a> {
         }
     }
 
-    pub fn get_interface(&'a self, name: &str) -> Result<&'a Interface<'a>, Error> {
+    pub fn get_interface(&self, name: &Atom) -> Result<&Rc<Interface>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::Interface(interface) = type_definition {
                 Ok(interface)
@@ -1233,7 +1233,7 @@ impl<'a> Schema<'a> {
         }
     }
     
-    fn get_union(&'a self, name: &'a str) -> Result<&'a Union<'a>, Error> {
+    fn get_union(&self, name: &Atom) -> Result<&Rc<Union>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::Union(union) = type_definition {
                 Ok(union)
@@ -1247,7 +1247,7 @@ impl<'a> Schema<'a> {
         }
     }
     
-    fn get_enum(&'a self, name: &'a str) -> Result<&'a Enum<'a>, Error> {
+    fn get_enum(&self, name: &Atom) -> Result<&Rc<Enum>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::Enum(type_definition) = type_definition {
                 Ok(type_definition)
@@ -1261,11 +1261,25 @@ impl<'a> Schema<'a> {
         }
     }
 
-    fn new_get_object(out: &mut ErrorCollector, name: &'a Option<String>, position: &'a Pos, defined_types: &IndexMap<&'a str, TypeDefinition>) -> Option<&'a str> {
+    pub fn get_input_object(&self, name: &Atom) -> Result<&Rc<Object>, Error> {
+        if let Some(type_definition) = &self.defined_types.get(name) {
+            if let TypeDefinition::InputObject(object) = type_definition {
+                Ok(object)
+            }
+            else {
+                Err(Error::BuildFailed(format!("Expected InputObject for \"{}\" but found {}", name, type_definition.type_name())))
+            }
+        }
+        else {
+            Err(Error::BuildFailed(format!("Failed to find InputObject \"{}\"", name)))
+        }
+    }
+
+    fn new_get_object(out: &mut ErrorCollector, name: &Option<Atom>, position: &Pos, defined_types: &IndexMap<Atom, TypeDefinition>) -> Option<Atom> {
         if let Some(name) = name {
-            if let Some(type_definition) = &defined_types.get(name as &str) {
+            if let Some(type_definition) = &defined_types.get(name) {
                 if let TypeDefinition::Object(_) = type_definition {
-                    Some(name as &str)
+                    Some(name.clone())
                 }
                 else {
                     out.error(BuildError::TypeMismatchError(position.clone(), format!("Expected object \"{}\" but found {}", name, type_definition.type_name())));
@@ -1282,10 +1296,11 @@ impl<'a> Schema<'a> {
         }
     }
 
-    fn new_get_default_object(out: &mut ErrorCollector, name: &'a str, defined_types: &IndexMap<&'a str, TypeDefinition>, missing_error: Option<BuildError>) -> Option<&'a str> {
-        if let Some(type_definition) = &defined_types.get(name) {
+    fn new_get_default_object(out: &mut ErrorCollector, name: &str, defined_types: &IndexMap<Atom, TypeDefinition>, missing_error: Option<BuildError>) -> Option<Atom> {
+        let name = intern(String::from(name));
+        if let Some(type_definition) = &defined_types.get(&name) {
             if let TypeDefinition::Object(_) = type_definition {
-                Some(name as &str)
+                Some(name)
             }
             else {
                 out.error(BuildError::TypeMismatchError(Pos { line: 0, column: 0 }, format!("Expected object \"{}\" but found {}", name, type_definition.type_name())));
@@ -1300,48 +1315,51 @@ impl<'a> Schema<'a> {
         }
     }
 
-    pub fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::Schema<'a>) -> Result<Self, Error> {
+    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Schema>) -> Result<Rc<Self>, Error> {
 
-        let mut defined_types: IndexMap<&'a str, TypeDefinition<'a>> = IndexMap::new();
-        
-        for(name, ty) in &parsed.named_types {
-            let defined_type = match ty {
-                parsed_model::TypeDefinition::Scalar(type_def) => TypeDefinition::Scalar(Scalar::new(type_def)),
-                parsed_model::TypeDefinition::Object(object) => TypeDefinition::Object(Object::new(err, object, &parsed)?),
-                parsed_model::TypeDefinition::Interface(interface) => TypeDefinition::Interface(Interface::new(err, interface, &parsed)?),
-                parsed_model::TypeDefinition::Union(union) => TypeDefinition::Union(Union::new(err, union, &parsed)?),
-                parsed_model::TypeDefinition::Enum(enum_definition) => TypeDefinition::Enum(Enum::new(enum_definition)),
+        let mut defined_types: IndexMap<Atom, TypeDefinition> = IndexMap::new();
+
+        for parsed_type in parsed.named_types.values() {
+            let defined_type = match parsed_type {
+                parsed_model::TypeDefinition::Scalar(type_def) => Scalar::new(&type_def),
+                parsed_model::TypeDefinition::Object(object) => TypeDefinition::Object(Object::new(err, &object, &parsed)?),
+                parsed_model::TypeDefinition::Interface(interface) => Interface::new(err, interface, &parsed)?,
+                parsed_model::TypeDefinition::Union(union) => Union::new(err, union, &parsed)?,
+                parsed_model::TypeDefinition::Enum(enum_definition) => Enum::new(enum_definition),
+                parsed_model::TypeDefinition::InputObject(object) => TypeDefinition::InputObject(Object::new(err, &object, &parsed)?),
             };
-            defined_types.insert(name, defined_type);
+            defined_types.insert(parsed_type.name().clone(), defined_type);
         }
+        
+        
 
         let mutation = if let Some(schema_definition) = &parsed.schema_definition {
-            Self::new_get_object(err, &schema_definition.mutation, schema_definition.position, &defined_types) 
+            Self::new_get_object(err, &schema_definition.mutation, &schema_definition.position, &defined_types) 
         }
         else {
             Self::new_get_default_object(err, "Mutation", &defined_types, None)
         };
         
         let subscription = if let Some(schema_definition) = &parsed.schema_definition {
-            Self::new_get_object(err, &schema_definition.subscription, schema_definition.position, &defined_types)
+            Self::new_get_object(err, &schema_definition.subscription, &schema_definition.position, &defined_types)
         }
         else {
             Self::new_get_default_object(err, "Subscription", &defined_types, None)
         };
 
         let query = if let Some(schema_definition) = &parsed.schema_definition {
-            Self::new_get_object(err, &schema_definition.query, schema_definition.position, &defined_types)
+            Self::new_get_object(err, &schema_definition.query, &schema_definition.position, &defined_types)
         }
         else {
             Self::new_get_default_object(err, "Query", &defined_types, Some(BuildError::NoQueryDefinition))
         };
 
-        err.ok(Schema {
+        err.ok(Rc::new(Schema {
                 defined_types,
                 query: query.ok_or(Error::BuildFailed(format!("Failed to find previously validated query")))?,
                 mutation,
                 subscription,
-            })
+            }))
     }
 
 
@@ -1355,14 +1373,14 @@ impl<'a> Schema<'a> {
 }
 
 #[derive(Debug)]
-pub enum Selection<'a> {
-    Field(SelectionField<'a>),
-    FragmentSpread(FragmentSpread<'a>),
+pub enum Selection {
+    Field(Rc<SelectionField>),
+    FragmentSpread(Rc<FragmentSpread>),
     // InlineFragment(InlineFragment),
 } 
 
-impl<'a> Selection<'a> {
-    pub fn new(err: &mut ErrorCollector, selection: &'a parsed_model::Selection<'a>, schema: &'a Schema<'a>, executable_document: &'a parsed_model::ExecutableDocument<'a>, context: FieldMapRef<'a>) -> Result<Self, Error> {
+impl Selection {
+    pub fn new(err: &mut ErrorCollector, selection: &parsed_model::Selection, schema: &Rc<Schema>, executable_document: &parsed_model::ExecutableDocument, context: &FieldMap) -> Result<Self, Error> {
         match selection {
             parsed_model::Selection::Field(selection_field) => {
 
@@ -1372,10 +1390,10 @@ impl<'a> Selection<'a> {
             // context.print(out);
             // writeln!(out, "*/" );
 
-                Ok(Selection::Field(SelectionField::new(err, selection_field, schema, executable_document, context)?))
+                Ok(Selection::Field(Rc::new(SelectionField::new(err, selection_field, schema, executable_document, context)?)))
             },
-            parsed_model::Selection::Fragment(fragment_spread) => Ok(Selection::FragmentSpread(FragmentSpread::new(err, fragment_spread,
-                 schema, executable_document, context)?)),
+            parsed_model::Selection::Fragment(fragment_spread) => Ok(Selection::FragmentSpread(Rc::new(FragmentSpread::new(err, fragment_spread,
+                 schema, executable_document, context)?))),
             
             // graphql_parser::query::Selection::FragmentSpread(fragment_spread) => todo!(),
             // graphql_parser::query::Selection::InlineFragment(inline_fragment) => todo!(),
@@ -1395,21 +1413,21 @@ impl<'a> Selection<'a> {
     //     }
     // }
 
-    pub fn generate_query(&self, out: &mut Output, context: FieldMapRef<'a>, schema: &Schema, maybe_optional: Maybe) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output, context: &FieldMap, schema: &Rc<Schema>, maybe_optional: bool) -> Result<(), Error> {
         match self {
             Selection::Field(selection_field) => selection_field.generate_query(out, context, schema, maybe_optional),
             Selection::FragmentSpread(fragment_spread) => todo!(),
         }
     }
 
-    pub fn generate_fields(&self, out: &mut Output, context: FieldMapRef<'a>, schema: &Schema, maybe_optional: Maybe) -> Result<(), Error> {
+    pub fn generate_fields(&self, out: &mut Output, context: &FieldMap, schema: &Rc<Schema>, maybe_optional: bool) -> Result<(), Error> {
         match self {
             Selection::Field(selection_field) => selection_field.generate_fields(out, context, schema, maybe_optional),
             Selection::FragmentSpread(fragment_spread) => todo!(),
         }
     }
     
-    fn generate_structs(&'a self, out: &mut Output<'_>, context: FieldMapRef<'a>, schema: &'a Schema<'a>, executable_document: &ExecutableDocument<'_>) -> Result<(), Error> {
+    fn generate_structs(&self, out: &mut Output<'_>, context: &FieldMap, schema: &Rc<Schema>, executable_document: &ExecutableDocument) -> Result<(), Error> {
         match self {
             Selection::Field(selection_field) => selection_field.generate_structs(out, context, schema, executable_document),
             Selection::FragmentSpread(fragment_spread) => todo!(),
@@ -1418,28 +1436,28 @@ impl<'a> Selection<'a> {
 }
 
 #[derive(Debug)]
-pub struct SelectionField<'a> {
-    pub parsed: &'a parsed_model::SelectionField<'a>,
+pub struct SelectionField {
+    pub parsed: Rc<parsed_model::SelectionField>,
     pub nonnull: bool,
-    pub arguments: Vec<&'a parsed_model::Argument<'a>>,
-    pub selections: Vec<Selection<'a>>,
+    pub arguments: Vec<Rc<parsed_model::Argument>>,
+    pub selections: Vec<Selection>,
 }
 
-impl<'a> SelectionField<'a> {
-    pub fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::SelectionField, schema: &'a Schema<'a>, executable_document: &'a parsed_model::ExecutableDocument<'a>, context: FieldMapRef<'a>) -> Result<Self, Error> {
+impl SelectionField {
+    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::SelectionField>, schema: &Rc<Schema>, executable_document: &parsed_model::ExecutableDocument, context: &FieldMap) -> Result<Self, Error> {
         let mut arguments = Vec::new();
         let mut selections = Vec::new();
 
         println!("SlectionField name={} alias={:?}", &parsed.name, &parsed.alias);
 
-        if parsed.name == TYPE_NAME {
+        if *parsed.name == TYPE_NAME {
             println!("HERE TYPE_NAME");
         }
         else {
             if let Some(field) = context.get(&parsed.name) {
                 for parsed_argument in &parsed.arguments {
                     // arguments.push(Argument::new(prsed_argument));
-                    arguments.push(parsed_argument);
+                    arguments.push(parsed_argument.clone());
                 }
 
                 if ! parsed.selections.is_empty() {
@@ -1450,6 +1468,10 @@ impl<'a> SelectionField<'a> {
                             DefinedType::Interface(name) => Some(&schema.get_interface(name)?.fields),
                             DefinedType::Union(name) => Some(&schema.get_union(name)?.fields),
                             DefinedType::Enum(_) => None,
+                            DefinedType::InputObject(_) => {
+                                err.error(BuildError::TypeMismatchError(parsed.position.clone(), format!("Selection on InputObject {}", field.graphql_name())));
+                                None
+                            },
                         };
         
                         if let Some(fields) = optional_fields {
@@ -1472,14 +1494,14 @@ impl<'a> SelectionField<'a> {
         }
 
         err.ok(SelectionField {
-            parsed,
+            parsed: parsed.clone(),
             nonnull: !parsed.optional,
             arguments,
             selections,
         })
     }
 
-    // pub fn old(err: &mut ErrorCollector, parsed: &'a parsed_model::SelectionField, schema: &'a Schema, executable_document: &'a parsed_model::ExecutableDocument, context: FieldMapRef<'a>) -> Result<Self, Error> {
+    // pub fn old(err: &mut ErrorCollector, parsed: &Rc<parsed_model::SelectionField>, schema: &Rc<Schema>, executable_document: &Rc<parsed_model::ExecutableDocument>, context: FieldMapRef) -> Result<Self, Error> {
 
         
     //     let mut arguments = Vec::new();
@@ -1528,7 +1550,7 @@ impl<'a> SelectionField<'a> {
     //     }
 
     //     err.ok(SelectionField {
-    //             parsed,
+    //             parsed: parsed.clone(),
     //             nonnull: !parsed.optional,
     //             arguments,
     //             selections,
@@ -1567,7 +1589,7 @@ impl<'a> SelectionField<'a> {
         writeln!(out, "}}")
     }
 
-    pub fn generate_query(&self, out: &mut Output, context: FieldMapRef<'a>, schema: &Schema, maybe_optional: Maybe) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output, context: &FieldMap, schema: &Rc<Schema>, maybe_optional: bool) -> Result<(), Error> {
         // let field = context.get(&self.name).unwrap();
         if let Some(alias) = &self.parsed.alias {
             writeln!(out, "{}: {}", alias, &self.parsed.name)?;
@@ -1583,7 +1605,7 @@ impl<'a> SelectionField<'a> {
 
             
                 for argument in &self.arguments {
-                    argument.generate_query(&mut out, context, schema, true)?;
+                    argument.generate_query(&mut out)?;
                 }
             }
             writeln!(out, ")")?;
@@ -1596,7 +1618,7 @@ impl<'a> SelectionField<'a> {
 
             
                 for selection in &self.selections {
-                    selection.generate_query(&mut out, &context, schema, Maybe::Maybe)?;
+                    selection.generate_query(&mut out, &context, schema, true)?;
                 }
             }
             writeln!(out, "}}")?;
@@ -1604,8 +1626,8 @@ impl<'a> SelectionField<'a> {
         Ok(())
     }
 
-    pub fn generate_fields(&self, out: &mut Output, context: FieldMapRef<'a>, schema: &Schema, maybe_optional: Maybe) -> Result<(), Error> {
-        if &self.parsed.name == &TYPE_NAME {
+    pub fn generate_fields(&self, out: &mut Output, context: &FieldMap, schema: &Rc<Schema>, maybe_optional: bool) -> Result<(), Error> {
+        if *self.parsed.name == TYPE_NAME {
             println!("HERE");
         }
         let field = context.get(&self.parsed.name).unwrap();
@@ -1613,7 +1635,7 @@ impl<'a> SelectionField<'a> {
             alias
         }
         else {
-            self.parsed.name
+            &self.parsed.name
         };
 
         let rust_type = if let Some(alias) = &self.parsed.alias {
@@ -1628,7 +1650,7 @@ impl<'a> SelectionField<'a> {
         Ok(())
     }
 
-    pub fn generate_structs(&'a self, out: &mut Output, context: FieldMapRef<'a>, schema: &'a Schema<'a>, executable_document: &ExecutableDocument<'_>) -> Result<(), Error> {
+    pub fn generate_structs(&self, out: &mut Output, context: &FieldMap, schema: &Rc<Schema>, executable_document: &ExecutableDocument) -> Result<(), Error> {
         let field = context.get(&self.parsed.name).unwrap();
 
         if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
@@ -1675,64 +1697,69 @@ impl<'a> SelectionField<'a> {
 }
 
 #[derive(Debug)]
-pub struct GenericOperation<'a> {
-    pub parsed: &'a parsed_model::GenericOperation<'a>,
-    pub context: FieldMapRef<'a>,
-    pub variables: FieldMap<'a>,
-    pub selections: Vec<Selection<'a>>,
+pub struct GenericOperation {
+    pub parsed: Rc<parsed_model::GenericOperation>,
+    // pub context: FieldMap,
+    pub variables: FieldMap,
+    pub selections: Vec<Selection>,
 }
 
-impl<'a> GenericOperation<'a> {
-    // pub fn from_query(err: &mut ErrorCollector, parsed: parsed_model::Query, schema:  &'a Schema) ->  Result<GenericOperation, Error> {
+impl GenericOperation {
+    // pub fn from_query(err: &mut ErrorCollector, parsed: parsed_model::Query, schema:  &Rc<Schema>) ->  Result<GenericOperation, Error> {
     //     Self::new(err, OperationType::Query, 
     //         parsed.name, parsed.position,
     //         parsed.variables, parsed.selections, schema)
     // }
 
-    // pub fn from_mutation(err: &mut ErrorCollector, parsed: parsed_model::Mutation, schema:  &'a Schema) ->  Result<GenericOperation, Error> {
+    // pub fn from_mutation(err: &mut ErrorCollector, parsed: parsed_model::Mutation, schema:  &Rc<Schema>) ->  Result<GenericOperation, Error> {
     //     Self::new(err, OperationType::Mutation, 
     //         parsed.name, parsed.position,
     //         parsed.variables, parsed.selections, schema)
     // }
     
-    // pub fn from_subscription(parsed: graphql_parser::Subscription, schema:  &Schema, out: &mut Output) ->  Result<GenericOperation, Error> {
+    // pub fn from_subscription(parsed: graphql_parser::Subscription, schema:  &Rc<Schema>, out: &mut Output) ->  Result<GenericOperation, Error> {
     //     Self::new("Subscription", 
     //         parsed.name, parsed.position,
     //         parsed.variables, parsed.selections, schema, out)
     // }
 
-    fn get_context2(err: &mut ErrorCollector, operation: &'a OperationType, name: &'a str, position: &'a Pos, schema: &'a Schema<'a>) -> Result<FieldMapRef<'a>, Error> {
+    fn get_context2<'a>(err: Option<&mut ErrorCollector>, operation: &OperationType, name: &Atom, position: &Pos, schema: &'a Rc<Schema>) -> Result<&'a FieldMap, Error> {
         match operation {
-            OperationType::Query => Ok(&schema.get_object(schema.query)?.fields),
+            OperationType::Query => Ok(&schema.get_object(&schema.query)?.fields),
             OperationType::Mutation => {
                 if let Some(mutation) = &schema.mutation {
                     Ok(&schema.get_object(mutation)?.fields)
                 }
                 else {
-                    err.fail(BuildError::MissingObjectError(position.clone(), format!("Mutation {} used but no Mutation root found", name)))
+                    if let Some(err) = err {
+                        err.fail(BuildError::MissingObjectError(position.clone(), format!("Mutation {} used but no Mutation root found", name)))
+                    }
+                    else {
+                        Err(Error::BuildFailed(format!("Previously validated Mutation {} used but no Mutation root found", name)))
+                    }
                 }
             },
         }
     }
 
-    // fn get_context(&self, err: &mut ErrorCollector, schema: &'a Schema) -> Result<&'a IndexMap<String, Field>, Error> {
-    //     Self::get_context2(err, &self.operation, &self.name, &self.position, schema)
-    // }
+    fn get_context<'a>(&self, schema: &'a Rc<Schema>) -> Result<&'a FieldMap, Error> {
+        Self::get_context2(None, &self.parsed.operation, &self.parsed.name, &self.parsed.position, schema)
+    }
 
-    // fn new(err: &mut ErrorCollector, operation: OperationType, name: String, position: Pos, parsed_variables: Vec<parsed_model::Field>, parsed_selections: Vec<parsed_model::Selection>, schema: &'a Schema) -> Result<GenericOperation, Error> {
-    fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::GenericOperation, schema: &'a Schema<'a>, executable_document: &'a parsed_model::ExecutableDocument<'a>)-> Result<Self, Error> {
+    // fn new(err: &mut ErrorCollector, operation: OperationType, name: String, position: Pos, parsed_variables: Vec<parsed_model::Field>, parsed_selections: Vec<parsed_model::Selection>, schema: &Rc<Schema>) -> Result<GenericOperation, Error> {
+    fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::GenericOperation>, schema: &Rc<Schema>, executable_document: &Rc<parsed_model::ExecutableDocument>)-> Result<Self, Error> {
 
         let mut variables = IndexMap::new();
 
-        for variable in &parsed.variables {
+        for (name, variable) in &parsed.variables {
             if let Ok(field) = Field::from_variable(err, variable, schema) {
-                if let Some(existing) = variables.insert(variable.name, field) {
+                if let Some(existing) = variables.insert(name.clone(), field) {
                     err.error(BuildError::DuplicateName(existing.parsed.position.clone(), variable.position.clone(), variable.name.to_string()));
                 }
             }
         }
 
-        let context= Self::get_context2(err, &parsed.operation, parsed.name, &parsed.position, schema)?;
+        let context= Self::get_context2(Some(err), &parsed.operation, &parsed.name, &parsed.position, schema)?;
         
         let mut selections = Vec::new();
         for selection in &parsed.selections {
@@ -1744,8 +1771,8 @@ impl<'a> GenericOperation<'a> {
         }
 
         err.ok(GenericOperation {
-                parsed,
-                context,
+                parsed: parsed.clone(),
+                // context,
                 variables,
                 selections,
             })
@@ -1780,7 +1807,7 @@ impl<'a> GenericOperation<'a> {
         writeln!(out, "}}")
     }
     
-    pub fn generate(&'a self, out: &mut Output, schema: &'a Schema<'a>, executable_document: &ExecutableDocument<'_>) -> Result<(), Error> {
+    pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>, executable_document: &ExecutableDocument) -> Result<(), Error> {
         // if !self.variables.is_empty() {
 
         //     writeln!(out, "struct {} {{", &to_pascal_case(&format!("{}Variables", &self.name)))?;
@@ -1810,13 +1837,15 @@ impl<'a> GenericOperation<'a> {
         //     },
         // }
 
-        // fn get_context2<'a>(err: &mut ErrorCollector, operation: &OperationType, name: &String, position: &Pos, schema: &'a Schema) -> Result<&'a IndexMap<String, Field>, Error> {
+        // fn get_context2(err: &mut ErrorCollector, operation: &OperationType, name: &String, position: &Pos, schema: &Rc<Schema>) -> Result<&'a IndexMap<String, Field>, Error> {
            
         // }
     
-        // fn get_context<'a>(&self, err: &mut ErrorCollector, schema: &'a Schema) -> Result<&'a IndexMap<String, Field>, Error> {
+        // fn get_context(&self, err: &mut ErrorCollector, schema: &Rc<Schema>) -> Result<&'a IndexMap<String, Field>, Error> {
         //     Self::get_context2(err, &self.operation, &self.name, &self.position, schema)
         // }
+
+        let context = self.get_context( schema)?;
 
         writeln!(out, "pub mod {} {{", to_snake_case(&self.parsed.name))?;
         {
@@ -1883,7 +1912,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                     let mut out = out.indent();
     
                     for selection in &self.selections {
-                        selection.generate_query(&mut out, &self.context, schema, Maybe::Maybe)?;
+                        selection.generate_query(&mut out, context, schema, true)?;
                     }
                 }
                 writeln!(out, "}}\"#;")?;
@@ -1965,7 +1994,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                 for selection in &self.selections {
                     // let context: IndexMap<String, Field> = schema.query.get(schema).fields;
 
-                    selection.generate_fields(&mut out, &self.context, schema, Maybe::Maybe)?;
+                    selection.generate_fields(&mut out, context, schema, true)?;
                     // writeln!(out, "    #[serde(rename = \"{}\")]", &selection.name)?;
                     // writeln!(out, "    {},", to_constant_case(&selection.name))?;
                 }
@@ -1980,7 +2009,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
             for selection in &self.selections {
                 // let context: IndexMap<String, Field> = schema.query.get(schema).fields;
 
-                selection.generate_structs(&mut out, &self.context, schema, executable_document)?;
+                selection.generate_structs(&mut out, context, schema, executable_document)?;
                 // writeln!(out, "    #[serde(rename = \"{}\")]", &selection.name)?;
                 // writeln!(out, "    {},", to_constant_case(&selection.name))?;
             }
@@ -1997,13 +2026,13 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
 }
 
 #[derive(Debug)]
-pub struct FragmentDefinition<'a> {
-    pub parsed: &'a parsed_model::FragmentDefinition<'a>,
-    pub selections: Vec<Selection<'a>>,
+pub struct FragmentDefinition {
+    pub parsed: Rc<parsed_model::FragmentDefinition>,
+    pub selections: Vec<Selection>,
 }
 
-impl<'a> FragmentDefinition<'a> {
-    pub fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::FragmentDefinition<'a>, schema: &'a Schema<'a>, executable_document: &'a parsed_model::ExecutableDocument<'a>) -> Result<Self, Error> {
+impl FragmentDefinition {
+    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::FragmentDefinition>, schema: &Rc<Schema>, executable_document: &parsed_model::ExecutableDocument) -> Result<Self, Error> {
 
         if let Some(type_definition) = schema.defined_types.get(&parsed.type_condition) {
             if let TypeDefinition::Object(object) = type_definition {
@@ -2022,7 +2051,7 @@ impl<'a> FragmentDefinition<'a> {
                 }
 
                 err.ok(FragmentDefinition {
-                    parsed,
+                    parsed: parsed.clone(),
                     selections,
                     // query_object,
                 })
@@ -2062,16 +2091,16 @@ impl<'a> FragmentDefinition<'a> {
 
 
 #[derive(Debug)]
-pub struct FragmentSpread<'a> {
-    pub parsed: &'a parsed_model::FragmentSpread<'a>,
+pub struct FragmentSpread {
+    pub parsed: Rc<parsed_model::FragmentSpread>,
 }
 
-impl<'a> FragmentSpread<'a> {
-    fn new(err: &mut ErrorCollector<'_>, parsed: &'a parsed_model::FragmentSpread<'a>, _schema: &Schema, executable_document: &parsed_model::ExecutableDocument, context: FieldMapRef<'a>) -> Result<Self, Error> {
-        if let Some(_fragment) = executable_document.fragments.get(parsed.name) {
+impl FragmentSpread {
+    fn new(err: &mut ErrorCollector<'_>, parsed: &Rc<parsed_model::FragmentSpread>, _schema: &Rc<Schema>, executable_document: &parsed_model::ExecutableDocument, context: &FieldMap) -> Result<Self, Error> {
+        if let Some(_fragment) = executable_document.fragments.get(&parsed.name) {
 
             Ok(FragmentSpread {
-                parsed,
+                parsed: parsed.clone(),
             })
         }
         else {
@@ -2093,20 +2122,20 @@ impl<'a> FragmentSpread<'a> {
 }
 
 #[derive(Debug)]
-pub struct ExecutableDocument<'a> {
-    pub parsed: &'a parsed_model::ExecutableDocument<'a>,
-    pub fragments: IndexMap<&'a str, FragmentDefinition<'a>>,
-    pub queries: Vec<GenericOperation<'a>>,
-    pub mutations: Vec<GenericOperation<'a>>,
+pub struct ExecutableDocument {
+    pub parsed: Rc<parsed_model::ExecutableDocument>,
+    pub fragments: IndexMap<Atom, FragmentDefinition>,
+    pub queries: Vec<GenericOperation>,
+    pub mutations: Vec<GenericOperation>,
 }
 
-impl<'a> ExecutableDocument<'a> {
-    pub fn new(err: &mut ErrorCollector, parsed: &'a parsed_model::ExecutableDocument<'a>, schema: &'a Schema<'a>) ->  Result<Self, Error> {
+impl ExecutableDocument {
+    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::ExecutableDocument>, schema: &Rc<Schema>) ->  Result<Self, Error> {
 
         let mut fragments = IndexMap::new();
 
         for fragment_definition in parsed.fragments.values() {
-            fragments.insert(fragment_definition.name as &str, FragmentDefinition::new(err, fragment_definition, schema, &parsed)?);
+            fragments.insert(fragment_definition.name.clone(), FragmentDefinition::new(err, fragment_definition, schema, &parsed)?);
         }
 
         let mut queries = Vec::new();
@@ -2122,14 +2151,14 @@ impl<'a> ExecutableDocument<'a> {
         }
 
         Ok(ExecutableDocument {
-            parsed,
+            parsed: parsed.clone(),
             fragments,
             queries,
             mutations,
         })
     }
 
-    pub fn get_fragment(&self, name: &str) -> Result<&'a FragmentDefinition, Error> {
+    pub fn get_fragment(&self, name: &Atom) -> Result<&FragmentDefinition, Error> {
         match self.fragments.get(name) {
             Some(fragment_definition) => {
                 Ok(fragment_definition)
@@ -2167,7 +2196,7 @@ impl<'a> ExecutableDocument<'a> {
         writeln!(out, "}}")
     }
 
-    pub fn generate(&'a self, out: &mut Output, schema: &'a Schema<'a>) -> Result<(), Error> {
+    pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>) -> Result<(), Error> {
         writeln!(out, "pub mod {} {{", self.parsed.name)?;
 
         {
@@ -2199,32 +2228,32 @@ impl<'a> ExecutableDocument<'a> {
 
 
 // Unordered --------------------------------------------------------------------------------------------------------------------------------------------
-#[derive(Debug, Clone, Copy)]
-pub enum Maybe {
-    True,
-    False,
-    Maybe,
-}
+// #[derive(Debug, Clone, Copy)]
+// pub enum Maybe {
+//     True,
+//     False,
+//     Maybe,
+// }
 
-impl Display for Maybe {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Maybe::True => writeln!(f, "True"),
-            Maybe::False => writeln!(f, "False"),
-            Maybe::Maybe => writeln!(f, "Maybe"),
-        }
-    }
-}
+// impl Display for Maybe {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         match self {
+//             Maybe::True => writeln!(f, "True"),
+//             Maybe::False => writeln!(f, "False"),
+//             Maybe::Maybe => writeln!(f, "Maybe"),
+//         }
+//     }
+// }
 
-impl Maybe {
-    pub fn isit(&self, default: bool) -> bool {
-        match self {
-            Maybe::True => true,
-            Maybe::False => false,
-            Maybe::Maybe => default,
-        }
-    }
-}
+// impl Maybe {
+//     pub fn isit(&self, default: bool) -> bool {
+//         match self {
+//             Maybe::True => true,
+//             Maybe::False => false,
+//             Maybe::Maybe => default,
+//         }
+//     }
+// }
 
 // #[derive(Debug)]
 // pub struct VariableDefinition {
@@ -2237,7 +2266,7 @@ impl Maybe {
 
 
 //         Ok(VariableDefinition {
-//             parsed,
+//             parsed: parsed.clone(),
 //         })
 //     }
 

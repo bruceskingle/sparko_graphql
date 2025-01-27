@@ -1,9 +1,14 @@
 use std::fmt::Display;
 use std::io::Write;
+use std::rc::Rc;
 use graphql_parser::Pos;
 use indexmap::IndexMap;
 use inflections::case::to_snake_case;
 
+use crate::intern;
+use crate::intern_option;
+use crate::intern_vec;
+use crate::Atom;
 // use crate::utils::to_pascal_case;
 use crate::BuildError;
 use crate::BuildWarning;
@@ -11,6 +16,9 @@ use crate::Error;
 use crate::ErrorCollector;
 use crate::Output;
 use crate::validated_model;
+
+
+pub type FieldMap = IndexMap<Atom, Rc<Field>>;
 
 #[derive(Debug, Clone, Copy)]
 pub enum BuiltinType {
@@ -62,49 +70,64 @@ impl Display for BuiltinType {
 }
 
 #[derive(Debug)]
-pub enum ScalarType<'a> {
-    DefinedType{name: &'a str, position: &'a Pos},
+pub struct DefinedType {
+    pub name: Atom,
+    pub position: Pos
+}
+
+impl DefinedType {
+    fn new(v: String, position: Pos) -> ScalarType {
+        ScalarType::DefinedType(Rc::new(DefinedType{
+            name: intern(v),
+            position
+        }))
+    }
+}
+
+#[derive(Debug)]
+pub enum ScalarType {
+    DefinedType(Rc<DefinedType>),
     BuiltinType(BuiltinType),
 }
 
-impl<'a> ScalarType<'a> {
-    fn new(v: &'a str, position: &'a Pos) -> ScalarType<'a> {
-        if let Some(builtin_type) = BuiltinType::from_str(v) {
+impl ScalarType {
+    fn new(v: String, position: Pos) -> ScalarType {
+        if let Some(builtin_type) = BuiltinType::from_str(&v) {
             ScalarType::BuiltinType(builtin_type)
         }
         else {
-            ScalarType::DefinedType{ name: v, position: position}
+            DefinedType::new(v, position)
         }
     }
 }
 
-impl Display for ScalarType<'_> {
+impl Display for ScalarType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ScalarType::DefinedType{name, position} => write!(f, "{} (defined at {})", name, position),
+            ScalarType::DefinedType(defined_type) => write!(f, "{} (referenced at {})", &defined_type.name, &defined_type.position),
             ScalarType::BuiltinType(builtin_type) => builtin_type.fmt(f),
         }
     }
 }
 
 #[derive(Debug)]
-pub enum Type<'a> {
-    Scalar(ScalarType<'a>),
-    Required(Box<Type<'a>>),
-    Array(Box<Type<'a>>),
+pub enum Type {
+    Scalar(ScalarType),
+    Required(Box<Type>),
+    Array(Box<Type>),
 }
 
-impl<'a> Type<'a> {
-    fn new(parsed: &'a graphql_parser::schema::Type<'_, String>, position: &'a Pos) -> Type<'a> {
+impl Type {
+    fn new(parsed: graphql_parser::schema::Type<'_, String>, position: Pos) -> Type {
         match parsed {
-            graphql_parser::query::Type::NamedType(name) => Type::Scalar(ScalarType::new(&name, position)),
-            graphql_parser::query::Type::ListType(wrapped) => Type::Array(Box::new(Type::new(wrapped, position))),
-            graphql_parser::query::Type::NonNullType(wrapped) => Type::Required(Box::new(Type::new(wrapped, position))),
+            graphql_parser::query::Type::NamedType(name) => Type::Scalar(ScalarType::new(name, position)),
+            graphql_parser::query::Type::ListType(wrapped) => Type::Array(Box::new(Type::new(*wrapped, position))),
+            graphql_parser::query::Type::NonNullType(wrapped) => Type::Required(Box::new(Type::new(*wrapped, position))),
         }
     }
 }
 
-impl Display for Type<'_> {
+impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Scalar(scalar_type) => scalar_type.fmt(f),
@@ -208,16 +231,40 @@ type Query {
     }
 }
 
-#[derive(Debug)]
-pub enum TypeDefinition<'a> {
-    Scalar(Scalar<'a>),
-    Object(Object<'a>),
-    Interface(Interface<'a>),
-    Union(Union<'a>),
-    Enum(Enum<'a>),
+#[derive(Debug, PartialEq, Eq)]
+pub enum DefinedTypeName {
+    Scalar,
+    Object,
+    Interface,
+    Union,
+    Enum,
+    InputObject,
 }
 
-impl<'a> TypeDefinition<'a> {
+impl DefinedTypeName {
+    pub fn name(&self) -> &'static str {
+        match self {
+            DefinedTypeName::Scalar => "Scalar",
+            DefinedTypeName::Object => "Object",
+            DefinedTypeName::Interface => "Interface",
+            DefinedTypeName::Union => "Union",
+            DefinedTypeName::Enum => "Enum",
+            DefinedTypeName::InputObject => "InputObject",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum TypeDefinition {
+    Scalar(Rc<Scalar>),
+    Object(Rc<Object>),
+    Interface(Rc<Interface>),
+    Union(Rc<Union>),
+    Enum(Rc<Enum>),
+    InputObject(Rc<Object>),
+}
+
+impl TypeDefinition {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         match self {
             TypeDefinition::Scalar(content) => content.print(out),
@@ -225,52 +272,60 @@ impl<'a> TypeDefinition<'a> {
             TypeDefinition::Interface(content) => content.print(out),
             TypeDefinition::Union(content) => content.print(out),
             TypeDefinition::Enum(content) => content.print(out),
+            TypeDefinition::InputObject(content) => content.print(out),
         }
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &Atom {
         match self {
-            TypeDefinition::Scalar(content) => content.name,
-            TypeDefinition::Object(content) => content.name,
-            TypeDefinition::Interface(content) => content.name,
-            TypeDefinition::Union(content) => content.name,
-            TypeDefinition::Enum(content) => content.name,
+            TypeDefinition::Scalar(content) => &content.name,
+            TypeDefinition::Object(content) => &content.name,
+            TypeDefinition::Interface(content) => &content.name,
+            TypeDefinition::Union(content) => &content.name,
+            TypeDefinition::Enum(content) => &content.name,
+            TypeDefinition::InputObject(content) => &content.name,
         }
     }
 
     pub fn position(&self) -> &Pos {
         match self {
-            TypeDefinition::Scalar(content) => content.position,
-            TypeDefinition::Object(content) => content.position,
-            TypeDefinition::Interface(content) => content.position,
-            TypeDefinition::Union(content) => content.position,
-            TypeDefinition::Enum(content) => content.position,
+            TypeDefinition::Scalar(content) => &content.position,
+            TypeDefinition::Object(content) => &content.position,
+            TypeDefinition::Interface(content) => &content.position,
+            TypeDefinition::Union(content) => &content.position,
+            TypeDefinition::Enum(content) => &content.position,
+            TypeDefinition::InputObject(content) => &content.position,
+        }
+    }
+
+    pub fn defined_type_name(&self) -> DefinedTypeName {
+        match self {
+            TypeDefinition::Scalar(_) => DefinedTypeName::Scalar,
+            TypeDefinition::Object(_) => DefinedTypeName::Object,
+            TypeDefinition::Interface(_) => DefinedTypeName::Interface,
+            TypeDefinition::Union(_) => DefinedTypeName::Union,
+            TypeDefinition::Enum(_) => DefinedTypeName::Enum,
+            TypeDefinition::InputObject(_) => DefinedTypeName::InputObject,
         }
     }
 
     pub fn type_name(&self) -> &str {
-        match self {
-            TypeDefinition::Scalar(_) => "scalar",
-            TypeDefinition::Object(_) => "object",
-            TypeDefinition::Interface(_) => "interface",
-            TypeDefinition::Union(_) => "union",
-            TypeDefinition::Enum(_) => "enum",
-        }
+        self.defined_type_name().name()
     }
 }
 
 #[derive(Debug)]
-pub struct Scalar<'a> {
-    pub position: &'a Pos,
-    pub name: &'a str,
+pub struct Scalar {
+    pub position: Pos,
+    pub name: Atom,
 }
 
-impl<'a> Scalar<'a> {
-    fn new(scalar_type: &'a graphql_parser::schema::ScalarType<'_, String>) -> (&'a str, Scalar<'a>) {
-        (&scalar_type.name, Scalar {
-            position: &scalar_type.position,
-            name: &scalar_type.name,
-        })
+impl Scalar {
+    fn new(scalar_type: graphql_parser::schema::ScalarType<'_, String>) -> TypeDefinition {
+        TypeDefinition::Scalar(Rc::new(Scalar {
+            position: scalar_type.position,
+            name: intern(scalar_type.name),
+        }))
     }
     
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
@@ -287,16 +342,16 @@ impl<'a> Scalar<'a> {
 }
 
 #[derive(Debug)]
-pub struct Object<'a> {
-    pub position: &'a Pos,
-    pub name: &'a str,
-    pub fields: IndexMap<&'a str, Field<'a>>,
-    pub implements: Option<&'a Vec<String>>,
+pub struct Object {
+    pub position: Pos,
+    pub name: Atom,
+    pub fields: FieldMap,
+    pub implements: Vec<Atom>,
     pub is_input: bool,
     // pub fully_implements: Vec<String>,
 }
 
-impl<'a> Object<'a> {
+impl Object {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "Object {{")?;
         {
@@ -314,12 +369,12 @@ impl<'a> Object<'a> {
             }
             writeln!(out, "}}")?;
 
-            if let Some(implements) = self.implements {
+            if !self.implements.is_empty() {
                 writeln!(out, "implements {{")?;
                 {
                     let mut out = out.indent();
 
-                    for name in implements {
+                    for name in &self.implements {
                         writeln!(out, "{}", name)?;
                     }
                 }
@@ -331,51 +386,51 @@ impl<'a> Object<'a> {
         
     }
 
-    pub fn from_object(_err: &mut ErrorCollector, object_type: &'a graphql_parser::schema::ObjectType<'a, String>) -> (&'a str, Self) {
-        let mut fields: IndexMap<&str, Field<'_>> = IndexMap::new();
+    pub fn from_object(_err: &mut ErrorCollector, object_type: graphql_parser::schema::ObjectType<'_, String>) -> TypeDefinition {
+        let mut fields: FieldMap = IndexMap::new();
 
-        for f in &object_type.fields {
-            fields.insert(&f.name, Field::from_field(&f));
-            
+        for f in object_type.fields {
+            let value = Field::from_field(f);
+            fields.insert(value.name.clone(), value);
         }
-        (&object_type.name, Object {
-            position: &object_type.position,
-            name: &object_type.name,
+
+        TypeDefinition::Object(Rc::new(Object {
+            position: object_type.position,
+            name: intern(object_type.name),
             fields,
-            implements: Some(&object_type.implements_interfaces),
+            implements: intern_vec(object_type.implements_interfaces),
             is_input: false,
-        })
+        }))
     }
     
-    fn from_input_object(_err: &mut ErrorCollector<'_>, object_type: &'a graphql_parser::schema::InputObjectType<'a, String>) -> (&'a str, Self) {
-        let mut field_names = Vec::new();
-        let mut fields: IndexMap<&str, Field<'_>> = IndexMap::new();
+    fn from_input_object(_err: &mut ErrorCollector<'_>, object_type: graphql_parser::schema::InputObjectType<'_, String>) -> TypeDefinition {
+        let mut fields = IndexMap::new();
 
-        for f in &object_type.fields {
-            field_names.push(f.name.clone());
-            fields.insert(&f.name, Field::from_input_value(&f));
-            
+        for f in object_type.fields {
+            let value = Field::from_input_value(f);
+            fields.insert(value.name.clone(), value);
         }
-        (&object_type.name, Object {
-            position: &object_type.position,
-            name: &object_type.name,
+
+        TypeDefinition::InputObject(Rc::new(Object {
+            position: object_type.position,
+            name: intern(object_type.name),
             fields,
-            implements: None,
+            implements: Vec::new(),
             is_input: true,
-        })
+        }))
     }
 }
 
 
 #[derive(Debug)]
-pub struct Interface<'a> {
-    pub position: &'a Pos,
-    pub name: &'a str,
-    pub fields: IndexMap<String, Field<'a>>,
-    pub implements: &'a Vec<String>,
+pub struct Interface {
+    pub position: Pos,
+    pub name: Atom,
+    pub fields: FieldMap,
+    pub implements: Vec<Atom>,
 }
 
-impl<'a> Interface<'a> {
+impl Interface {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "Interface {{")?;
         {
@@ -397,7 +452,7 @@ impl<'a> Interface<'a> {
             {
                 let mut out = out.indent();
 
-                for name in self.implements {
+                for name in &self.implements {
                     writeln!(out, "{}", name)?;
                 }
             }
@@ -406,30 +461,32 @@ impl<'a> Interface<'a> {
         writeln!(out, "}}")
     }
     
-    pub fn new(_out: &mut ErrorCollector, interface_type: &'a graphql_parser::schema::InterfaceType<'a, String>) -> (&'a str, Self) {
+    pub fn new(_out: &mut ErrorCollector, interface_type: graphql_parser::schema::InterfaceType<'_, String>) -> TypeDefinition {
         let mut fields = IndexMap::new();
 
-        for f in &interface_type.fields {
-            fields.insert(f.name.clone(), Field::from_field(&f));
+        for f in interface_type.fields {
+            let value = Field::from_field(f);
+            fields.insert(value.name.clone(), value);
             
         }
-        (&interface_type.name, Interface {
-            position: &interface_type.position,
-            name: &interface_type.name,
+
+        TypeDefinition::Interface(Rc::new(Interface {
+            position: interface_type.position,
+            name: intern(interface_type.name),
             fields,
-            implements: &interface_type.implements_interfaces,
-        })
+            implements: intern_vec(interface_type.implements_interfaces),
+        }))
     }
 }
 
 #[derive(Debug)]
-pub struct Union<'a> {
-    pub position: &'a Pos,
-    pub name: &'a str,
-    pub types: &'a Vec<String>,
+pub struct Union {
+    pub position: Pos,
+    pub name: Atom,
+    pub types: Vec<Atom>,
 }
 
-impl<'a> Union<'a> {
+impl Union {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "Union {{")?;
         {
@@ -437,11 +494,11 @@ impl<'a> Union<'a> {
 
             writeln!(out, "position:  {}", self.position)?;
             writeln!(out, "name:      {}", self.name)?;
-            writeln!(out, "implements {{")?;
+            writeln!(out, "types {{")?;
             {
                 let mut out = out.indent();
 
-                for name in self.types {
+                for name in &self.types {
                     writeln!(out, "{}", name)?;
                 }
             }
@@ -450,35 +507,74 @@ impl<'a> Union<'a> {
         writeln!(out, "}}")
     }
 
-    fn new(_err: &mut ErrorCollector, union_type: &'a graphql_parser::schema::UnionType<'_, String>) -> (&'a str, Self) {
-        ( &union_type.name, Union {
-            position: &union_type.position,
-            name: &union_type.name,
-            types: &union_type.types,
-        })
+    fn new(_err: &mut ErrorCollector, union_type: graphql_parser::schema::UnionType<'_, String>) -> TypeDefinition {
+        TypeDefinition::Union(Rc::new(Union {
+            position: union_type.position,
+            name: intern(union_type.name),
+            types: intern_vec(union_type.types),
+        }))
     }
 }
 
 #[derive(Debug)]
-pub struct Enum<'a> {
-    pub position: &'a Pos,
-    pub name: &'a str,
-    pub variants: &'a Vec<graphql_parser::schema::EnumValue<'a, std::string::String, >>,
+pub struct Variant {
+    pub name: Atom,
+    pub position: Pos,
+    pub description: Option<String>,
 }
 
-impl<'a> Enum<'a> {
+impl Variant {
+    pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
+        writeln!(out, "Variant {{")?;
+        {
+            let mut out = out.indent();
+
+            writeln!(out, "name:      {}", self.name)?;
+            writeln!(out, "position:  {}", self.position)?;
+            writeln!(out, "description:  {:?}", self.description)?;
+        }
+        writeln!(out, "}}")
+    }
+
+    pub fn new(_err: &mut ErrorCollector, enum_type: graphql_parser::schema::EnumValue<'_, String>) -> Self {
+        Variant {
+            name: intern(enum_type.name),
+            position: enum_type.position,
+            description: enum_type.description,
+        }
+    }
+    
+    fn new_vec(err: &mut ErrorCollector, values: Vec<graphql_parser::schema::EnumValue<'_, String>>) -> Vec<Variant> {
+        let mut result =  Vec::new();
+
+        for value in values {
+            result.push(Self::new(err, value));
+        }
+
+        result
+    }
+}
+
+#[derive(Debug)]
+pub struct Enum {
+    pub name: Atom,
+    pub position: Pos,
+    pub variants: Vec<Variant>,
+}
+
+impl Enum {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "Enum {{")?;
         {
             let mut out = out.indent();
 
-            writeln!(out, "position:  {}", self.position)?;
             writeln!(out, "name:      {}", self.name)?;
+            writeln!(out, "position:  {}", self.position)?;
             writeln!(out, "variants {{")?;
             {
                 let mut out = out.indent();
 
-                for variant in self.variants {
+                for variant in &self.variants {
                     writeln!(out, "{}", variant.name)?;
                 }
             }
@@ -487,35 +583,31 @@ impl<'a> Enum<'a> {
         writeln!(out, "}}")
     }
 
-    pub fn new(_err: &mut ErrorCollector, enum_type: &'a graphql_parser::schema::EnumType<'a, String>) -> (&'a str, Self) {
-        (&enum_type.name, Enum {
-            position: &enum_type.position,
-            name: &enum_type.name,
-            variants: &enum_type.values,
-        })
+    pub fn new(err: &mut ErrorCollector, enum_type: graphql_parser::schema::EnumType<'_, String>) -> TypeDefinition {
+        TypeDefinition::Enum(Rc::new(Enum {
+            name: intern(enum_type.name),
+            position: enum_type.position,
+            variants: Variant::new_vec(err, enum_type.values),
+        }))
     }
 }
 
 #[derive(Debug)]
-pub struct Field<'a> {
-    pub position:&'a Pos,
-    pub name: &'a str,
-    pub ty: Type<'a>,
-    // pub nonnull: bool,
-    // pub multiple: bool,
+pub struct Field {
+    pub name: Atom,
+    pub position:Pos,
+    pub ty: Type,
 }
 
-impl<'a> Field<'a> {
+impl Field {
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "Field {{")?;
         {
             let mut out = out.indent();
 
-            writeln!(out, "position:  {}", self.position)?;
             writeln!(out, "name:      {}", self.name)?;
+            writeln!(out, "position:  {}", self.position)?;
             writeln!(out, "ty:        {}", self.ty)?;
-            // writeln!(out, "nonnull:   {}", self.nonnull)?;
-            // writeln!(out, "multiple:  {}", self.multiple)?;
             writeln!(out, "}}")?;
         }
         writeln!(out, "}}")
@@ -523,55 +615,55 @@ impl<'a> Field<'a> {
         
     }
 
-    fn do_new(position: &'a Pos, name: &'a str, field_type: &'a graphql_parser::schema::Type<'a, String>) -> Field<'a> {
-        let ty = Type::new(field_type, &position);
-        Field {
+    fn do_new(position: Pos, name: String, field_type: graphql_parser::schema::Type<'_, String>) -> Rc<Field> {
+        let ty = Type::new(field_type, position.clone());
+        Rc::new(Field {
             position,
-            name,
+            name: intern(name),
             ty,
-        }
+        })
         
      }
 
-     pub fn from_input_value(field: &'a graphql_parser::schema::InputValue<'a, String>) -> Self {
-         Self::do_new(&field.position, &field.name, &field.value_type)
+     pub fn from_input_value(field: graphql_parser::schema::InputValue<'_, String>) -> Rc<Field> {
+         Self::do_new(field.position, field.name, field.value_type)
      }
 
-     pub fn from_field(field: &'a graphql_parser::schema::Field<'a, String>) -> Self {
-         Self::do_new(&field.position, &field.name, &field.field_type)
+     pub fn from_field(field: graphql_parser::schema::Field<'_, String>) -> Rc<Field> {
+         Self::do_new(field.position, field.name, field.field_type)
      }
     
-    fn from_variable(variable: &'a graphql_parser::query::VariableDefinition<'a, String>) -> Field<'a> {
-        Self::do_new(&variable.position, &variable.name, &variable.var_type)
+    fn from_variable(variable: graphql_parser::query::VariableDefinition<'_, String>) -> Rc<Field> {
+        Self::do_new(variable.position, variable.name, variable.var_type)
     }
 }
 
 #[derive(Debug)]
-pub struct SchemaDefinition<'a> {
-    pub position: &'a Pos,
-    pub query: &'a Option<String>,
-    pub mutation: &'a Option<String>,
-    pub subscription: &'a Option<String>,
+pub struct SchemaDefinition {
+    pub position: Pos,
+    pub query: Option<Atom>,
+    pub mutation: Option<Atom>,
+    pub subscription: Option<Atom>,
 }
 
-impl<'a> SchemaDefinition<'a> {
-    fn new(_err: &mut ErrorCollector, schema_definition: &'a graphql_parser::schema::SchemaDefinition<'a, String>) -> SchemaDefinition<'a> {
+impl SchemaDefinition {
+    fn new(_err: &mut ErrorCollector, schema_definition: graphql_parser::schema::SchemaDefinition<'_, String>) -> Self {
         SchemaDefinition {
-            position: &schema_definition.position,
-            query: &schema_definition.query,
-            mutation: &schema_definition.mutation,
-            subscription: &schema_definition.subscription,
+            position: schema_definition.position,
+            query: intern_option(schema_definition.query),
+            mutation: intern_option(schema_definition.mutation),
+            subscription: intern_option(schema_definition.subscription),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct Schema<'a> {
-    pub named_types: IndexMap<&'a str, TypeDefinition<'a>>,
-    pub schema_definition: Option<SchemaDefinition<'a>>,
+pub struct Schema {
+    pub named_types: IndexMap<Atom, TypeDefinition>,
+    pub schema_definition: Option<SchemaDefinition>,
 }
 
-impl Schema<'_> {
+impl Schema {
 
     // fn name_defined(&mut self, out: &mut ErrorCollector, name: &String, position: Pos) {
     //     if let Some(existing) = self.names.insert(name.clone(), position.clone()) {
@@ -589,13 +681,13 @@ impl Schema<'_> {
     //     }
     // }
 
-    pub fn new<'a>(err: &mut ErrorCollector, ast: &'a graphql_parser::schema::Document<'a, String>) -> Result<Schema<'a>, Error> {
+    pub fn new(err: &mut ErrorCollector, ast: graphql_parser::schema::Document<'_, String>) -> Result<Rc<Self>, Error> {
         let mut model = Schema {
             named_types: IndexMap::new(),
             schema_definition: None,
         };
 
-        for def in &ast.definitions {
+        for def in ast.definitions {
             match def {
                 graphql_parser::schema::Definition::SchemaDefinition(schema_definition) => {
                     if let Some(existing) = &model.schema_definition {
@@ -606,37 +698,17 @@ impl Schema<'_> {
                     }
                 },
                 graphql_parser::schema::Definition::TypeDefinition(type_definition) => {
-                    let (name, value) = match type_definition {
-                        graphql_parser::schema::TypeDefinition::Scalar(scalar_type) => {
-                            let (name, content) = Scalar::new(scalar_type);
-                            (name, TypeDefinition::Scalar(content))
-                        },
-                        graphql_parser::schema::TypeDefinition::Object(ast) => {
-                            // err.fail(BuildError::Unimplemented(ast.position.clone(), "Object"))
-                            let (name, content) = Object::from_object(err, ast);
-                            (name, TypeDefinition::Object(content))
-                        },
-                        graphql_parser::schema::TypeDefinition::Interface(ast) => {
-                            // err.fail(BuildError::Unimplemented(ast.position.clone(), "Interface"))
-                            let (name, content) = Interface::new(err, ast);
-                            (name, TypeDefinition::Interface(content))
-                        },
-                        graphql_parser::schema::TypeDefinition::Union(ast) => {
-                            let (name, content) = Union::new(err, ast);
-                            (name, TypeDefinition::Union(content))
-                        },
-                        graphql_parser::schema::TypeDefinition::Enum(ast) => {
-                            let (name, content) = Enum::new(err, ast);
-                            (name, TypeDefinition::Enum(content))
-                        },
-                        graphql_parser::schema::TypeDefinition::InputObject(ast) => {
-                            let (name, content) = Object::from_input_object(err, ast);
-                            (name, TypeDefinition::Object(content))
-                        },
+                    let value = match type_definition {
+                        graphql_parser::schema::TypeDefinition::Scalar(scalar_type) => Scalar::new(scalar_type),
+                        graphql_parser::schema::TypeDefinition::Object(ast) => Object::from_object(err, ast),
+                        graphql_parser::schema::TypeDefinition::Interface(ast) => Interface::new(err, ast),
+                        graphql_parser::schema::TypeDefinition::Union(ast) => Union::new(err, ast),
+                        graphql_parser::schema::TypeDefinition::Enum(ast) => Enum::new(err, ast),
+                        graphql_parser::schema::TypeDefinition::InputObject(ast) => Object::from_input_object(err, ast),
                     };
-                    let position = value.position().clone();
+                    let position = value.position().clone(); // TODO: Can we remove this?
 
-                    if let Some(existing) = model.named_types.insert(name, value) {
+                    if let Some(existing) = model.named_types.insert(value.name().clone(), value) {
                         err.error(BuildError::DuplicateName(existing.position().clone(), position, existing.name().to_string()));
                     }
                 },
@@ -656,9 +728,23 @@ impl Schema<'_> {
             }
         }
 
-        err.ok(model)
+        err.ok(Rc::new(model))
         // Ok(model)
     }
+
+    // pub fn get<T>(&self, name: &Atom, defined_type_name: DefinedTypeName) -> Result<T, Error> {
+    //     if let Some(type_definition) = self.named_types.get(name) {
+    //         if type_definition.defined_type_name() == defined_type_name {
+    //             Ok(type_definition)
+    //         }
+    //         else {
+    //             Err(Error::BuildFailed(format!("Expected {} for \"{}\" but found {}", defined_type_name.name(), name, type_definition.type_name())))
+    //         }
+    //     }
+    //     else {
+    //         Err(Error::BuildFailed(format!("Failed to find {} \"{}\"", defined_type_name.name(), name)))
+    //     }
+    // }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "parsed_model::Schema {{")?;
@@ -678,22 +764,118 @@ impl Schema<'_> {
         }
         writeln!(out, "}}")
     }
+
+    pub fn get_scalar(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Scalar>> {
+        if let Some(type_definition) = &self.named_types.get(name) {
+            if let TypeDefinition::Scalar(type_definition) = type_definition {
+                Some(type_definition)
+            }
+            else {
+                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Scalar for \"{}\" but found {}", name, type_definition.type_name())));
+                None
+            }
+        }
+        else {
+            err.error(BuildError::MissingScalarError(position.clone(), format!("Failed to find Scalar \"{}\"", name)));
+            None
+        }
+    }
+
+    pub fn get_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Object>> {
+        if let Some(type_definition) = &self.named_types.get(name) {
+            if let TypeDefinition::Object(object) = type_definition {
+                Some(object)
+            }
+            else {
+                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Object for \"{}\" but found {}", name, type_definition.type_name())));
+                None
+            }
+        }
+        else {
+            err.error(BuildError::MissingObjectError(position.clone(), format!("Failed to find Object \"{}\"", name)));
+            None
+        }
+    }
+
+    pub fn get_interface(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Interface>> {
+        if let Some(type_definition) = &self.named_types.get(name) {
+            if let TypeDefinition::Interface(interface) = type_definition {
+                Some(interface)
+            }
+            else {
+                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Interface for \"{}\" but found {}", name, type_definition.type_name())));
+                None
+            }
+        }
+        else {
+            err.error(BuildError::MissingInterfaceError(position.clone(), format!("Failed to find Interface \"{}\"", name)));
+            None
+        }
+    }
+    
+    fn get_union(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Union>> {
+        if let Some(type_definition) = &self.named_types.get(name) {
+            if let TypeDefinition::Union(union) = type_definition {
+                Some(union)
+            }
+            else {
+                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Union for \"{}\" but found {}", name, type_definition.type_name())));
+                None
+            }
+        }
+        else {
+            err.error(BuildError::MissingUnionError(position.clone(), format!("Failed to find Union \"{}\"", name)));
+            None
+        }
+    }
+    
+    fn get_enum(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Enum>> {
+        if let Some(type_definition) = &self.named_types.get(name) {
+            if let TypeDefinition::Enum(type_definition) = type_definition {
+                Some(type_definition)
+            }
+            else {
+                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Enum for \"{}\" but found {}", name, type_definition.type_name())));
+                None
+            }
+        }
+        else {
+            err.error(BuildError::MissingEnumError(position.clone(), format!("Failed to find Enum \"{}\"", name)));
+            None
+        }
+    }
+
+    pub fn get_input_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Object>> {
+        if let Some(type_definition) = &self.named_types.get(name) {
+            if let TypeDefinition::InputObject(object) = type_definition {
+                Some(object)
+            }
+            else {
+                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected InputObject for \"{}\" but found {}", name, type_definition.type_name())));
+                None
+            }
+        }
+        else {
+            err.error(BuildError::MissingInputObjectError(position.clone(), format!("Failed to find InputObject \"{}\"", name)));
+            None
+        }
+    }
 }
 
 #[derive(Debug)]
-pub enum Selection<'a> {
-    Field(SelectionField<'a>),
-    Fragment(FragmentSpread<'a>),
+pub enum Selection {
+    Field(Rc<SelectionField>),
+    Fragment(Rc<FragmentSpread>),
     // InlineFragment(InlineFragment),
 } 
 
-impl<'a> Selection<'a>{
-    pub fn new(err: &mut ErrorCollector, selection: &'a graphql_parser::query::Selection<'a, String> ) -> Selection<'a> {
+impl Selection{
+    pub fn new(err: &mut ErrorCollector, selection: graphql_parser::query::Selection<'_, String> ) -> Selection {
         match selection {
             graphql_parser::query::Selection::OptionalField(field) => 
-                Selection::Field(SelectionField::new(err, field, true)),
-            graphql_parser::query::Selection::Field(field) => Selection::Field(SelectionField::new(err, field, false)),
-            graphql_parser::query::Selection::FragmentSpread(fragment) => Selection::Fragment(FragmentSpread::new(err, &fragment)),
+                SelectionField::new(err, *field, true),
+            graphql_parser::query::Selection::Field(field) => SelectionField::new(err, field, false),
+            graphql_parser::query::Selection::FragmentSpread(fragment) => FragmentSpread::new(err, fragment),
             graphql_parser::query::Selection::InlineFragment(_inline_fragment) => todo!(),
         }
     }
@@ -711,26 +893,27 @@ impl<'a> Selection<'a>{
     //     }
     // }
 }
+
 #[derive(Debug)]
-pub struct SelectionField<'a> {
-    pub name: &'a str,
-    pub alias: &'a Option<String>,
-    pub position: &'a Pos,
+pub struct SelectionField {
+    pub name: Atom,
+    pub alias: Option<Atom>,
+    pub position: Pos,
     pub optional: bool,
-    pub arguments: Vec<Argument<'a>>,
-    pub selections: Vec<Selection<'a>>,
+    pub arguments: Vec<Rc<Argument>>,
+    pub selections: Vec<Selection>,
 }
 
-impl<'a> SelectionField<'a> {
-    pub fn new(out: &mut ErrorCollector, field: &'a graphql_parser::query::Field<'a, String>, optional: bool) -> Self {
-        SelectionField {
-            position: &field.position,
-            name: &field.name,
-            alias: &field.alias,
+impl SelectionField {
+    pub fn new(out: &mut ErrorCollector, field: graphql_parser::query::Field<'_, String>, optional: bool) -> Selection {
+        Selection::Field(Rc::new(SelectionField {
+            name: intern(field.name),
+            alias: intern_option(field.alias),
+            position: field.position,
             optional,
-            arguments: build_arguments(out, &field.arguments),
-            selections: build_selections(out, &field.selection_set),
-        }
+            arguments: build_arguments(out, field.arguments),
+            selections: build_selections(out, field.selection_set),
+        }))
     }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
@@ -798,25 +981,25 @@ impl OperationType {
 }
 
 #[derive(Debug)]
-pub struct GenericOperation<'a> {
-    pub name: &'a str,
-    pub position: &'a Pos,
+pub struct GenericOperation {
+    pub name: Atom,
+    pub position: Pos,
     pub operation: OperationType,
-    pub selections: Vec<Selection<'a>>,
-    pub variables: Vec<Field<'a>>,
+    pub selections: Vec<Selection>,
+    pub variables: FieldMap,
 }
 
-impl<'a> GenericOperation<'a> {
-    pub fn from_query(err: &mut ErrorCollector, query: &'a graphql_parser::query::Query<'a, String>, schema: &validated_model::Schema ) -> Result<GenericOperation<'a>, Error> {
-        Self::new(err, OperationType::Query, &query.name, &query.position, &query.selection_set, &query.variable_definitions, schema)
+impl GenericOperation {
+    pub fn from_query(err: &mut ErrorCollector, query: graphql_parser::query::Query<'_, String>, schema: &validated_model::Schema ) -> Result<Rc<GenericOperation>, Error> {
+        Self::new(err, OperationType::Query, query.name, query.position, query.selection_set, query.variable_definitions, schema)
     }
 
-    pub fn from_mutation(err: &mut ErrorCollector, query: &'a graphql_parser::query::Mutation<'a, String>, schema: &validated_model::Schema ) -> Result<GenericOperation<'a>, Error> {
-        Self::new(err, OperationType::Query, &query.name, &query.position, &query.selection_set, &query.variable_definitions, schema)
+    pub fn from_mutation(err: &mut ErrorCollector, query: graphql_parser::query::Mutation<'_, String>, schema: &validated_model::Schema ) -> Result<Rc<GenericOperation>, Error> {
+        Self::new(err, OperationType::Query, query.name, query.position, query.selection_set, query.variable_definitions, schema)
     }
 
-    pub fn new(err: &mut ErrorCollector, operation: OperationType, name: &'a Option<String>, position: &'a Pos, selection_set: &'a graphql_parser::query::SelectionSet<'a, String>, 
-        variable_definitions: &'a Vec<graphql_parser::query::VariableDefinition<'a, String>>, _schema: &validated_model::Schema ) -> Result<GenericOperation<'a>, Error> {
+    pub fn new(err: &mut ErrorCollector, operation: OperationType, name: Option<String>, position: Pos, selection_set: graphql_parser::query::SelectionSet<'_, String>, 
+        variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>, _schema: &validated_model::Schema ) -> Result<Rc<GenericOperation>, Error> {
         let name = match name {
             Some(name) => name,
             None => {
@@ -853,14 +1036,14 @@ impl<'a> GenericOperation<'a> {
         // }
         
 
-        Ok(GenericOperation {
-            name,
+        Ok(Rc::new(GenericOperation {
+            name: intern(name),
             position,
             operation,
             selections,
             variables,
             // query_object,
-        })
+        }))
     }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
@@ -884,7 +1067,7 @@ impl<'a> GenericOperation<'a> {
             {
                 let mut out = out.indent();
 
-                for variable in &self.variables {
+                for variable in self.variables.values() {
                     variable.print(&mut out)?;
                 }
             }
@@ -896,21 +1079,22 @@ impl<'a> GenericOperation<'a> {
 
 
 
-fn build_variables<'a>(_out: &mut ErrorCollector, variable_definitions: &'a Vec<graphql_parser::query::VariableDefinition<'a, String>>) -> Vec<Field<'a>> {
-    let mut variables = Vec::new();
+fn build_variables(_out: &mut ErrorCollector, variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>) -> FieldMap {
+    let mut variables = IndexMap::new();
 
     for variable in variable_definitions {
-        variables.push(Field::from_variable(variable));
+        let field = Field::from_variable(variable);
+        variables.insert(field.name.clone(), field);
     }
 
     variables
 }
 
-fn build_selections<'a>(out: &mut ErrorCollector, selection_set: &'a graphql_parser::query::SelectionSet<'a, String>) -> Vec<Selection<'a>> {
+fn build_selections(out: &mut ErrorCollector, selection_set: graphql_parser::query::SelectionSet<'_, String>) -> Vec<Selection> {
 
     let mut selections = Vec::new();
 
-    for selection in &selection_set.items {
+    for selection in selection_set.items {
         selections.push(Selection::new(out, selection));
     }
 
@@ -919,7 +1103,7 @@ fn build_selections<'a>(out: &mut ErrorCollector, selection_set: &'a graphql_par
 
 
 
-fn build_arguments<'a>(out: &mut ErrorCollector, arguments: &'a Vec<(String, graphql_parser::query::Value<'a, String>)>) -> Vec<Argument<'a>> {
+fn build_arguments(out: &mut ErrorCollector, arguments: Vec<(String, graphql_parser::query::Value<'_, String>)>) -> Vec<Rc<Argument>> {
     let mut result = Vec::new();
 
     for (name, value) in arguments {
@@ -930,11 +1114,11 @@ fn build_arguments<'a>(out: &mut ErrorCollector, arguments: &'a Vec<(String, gra
 }
 
 #[derive(Debug)]
-pub enum Value<'a> {
-    Variable(&'a str),
+pub enum Value {
+    Variable(Atom),
     Int(i64),
     // Float(f64),
-    String(&'a str),
+    String(String),
     // Boolean(bool),
     // Null,
     // Enum,
@@ -942,10 +1126,10 @@ pub enum Value<'a> {
     // Object,
 }
 
-impl<'a> Value<'a> {
-    pub fn new(_out: &mut ErrorCollector, value: &'a graphql_parser::query::Value<'a, String> ) -> Self {
+impl Value {
+    pub fn new(_out: &mut ErrorCollector, value: graphql_parser::query::Value<'_, String> ) -> Self {
         match value {
-            graphql_parser::query::Value::Variable(name) => Value::Variable(name),
+            graphql_parser::query::Value::Variable(name) => Value::Variable(intern(name)),
             graphql_parser::query::Value::Int(number) => Value::Int(number.as_i64().unwrap()),
             graphql_parser::query::Value::Float(_) => todo!(),
             graphql_parser::query::Value::String(string) => Value::String(string),
@@ -958,7 +1142,7 @@ impl<'a> Value<'a> {
     }
 }
 
-impl Display for Value<'_> {
+impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Variable(name) => write!(f, "${}", name),
@@ -976,17 +1160,17 @@ impl Display for Value<'_> {
 
 
 #[derive(Debug)]
-pub struct Argument<'a> {
-    pub name: &'a str,
-    pub value: Value<'a>,
+pub struct Argument {
+    pub name: Atom,
+    pub value: Value,
 }
 
-impl<'a> Argument<'a> {
-    pub fn new(out: &mut ErrorCollector, name: &'a str, value: &'a graphql_parser::query::Value<'a, String> ) -> Self {
-        Argument {
-            name,
+impl Argument {
+    pub fn new(out: &mut ErrorCollector, name: String, value: graphql_parser::query::Value<'_, String> ) -> Rc<Self> {
+        Rc::new(Argument {
+            name: intern(name),
             value: Value::new(out, value),
-        }
+        })
     }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
@@ -1000,31 +1184,31 @@ impl<'a> Argument<'a> {
         writeln!(out, "}}")
     }
     
-    pub(crate) fn generate_query(&self, out: &mut Output<'_>, fields: validated_model::FieldMapRef<'a>, schema: &validated_model::Schema, arg: bool) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output<'_>) -> Result<(), Error> {
         writeln!(out, "{}: {}", self.name, self.value)?;
         Ok(())
     }
 }
 
 #[derive(Debug)]
-pub struct FragmentDefinition<'a> {
-    pub position: &'a Pos,
-    pub name: &'a String,
-    pub selections: Vec<Selection<'a>>,
-    pub type_condition: &'a str,
+pub struct FragmentDefinition {
+    pub name: Atom,
+    pub position: Pos,
+    pub selections: Vec<Selection>,
+    pub type_condition: Atom,
 }
 
-impl<'a> FragmentDefinition<'a>{
-    pub fn new(err: &mut ErrorCollector, fragment_definition: &'a graphql_parser::query::FragmentDefinition<'a, String>, _schema: &validated_model::Schema ) -> Result<Self, Error> {
+impl FragmentDefinition{
+    pub fn new(err: &mut ErrorCollector, fragment_definition: graphql_parser::query::FragmentDefinition<'_, String>, _schema: &validated_model::Schema ) -> Result<Rc<Self>, Error> {
 
-        let selections = build_selections(err, &fragment_definition.selection_set);
+        let selections = build_selections(err, fragment_definition.selection_set);
 
         if selections.is_empty() {
             return err.fail(BuildError::InvalidQueryError(fragment_definition.position, format!("FragmentDefinition {} has no selection set", &fragment_definition.name)));
         }
 
-        let type_condition = match &fragment_definition.type_condition {
-            graphql_parser::query::TypeCondition::On(value) => value,
+        let type_condition = match fragment_definition.type_condition {
+            graphql_parser::query::TypeCondition::On(value) => intern(value),
         };
 
 
@@ -1050,13 +1234,13 @@ impl<'a> FragmentDefinition<'a>{
         // }
         
 
-        Ok(FragmentDefinition {
-            position: &fragment_definition.position,
-            name: &fragment_definition.name,
+        Ok(Rc::new(FragmentDefinition {
+            name: intern(fragment_definition.name),
+            position: fragment_definition.position,
             selections,
             type_condition,
             // query_object,
-        })
+        }))
     }
     
     // pub fn validate(&mut self, _out: &mut ErrorCollector) -> Result<(), Error> {
@@ -1086,17 +1270,17 @@ impl<'a> FragmentDefinition<'a>{
 }
 
 #[derive(Debug)]
-pub struct FragmentSpread<'a> {
-    pub name: &'a str,
-    pub position: &'a Pos,
+pub struct FragmentSpread {
+    pub name: Atom,
+    pub position: Pos,
 }
 
-impl<'a> FragmentSpread<'a> {
-    pub fn new(out: &mut ErrorCollector, fragment: &'a graphql_parser::query::FragmentSpread<'_, String>) -> Self {
-        FragmentSpread {
-            position: &fragment.position,
-            name: &fragment.fragment_name,
-        }
+impl FragmentSpread {
+    pub fn new(_err: &mut ErrorCollector, fragment: graphql_parser::query::FragmentSpread<'_, String>) -> Selection {
+        Selection::Fragment(Rc::new(FragmentSpread {
+            name: intern(fragment.fragment_name),
+            position: fragment.position,
+        }))
     }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
@@ -1112,17 +1296,17 @@ impl<'a> FragmentSpread<'a> {
 }
 
 #[derive(Debug)]
-pub struct ExecutableDocument<'a> {
-    pub name: String,
-    pub fragments: IndexMap<String, FragmentDefinition<'a>>,
-    pub queries: Vec<GenericOperation<'a>>,
-    pub mutations: Vec<GenericOperation<'a>>
+pub struct ExecutableDocument {
+    pub name: Atom,
+    pub fragments: IndexMap<Atom, Rc<FragmentDefinition>>,
+    pub queries: Vec<Rc<GenericOperation>>,
+    pub mutations: Vec<Rc<GenericOperation>>
 }
 
-impl<'a> ExecutableDocument<'a> {
+impl ExecutableDocument {
     pub fn new(err: &mut ErrorCollector,
-        definitions: &'a Vec<graphql_parser::query::Definition<'a, String>>, model_name: &str,
-        schema: &'a validated_model::Schema) -> Self {
+        definitions: Vec<graphql_parser::query::Definition<'_, String>>, model_name: &str,
+        schema: &Rc<validated_model::Schema>) -> Rc<Self> {
 
         let name = to_snake_case(model_name);
         //     if model_name.ends_with(".graphql") {
@@ -1165,12 +1349,12 @@ impl<'a> ExecutableDocument<'a> {
                             }
                         },
                         graphql_parser::query::OperationDefinition::Query(query) => {
-                            if let  Ok(query) = GenericOperation::from_query(err, &query, schema) {
+                            if let  Ok(query) = GenericOperation::from_query(err, query, schema) {
                                 queries.push(query);
                             }
                         },
                         graphql_parser::query::OperationDefinition::Mutation(mutation) => {
-                            if let Ok(mutation) = GenericOperation::from_mutation(err, &mutation, schema) {
+                            if let Ok(mutation) = GenericOperation::from_mutation(err, mutation, schema) {
                                 mutations.push(mutation);
                             }
                         },
@@ -1181,19 +1365,19 @@ impl<'a> ExecutableDocument<'a> {
                     }
                 },
                 graphql_parser::query::Definition::Fragment(fragment_definition) => {
-                    if let Ok(fragment) = FragmentDefinition::new(err, &fragment_definition, schema) {
+                    if let Ok(fragment) = FragmentDefinition::new(err, fragment_definition, schema) {
                         fragments.insert(fragment.name.clone(), fragment);
                     }
                 },
             }
         }
 
-        ExecutableDocument {
-                name,
+        Rc::new(ExecutableDocument {
+                name: intern(name),
                 fragments,
                 queries,
                 mutations,
-            }
+            })
     }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
@@ -1201,11 +1385,31 @@ impl<'a> ExecutableDocument<'a> {
         {
             let mut out = out.indent();
 
+            writeln!(out, "fragments {{")?;
+            {
+                let mut out = out.indent();
+
+                for query in self.fragments.values() {
+                    query.print(&mut out)?;
+                }
+            }
+            writeln!(out, "}}")?;
+
             writeln!(out, "queries {{")?;
             {
                 let mut out = out.indent();
 
                 for query in &self.queries {
+                    query.print(&mut out)?;
+                }
+            }
+            writeln!(out, "}}")?;
+
+            writeln!(out, "mutations {{")?;
+            {
+                let mut out = out.indent();
+
+                for query in &self.mutations {
                     query.print(&mut out)?;
                 }
             }
@@ -1273,14 +1477,14 @@ impl<'a> ExecutableDocument<'a> {
 
 
 // #[derive(Debug)]
-// struct ObjectReferenceList<'a> {
+// struct ObjectReferenceList {
 //     schema: &'a Schema,
 //     names: Vec<String>,
 // }
 
-// impl<'a> IntoIterator for &'a ObjectReferenceList<'a> {
+// impl IntoIterator for &'a ObjectReferenceList {
 //     type Item = &'a Object;
-//     type IntoIter = ObjectReferenceListItertor<'a>;
+//     type IntoIter = ObjectReferenceListItertor;
     
 //     fn into_iter(self) -> Self::IntoIter {
 //         ObjectReferenceListItertor {
@@ -1291,13 +1495,13 @@ impl<'a> ExecutableDocument<'a> {
 //     }
 // }
 
-// struct ObjectReferenceListItertor<'a> {
-//     list: &'a ObjectReferenceList<'a>,
-//     // iter: std::slice::Iter<'a, String>,
+// struct ObjectReferenceListItertor {
+//     list: &'a ObjectReferenceList,
+//     // iter: std::slice::Iter<'_, String>,
 //     index: usize,
 // }
 
-// impl<'a> Iterator for ObjectReferenceListItertor<'a> {
+// impl Iterator for ObjectReferenceListItertor {
 //     type Item = &'a Object;
 
 //     fn next(&mut self) -> Option<Self::Item> {        
@@ -1328,9 +1532,9 @@ impl<'a> ExecutableDocument<'a> {
 //     pub names: Vec<String>,
 // }
 
-// impl<'a> IntoIterator for &'a InterfaceReferenceList {
+// impl IntoIterator for &'a InterfaceReferenceList {
 //     type Item = &'a Interface;
-//     type IntoIter = InterfaceReferenceListItertor<'a>;
+//     type IntoIter = InterfaceReferenceListItertor;
     
 //     fn into_iter(self) -> Self::IntoIter {
 //         InterfaceReferenceListItertor {
@@ -1341,13 +1545,13 @@ impl<'a> ExecutableDocument<'a> {
 //     }
 // }
 
-// pub struct InterfaceReferenceListItertor<'a> {
+// pub struct InterfaceReferenceListItertor {
 //     list: &'a InterfaceReferenceList,
-//     // iter: std::slice::Iter<'a, String>,
+//     // iter: std::slice::Iter<'_, String>,
 //     index: usize,
 // }
 
-// impl<'a> Iterator for InterfaceReferenceListItertor<'a> {
+// impl Iterator for InterfaceReferenceListItertor {
 //     type Item = &'a Interface;
 
 //     fn next(&mut self) -> Option<Self::Item> {        
