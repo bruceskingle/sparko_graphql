@@ -1,6 +1,7 @@
 type Query {
   oneOfEverything: OneOfEverything,
   viewer: AccountUserType,
+  meters: [Meter]
 }
 
 
@@ -152,4 +153,23 @@ type Film implements Node {
 
   """The opening paragraphs at the beginning of this film."""
   openingCrawl: String
+}
+
+
+
+interface Meter {
+  id: ID!
+  serialNumber: String!
+}
+
+type GasMeter implements Meter {
+  id: ID!
+  serialNumber: String!
+  mprn: String
+}
+
+type ElectricityMeter implements Meter {
+  id: ID!
+  serialNumber: String!
+  mpan: String
 }

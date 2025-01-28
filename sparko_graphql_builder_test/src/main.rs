@@ -14,16 +14,12 @@ mod example {
     include!(concat!(env!("OUT_DIR"), "/example.rs"));
 }
 
-mod swapi {
-    include!(concat!(env!("OUT_DIR"), "/swapi.rs"));
-}
-
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world");
 
-    // let query = swapi::get_luke::Query {
+    let query = example::get_luke::Query {
 
     // };
     // let x: swapi::get_luke::Response;
