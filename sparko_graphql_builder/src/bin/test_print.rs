@@ -18,6 +18,8 @@ fn main()  -> Result<(), Box<dyn Error>> {
         .with_query("../sparko_graphql_builder_test/graphql/example/get-luke.graphql", "get-luke")
         .with_query("../sparko_graphql_builder_test/graphql/example/get-logged-in-user.graphql", "get-logged-in-user")
         .with_query("../sparko_graphql_builder_test/graphql/example/get-meters.graphql", "meters")
+        .with_print(true)
+        .with_generate(false)
         .build()?;
 
 
@@ -27,11 +29,15 @@ fn main()  -> Result<(), Box<dyn Error>> {
         .with_query("../sparko_graphql_builder_test/graphql/swapi/get-person.graphql", "person")
         .with_query("../sparko_graphql_builder_test/graphql/swapi/get-luke-strikes-back.graphql", "strikes")
         .with_query("../sparko_graphql_builder_test/graphql/swapi/fragment.graphql", "fragment")
+        .with_print(true)
+        .with_generate(false)
         .build()?;
 
     sparko_graphql_builder::builder("octopus")
         .with_schema("../sparko_graphql_builder_test/graphql/octopus/schema.graphql")
         .with_query("../sparko_graphql_builder_test/graphql/octopus/main.graphql", "main")
+        .with_print(true)
+        .with_generate(false)
         .build()?;
     Ok(())
 }

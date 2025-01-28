@@ -324,7 +324,9 @@ impl Write for Output<'_> {
 
 enum BaseOutput {
     File(BufWriter<File>),
-    #[cfg(test)]
+    Stdout,
+
+#[cfg(test)]
     Buffer(Vec<u8>),
 }
 
@@ -333,8 +335,8 @@ impl Display for BaseOutput {
 
         writeln!(f, "Output")?;
         match self {
-            BaseOutput::File(_) => {
-            }
+            BaseOutput::File(_) => {},
+            BaseOutput::Stdout => {},
             #[cfg(test)]
             BaseOutput::Buffer(out) => {
                 writeln!(f, "    Output")?;
@@ -353,6 +355,7 @@ impl Write for BaseOutput {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             BaseOutput::File(out) => out.write(buf),
+            BaseOutput::Stdout => std::io::stdout().write(buf),
             #[cfg(test)]
             BaseOutput::Buffer(out) => out.write(buf),
         }
@@ -362,6 +365,7 @@ impl Write for BaseOutput {
         
         match self {
             BaseOutput::File(out) => out.flush(),
+            BaseOutput::Stdout => std::io::stdout().flush(),
             #[cfg(test)]
             BaseOutput::Buffer(out) => out.flush(),
         }
@@ -378,9 +382,12 @@ impl Write for BaseOutput {
 // }
 
 impl BaseOutput {
-
     pub fn from_file(file: File) -> BaseOutput {
         BaseOutput::File(BufWriter::new(file))
+    }
+
+    pub fn from_stdout() -> BaseOutput {
+        BaseOutput::Stdout
     }
 
     pub fn indent(&mut self) -> Output {
@@ -393,7 +400,6 @@ impl BaseOutput {
 }
 
 #[cfg(test)]
-
 impl BaseOutput {
     pub fn new() -> BaseOutput {
         BaseOutput::Buffer(Vec::new())
@@ -404,6 +410,8 @@ pub struct Builder {
     model_name: String,
     schema_file_name: Option<String>,
     query_file_names: Vec<(String, String)>,
+    print: bool,
+    generate: bool,
 }
 
 pub fn builder(model_name: impl Into<String>) -> Builder {
@@ -411,6 +419,8 @@ pub fn builder(model_name: impl Into<String>) -> Builder {
         model_name: model_name.into(),
         schema_file_name: None,
         query_file_names: Vec::new(),
+        print: false,
+        generate: true,
     }
 }
 
@@ -429,6 +439,18 @@ impl Builder {
 
         self
     }
+
+    pub fn with_print(&mut self, value: bool) -> &mut Builder {
+        self.print = value;
+
+        self
+    }
+
+    pub fn with_generate(&mut self, value: bool) -> &mut Builder {
+        self.generate = value;
+
+        self
+    }
     
     pub fn build(&mut self) -> Result<String, Error> {
         let out_dir = if let Some(dir) = env::var_os("OUT_DIR") {
@@ -441,7 +463,13 @@ impl Builder {
         let dest_path_string = format!("{}", dest_path.to_string_lossy());
 
         let file = File::create(dest_path)?;
-        let mut base_out: BaseOutput = BaseOutput::from_file(file);
+        let mut base_out: BaseOutput = if self.generate {
+            BaseOutput::from_file(file)
+        }
+        else {
+            BaseOutput::from_stdout()
+        };
+
         let mut out = base_out.indent();
 
         if let Some(schema_file_name) = &self.schema_file_name {
@@ -478,9 +506,12 @@ impl Builder {
                     return Err(error);
                 },
             };
-            writeln!(out, "/* Parsed Schema *********************************************************************************************")?;
-            parsed_schema.print(&mut out)?;
-            writeln!(out, " * *********************************************************************************************/")?;
+
+            if self.print {
+                writeln!(out, "/* Parsed Schema *********************************************************************************************")?;
+                parsed_schema.print(&mut out)?;
+                writeln!(out, " * *********************************************************************************************/")?;
+            }
 
             let validated_schema = match validated_model::Schema::new(&mut err, &parsed_schema) {
                 Ok(result) => result,
@@ -490,69 +521,29 @@ impl Builder {
                 },
             };
 
-            writeln!(out, "/* Validated Schema *********************************************************************************************")?;
-            validated_schema.print(&mut out)?;
-            writeln!(out, " * *********************************************************************************************/")?;
 
-            base.report(&mut out);
+            if self.print {
+                writeln!(out, "/* Validated Schema *********************************************************************************************")?;
+                validated_schema.print(&mut out)?;
+                writeln!(out, " * *********************************************************************************************/")?;
+            }
 
-            writeln!(out, 
-                r#"
+
+            if self.print || self.generate {
+                base.report(&mut out);
+            }
+
+
+            if self.generate {
+                writeln!(out, 
+                    r#"
 pub mod {} {{
 use display_json::DisplayAsJsonPretty;
 use serde::{{Deserialize, Serialize}};
 "#, to_snake_case(&self.model_name)
-            )?;
-    
-            // let mut query_string_vec = Vec::new();
+                )?;
+            }
 
-            // for (query_file_name, query_model_name) in &self.query_file_names 
-            // {
-            //     let query_string = match fs::read_to_string(query_file_name) {
-            //         Ok(str) => Ok(str),
-            //         Err(err) => {
-            //             Err(Error::FileReadError { file_name: query_file_name.clone(), reason: err })
-            //         },
-            //     }?;
-
-            //     query_string_vec.push((query_string, query_model_name));
-            // }
-
-            // let mut query_ast_vec = Vec::new();
-
-            // for (query_string, query_model_name) in &query_string_vec {
-            //     let parse_result = parse_query::<String>(&query_string);
-
-            //     match parse_result {
-            //         Ok(query_ast) => {
-            //             query_ast_vec.push((query_ast, query_model_name));
-            //         },
-            //         Err(parse_error) => {
-            //             // let msg = format!("Query syntax error: {}", parse_error);
-            //             err.error(BuildError::QuerySyntaxError(parse_error));
-            //             // return Err(Error::BuildFailed(msg))
-            //         },
-            //     };
-            // }
-
-            // let mut query_parsed_model_vec = Vec::new();
-
-            // for (query_ast, query_model_name) in &query_ast_vec {
-            //     let query_parsed_model = parsed_model::ExecutableDocument::new(&mut err, &query_ast.definitions, query_model_name, &validated_schema);
-                
-            //     query_parsed_model_vec.push(query_parsed_model);
-            // }
-
-            // for query_parsed_model
-
-
-            // let mut executable_documents = Vec::new();
-
-            
-
-            // bar(&self.query_file_names, &validated_schema, out);
-
-            // let (query_file_name, query_model_name) = &self.query_file_names.get(0).unwrap();
             for (query_file_name, query_model_name) in &self.query_file_names 
             {
                 let query_string = match fs::read_to_string(query_file_name) {
@@ -570,20 +561,36 @@ use serde::{{Deserialize, Serialize}};
                 
                 let parse_result = parse_query::<String>(&query_string);
 
+                if self.print {
+                    writeln!(out, "/* Query *********************************************************************************************")?;
+                    writeln!(out, "{}", query_string)?;
+                    writeln!(out, " * *********************************************************************************************/")?;
+                }
+
                 match parse_result {
                     Ok(query_ast) => {
                         let query_parsed_model = parsed_model::ExecutableDocument::new(&mut err, query_ast.definitions, query_model_name, &validated_schema);
                 
-                        // writeln!(out, "/* *********************************************************************************************")?;
-                        // query_parsed_model.print(&mut out)?;
-                        // writeln!(out, " * *********************************************************************************************/")?;
+                        if self.print {
+                            writeln!(out, "/* Parsed ExecutableDocument *********************************************************************************************")?;
+                            query_parsed_model.print(&mut out)?;
+                            writeln!(out, " * *********************************************************************************************/")?;
+                        }
                 
                         // let validated_executable = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema)?;
                             
                         // validated_executable.generate(&mut out, &validated_schema)?;
                 
                         if let Ok(validated_executable) = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema) {
-                            validated_executable.generate(&mut out, &validated_schema)?;
+                            if self.print {
+                                writeln!(out, "/* Validated ExecutableDocument *********************************************************************************************")?;
+                                validated_executable.print(&mut out)?;
+                                writeln!(out, " * *********************************************************************************************/")?;
+                            }
+
+                            if self.generate {
+                                validated_executable.generate(&mut out, &validated_schema)?;
+                            }
 
                             // drop(validated_executable);
                         }
@@ -596,134 +603,23 @@ use serde::{{Deserialize, Serialize}};
                 };
     
                 base.report(&mut out)?;
-    
-                
-                println!("query_string={}", query_string);
             }
-
-
-
-
-
-
-
-
-
-
             
-            writeln!(out, 
-                r#"
+            if self.generate {
+                writeln!(out, 
+                    r#"
 }} // End model {}
 "#, to_snake_case(&self.model_name)
-            )?;
+                )?; 
+            }
         }
         else {
             return Err(Error::BuildFailed(format!("No schema defined")));
         };
 
-        
-
         Ok(dest_path_string)
     }
-
-    // fn do_build_schema<'p>(&'p self, err: &mut ErrorCollector, schema: &'p str) -> Result<(graphql_parser::schema::Document<'p, String>, parsed_model::Schema<'p>, validated_model::Schema), Error> {
-
-    //     let ast = match parse_schema::<'p, String>(schema) {
-    //         Ok(ast) => ast,
-    //         Err(parse_error) => {
-    //             let msg = format!("Schema syntax error: {}", parse_error);
-    //             err.error(BuildError::SchemaSyntaxError(parse_error));
-    //             return Err(Error::BuildFailed(msg))
-    //         },
-    //     };
-    //     // let mut model = Schema::new(err, ast)?;
-    //     // model.validate(err);
-
-    //     let parsed_schema = parsed_model::Schema::new(err, &ast)?;
-    //     // writeln!(out, "/* Parsed Model *********************************************************************************************")?;
-    //     // model.print(out)?;
-    //     // writeln!(out, " * *********************************************************************************************/")?;
-
-    //     Ok((ast, parsed_schema, validated_model::Schema::new(err, &parsed_schema)?))
-
-    //     // Ok(model)
-    // }
-
-    // fn do_build_query(&self, err: &mut ErrorCollector,  schema: &validated_model::Schema, query: &str, model_name: &str) -> Result<validated_model::ExecutableDocument, Error> {
-    //     // let ast = parse_query::<String>(query)?.to_owned();
-
-    //     let ast = match parse_query::<String>(query) {
-    //         Ok(ast) => ast,
-    //         Err(parse_error) => {
-    //             let msg = format!("Query syntax error: {}", parse_error);
-    //             err.error(BuildError::QuerySyntaxError(parse_error));
-    //             return Err(Error::BuildFailed(msg))
-    //         },
-    //     };
-
-    //     let mut parsed_model = parsed_model::ExecutableDocument::new(err, ast.definitions, model_name, schema);
-        
-    //     // writeln!(out, "/* *********************************************************************************************")?;
-    //     // model.print(out)?;
-    //     // writeln!(out, " * *********************************************************************************************/")?;
-
-    //     // model.validate(err)?
-
-    //     validated_model::ExecutableDocument::new(err, parsed_model, schema)
-        
-    // }
 }
-
-// fn bar(query_file_names: &[(String, String)], validated_schema: &validated_model::Schema<'_>, out: Output<'_>) -> Result<(), Error>{
-//     for (query_file_name, query_model_name) in query_file_names 
-//             {
-//                 let query_string = match fs::read_to_string(query_file_name) {
-//                     Ok(str) => Ok(str),
-//                     Err(err) => {
-//                         Err(Error::FileReadError { file_name: query_file_name.clone(), reason: err })
-//                     },
-//                 }?;
-                        
-//                 // Tell Cargo that if the given file changes, to rerun this build script.
-//                 println!("cargo::rerun-if-changed={}", query_file_name);
-                
-//                 let mut base = BaseErrorCollector::new(query_file_name.clone());
-//                 let mut err = ErrorCollector::new(&mut base);
-                
-//                 let parse_result = parse_query::<String>(&query_string);
-
-//                 match parse_result {
-//                     Ok(query_ast) => {
-//                         let query_parsed_model = parsed_model::ExecutableDocument::new(&mut err, &query_ast.definitions, query_model_name, &validated_schema);
-                
-//                         // writeln!(out, "/* *********************************************************************************************")?;
-//                         // query_parsed_model.print(&mut out)?;
-//                         // writeln!(out, " * *********************************************************************************************/")?;
-                
-//                         // let validated_executable = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema)?;
-                            
-//                         // validated_executable.generate(&mut out, &validated_schema)?;
-                
-//                         if let Ok(validated_executable) = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema) {
-//                             validated_executable.generate(&mut out, &validated_schema)?;
-
-//                             drop(validated_executable);
-//                         }
-//                     },
-//                     Err(parse_error) => {
-//                         // let msg = format!("Query syntax error: {}", parse_error);
-//                         err.error(BuildError::QuerySyntaxError(parse_error));
-//                         // return Err(Error::BuildFailed(msg))
-//                     },
-//                 };
-    
-//                 base.report(&mut out)?;
-    
-                
-//                 println!("query_string={}", query_string);
-//             }
-//             Ok(())
-// }
 
 #[cfg(test)]
 mod tests {
