@@ -37,10 +37,10 @@ fn build()  -> Result<(), Box<dyn Error>> {
         // .with_query("graphql/query/swapi/fragment.graphql", "fragment")
         .build()?;
 
-    // sparko_graphql_builder::builder("octopus")
-    //     .with_schema("graphql/octopus/schema.graphql")
-    //     .with_query("graphql/octopus/main.graphql", "main")
-    //     .build()?;
+    sparko_graphql_builder::builder("octopus")
+        .with_schema("graphql/octopus/schema.graphql")
+        .with_query("graphql/octopus/main.graphql", "main")
+        .build()?;
 
     // panic!("Panic test!"); 
     Ok(())

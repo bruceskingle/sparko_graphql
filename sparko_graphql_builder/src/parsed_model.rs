@@ -995,7 +995,7 @@ impl GenericOperation {
     }
 
     pub fn from_mutation(err: &mut ErrorCollector, query: graphql_parser::query::Mutation<'_, String>, schema: &validated_model::Schema ) -> Result<Rc<GenericOperation>, Error> {
-        Self::new(err, OperationType::Query, query.name, query.position, query.selection_set, query.variable_definitions, schema)
+        Self::new(err, OperationType::Mutation, query.name, query.position, query.selection_set, query.variable_definitions, schema)
     }
 
     pub fn new(err: &mut ErrorCollector, operation: OperationType, name: Option<String>, position: Pos, selection_set: graphql_parser::query::SelectionSet<'_, String>, 

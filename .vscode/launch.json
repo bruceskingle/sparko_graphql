@@ -86,15 +86,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'main.rs'",
+            "name": "Debug executable 'test_swapi'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=main",
+                    "--bin=test_swapi",
                     "--package=sparko_graphql_builder_test"
                 ],
                 "filter": {
-                    "name": "test_build",
+                    "name": "test_swapi",
                     "kind": "bin"
                 }
             },

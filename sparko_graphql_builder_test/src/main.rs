@@ -19,7 +19,7 @@ mod example {
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world");
 
-    let query = example::get_luke::Query {
+    // let query = example::luke::Query {
 
     // };
     // let x: swapi::get_luke::Response;

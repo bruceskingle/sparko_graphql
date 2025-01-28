@@ -75,6 +75,17 @@ impl DefinedType {
             DefinedType::InputObject(name) => to_pascal_case(name),
         }
     }
+    
+    fn graphql_type(&self) -> &str {
+        match self {
+            DefinedType::Scalar(name) => name,
+            DefinedType::Object(name) => name,
+            DefinedType::Interface(name) => name,
+            DefinedType::Union(name) => name,
+            DefinedType::Enum(name) => name,
+            DefinedType::InputObject(name) => name,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -164,7 +175,7 @@ impl Type {
         match self {
             Type::Scalar(scalar_type) => {
                 match scalar_type {
-                    ScalarType::DefinedType(defined_type) => defined_type.name().to_string(),
+                    ScalarType::DefinedType(defined_type) => defined_type.graphql_type().to_string(),
                     ScalarType::BuiltinType(builtin_type) => builtin_type.name().to_string(),
                 }
             },
@@ -437,6 +448,14 @@ impl Object {
 
 
 fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&SelectionList>, alias: &Option<Atom>, name: &Atom, context: &dyn Context, is_input: bool) -> Result<(), Error> {
+    let name = if let Some(alias) = alias {
+        alias
+    }
+    else {
+        name
+    };
+    let rust_name = to_pascal_case(name);
+    
     if let Some(selections) = selections {
         let abstract_name = Rc::new(format!("Abstract{}", to_pascal_case(name)));
         let variants = selections.get_variants(&abstract_name, schema, executable_document, context)?;
@@ -483,18 +502,6 @@ fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_documen
         }
         else {
             writeln!(out, "/* No variants */")?;
-
-
-
-            let rust_name = if let Some(alias) = &alias {
-                to_pascal_case(alias)
-                // format!("{}{}", to_pascal_case(alias),to_pascal_case(&self.name))
-            }
-            else {
-                to_pascal_case(name)
-            };
-        
-        
             
             writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
             writeln!(out, "#[serde(rename = \"{}\")]", name)?;
@@ -510,27 +517,17 @@ fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_documen
             writeln!(out, "}}")?;
             writeln!(out, "")?;
 
-            selections.generate_structs(out, context, schema, executable_document, true, &field_map, alias)?;
+            selections.generate_structs(out, context, schema, executable_document, true, &field_map)?;
         }
     }
     else {
-        let rust_name = if let Some(alias) = &alias {
-            to_pascal_case(alias)
-            // format!("{}{}", to_pascal_case(alias),to_pascal_case(&self.name))
-        }
-        else {
-            to_pascal_case(name)
-        };
-    
-    
-        
         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
         writeln!(out, "#[serde(rename = \"{}\")]", name)?;
-        writeln!(out, "pub struct {} {{", rust_name)?;
+        writeln!(out, "/* BRUCE */ pub struct {} {{", rust_name)?;
 
         for field in context.fields().values() {
             writeln!(out, "    #[serde(rename = \"{}\")]", &field.parsed.name)?;
-            writeln!(out, "    pub {}_: {},", to_snake_case(&name), field.ty.rust_type(false))?;
+            writeln!(out, "    pub {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(false))?;
         }
     
         writeln!(out, "}}")?;
@@ -544,7 +541,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_documen
                 writeln!(out, "pub fn builder() -> {}Builder {{", rust_name)?;
                 writeln!(out, "    {}Builder {{", rust_name)?;
                 for field in context.fields().values() {
-                    writeln!(out, "        {}_: None,", to_snake_case(&name))?;
+                    writeln!(out, "        {}_: None,", to_snake_case(&field.parsed.name))?;
                 }
                 writeln!(out, "    }}")?;
                 writeln!(out, "}}")?;
@@ -557,7 +554,7 @@ fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_documen
             writeln!(out, "pub struct {}Builder {{", rust_name)?;
 
             for field in context.fields().values() {
-                writeln!(out, "    {}_: {},", to_snake_case(&name), field.ty.rust_type(false))?;
+                writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(false))?;
             }
         
             writeln!(out, "}}")?;
@@ -568,11 +565,11 @@ fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_documen
                 let mut out = out.indent();
 
                 for field in context.fields().values() {
-                    writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&name), field.ty.rust_type(true))?;
+                    writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&field.parsed.name), field.ty.rust_type(true))?;
                     {
                         let mut out = out.indent();
 
-                        writeln!(out, "self.{}_ = Some(value);", to_snake_case(&name))?;
+                        writeln!(out, "self.{}_ = Some(value);", to_snake_case(&field.parsed.name))?;
                         writeln!(out, "self")?;
                     }
                     writeln!(out, "}}")?;
@@ -584,8 +581,8 @@ fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_documen
 
                     for field in context.fields().values() {
                         if let Type::Required(_) = field.ty {
-                            writeln!(out, "if let None = self.{}_ {{", to_snake_case(&name))?;
-                            writeln!(out, "    return Err(sparko_graphql::error::Error::MissingRequiredValueError(\"{}\"))", name)?;
+                            writeln!(out, "if let None = self.{}_ {{", to_snake_case(&field.parsed.name))?;
+                            writeln!(out, "    return Err(sparko_graphql::error::Error::MissingRequiredValueError(\"{}\"))", field.parsed.name)?;
                             writeln!(out, "}}")?;
                         }
                     }
@@ -596,10 +593,10 @@ fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_documen
     
                         for field in context.fields().values() {
                             if let Type::Required(_) = field.ty {
-                                writeln!(out, "{}_: self.{}_.unwrap(),", to_snake_case(&name), to_snake_case(&name))?;
+                                writeln!(out, "{}_: self.{}_.unwrap(),", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
                             }
                             else {
-                                writeln!(out, "{}_: self.{}_,", to_snake_case(&name), to_snake_case(&name))?;
+                                writeln!(out, "{}_: self.{}_,", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
                             }
                         }
                         writeln!(out, "}})")?;
@@ -1531,7 +1528,13 @@ impl SelectionList {
 
             match selection {
                 Selection::Field(selection_field) => {
-                    field_map.insert(selection_field.parsed.name.clone(), selection_field.clone());
+                    let name = if let Some(alias) = &selection_field.parsed.alias {
+                        alias
+                    }
+                    else {
+                        &selection_field.parsed.name
+                    };
+                    field_map.insert(name.clone(), selection_field.clone());
                 },
                 Selection::FragmentSpread(fragment_spread) => {
                     let fragment = executable_document.get_fragment(&fragment_spread.parsed.name)?;
@@ -1546,13 +1549,20 @@ impl SelectionList {
         Ok(())
     }
     
-    fn generate_structs(&self, out: &mut Output<'_>, context: &dyn Context, schema: &Rc<Schema>, executable_document: &ExecutableDocument, maybe_optional: bool, field_map: &IndexMap<Atom, Rc<SelectionField>>, alias: &Option<Atom>) -> Result<(), Error> {
+    fn generate_structs(&self, out: &mut Output<'_>, context: &dyn Context, schema: &Rc<Schema>, executable_document: &ExecutableDocument, maybe_optional: bool, field_map: &IndexMap<Atom, Rc<SelectionField>>) -> Result<(), Error> {
         for (name, selection_field) in field_map {
             if name.as_ref() == TYPE_NAME {}
             else {
-                if let Some(field) = context.fields().get(name) {
+                if let Some(field) = context.fields().get(&selection_field.parsed.name) {
                     if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
-                        defined_type.generate(out, schema, executable_document, Some(&selection_field.selections), alias)?;
+                        let alias = if name == &selection_field.parsed.name {
+                            None
+                        }
+                        else {
+                            Some(name.clone())
+                        };
+
+                        defined_type.generate(out, schema, executable_document, Some(&selection_field.selections), &alias)?;
                     }
                 }
                 else {
@@ -1565,7 +1575,7 @@ impl SelectionList {
     
     fn generate_fields(&self, out: &mut Output<'_>, context: &dyn Context, schema: &Rc<Schema>, executable_document: &ExecutableDocument, maybe_optional: bool, field_map: &IndexMap<Atom, Rc<SelectionField>>) -> Result<(), Error> {
         
-
+        writeln!(out, "// generate_fields for SelectionList {}", &field_map.len())?;
         for field in field_map.values() {
             field.generate_fields(out, context, schema, executable_document, maybe_optional)?;
         }
@@ -1840,7 +1850,7 @@ impl SelectionField {
             };
 
             writeln!(out, "#[serde(rename = \"{}\")]", &name)?;
-            writeln!(out, "/* HERE1 */ pub {}_: {},", to_snake_case(&name), rust_type)?;
+            writeln!(out, "pub {}_: {},", to_snake_case(&name), rust_type)?;
         }
         Ok(())
     }
@@ -2079,7 +2089,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                 writeln!(out, "const REQUEST_NAME: &str = \"{}\";", self.parsed.name)?;
 
                 if self.variables.is_empty() {
-                    writeln!(out, "const {}: &str = r#\"{} {} {{", self.parsed.operation.to_upper_case(), self.parsed.operation.to_lower_case(), self.parsed.name)?;
+                    writeln!(out, "const {}: &str = r#\"{} {}", self.parsed.operation.to_upper_case(), self.parsed.operation.to_lower_case(), self.parsed.name)?;
                 }
                 else {
                     writeln!(out, "const {}: &str = r#\"{} {}(", self.parsed.operation.to_upper_case(), self.parsed.operation.to_lower_case(), self.parsed.name)?;
@@ -2192,7 +2202,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
             writeln!(out, "impl NewGraphQLResponse for Response {{")?;
             writeln!(out, "}}")?;
             
-            self.selections.generate_structs(&mut out, context, schema, executable_document, true, &field_map, &None)?;
+            self.selections.generate_structs(&mut out, context, schema, executable_document, true, &field_map)?;
             // for selection in &self.selections.selections {
             //     // let context: IndexMap<String, Field> = schema.query.get(schema).fields;
 
