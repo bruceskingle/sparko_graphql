@@ -15,7 +15,7 @@ async fn test<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(query: &Q, request_m
         );
 
         if let Some(request_manager) = request_manager {
-            let response = request_manager.new_call(query, None).await?;
+            let response = request_manager.call(query, None).await?;
             println!("Result {}", serde_json::to_string_pretty(&response)?);
         }
 

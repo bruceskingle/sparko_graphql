@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 
-use crate::{GraphQLType, GraphQLQueryParams, TokenManager};
+use crate::{GraphQLQueryParams, GraphQLType, NewGraphQLQuery, NewGraphQLResponse, TokenManager};
 
 use crate::RequestManager;
 
@@ -43,6 +43,13 @@ impl<M: TokenManager> AuthenticatedRequestManager<M> {
             request_manager,
             token_manager,
         })
+    }
+
+    pub async fn call<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(&mut self, query: &Q) 
+    -> Result<R, Box<dyn std::error::Error>> {
+        let token = &self.token_manager.get_authenticator().await?;
+
+        self.request_manager.call(query, Some(token)).await
     }
 
     pub async fn query<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&mut self, request_name: &str, query_name: &str, params: P) 

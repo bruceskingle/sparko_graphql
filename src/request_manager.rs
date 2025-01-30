@@ -118,16 +118,16 @@ impl RequestManager {
         };
 
 
-        // println!("NEW query {}", &query);
+        println!("DEPRECATED query >{}<", get_query());
 
         let payload = Request {
             query: get_query(),
             variables: params.get_variables()?,
             operation_name: request_name,
         };
-        // let serialized = serde_json::to_string(&payload).unwrap();
+        let serialized = serde_json::to_string(&payload).unwrap();
 
-        // println!("NEW payload {}", &serialized);
+        println!("DEPRECATED_ payload >{}<", &serialized);
         // println!("NEW variables {}", params.get_variables()?);
                
 
@@ -162,7 +162,7 @@ impl RequestManager {
 
         let response_json: serde_json::Value = response.json().await?;
 
-        // println!("response {}", serde_json::to_string_pretty(&response_json)?);
+        println!("DEPRECATED_response >{}<", serde_json::to_string_pretty(&response_json)?);
 
         let mut graphql_response: GraphQLResponse = serde_json::from_value(response_json)?;
 
@@ -195,7 +195,7 @@ impl RequestManager {
 
     }
 
-    pub async fn new_call<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>) 
+    pub async fn call<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>) 
     -> Result<R, Box<dyn std::error::Error>> {
 
         // println!("NEW query {}", &query);
@@ -243,11 +243,11 @@ impl RequestManager {
 
         let response_json: serde_json::Value = response.json().await?;
 
-        println!("response_json {}", serde_json::to_string_pretty(&response_json)?);
+        // println!("response_json {}", serde_json::to_string_pretty(&response_json)?);
 
         let graphql_response: GraphQLResponseStructure = serde_json::from_value(response_json)?;
 
-        println!("graphql_response {}", serde_json::to_string_pretty(&graphql_response)?);
+        // println!("graphql_response {}", serde_json::to_string_pretty(&graphql_response)?);
 
 
 

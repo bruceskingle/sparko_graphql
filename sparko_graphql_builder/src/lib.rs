@@ -1,6 +1,8 @@
 use graphql_parser::{parse_query, Pos};
 use graphql_parser::schema::parse_schema;
+use indexmap::IndexMap;
 use inflections::case::to_snake_case;
+use std::collections::HashSet;
 // use model::{ExecutableDocument, Schema};
 use std::fmt::Display;
 use std::fs::File;
@@ -184,8 +186,8 @@ impl BaseErrorCollector {
             writeln!(f, "//{} built OK", self.file_name)?;
         }
         else {
-            writeln!(f, "compile_warning!(\"{} built with Errors\");", self.file_name)?;
-            // writeln!(f, "compile_error!(\"{} built with Errors\");", self.file_name)?;
+            // writeln!(f, "compile_warning!(\"{} built with Errors\");", self.file_name)?;
+            writeln!(f, "compile_error!(\"{} built with Errors\");", self.file_name)?;
             writeln!(f, "/{}", STARS)?;
             for item in &self.errors {
                 writeln!(f, "    {}", item)?;
@@ -472,6 +474,16 @@ impl Builder {
 
         let mut out = base_out.indent();
 
+        if let Err(error) = self.do_build(&mut out) {
+            writeln!(out, "compile_warning!(\"Fatal build error {:?}\");", error)?;
+        }
+
+
+        Ok(dest_path_string)
+    }
+
+    fn do_build(&mut self, out: &mut Output<'_>) -> Result<(), Error> {
+
         if let Some(schema_file_name) = &self.schema_file_name {
             let schema_string = match fs::read_to_string(schema_file_name) {
                 Ok(str) => Ok(str),
@@ -509,7 +521,7 @@ impl Builder {
 
             if self.print {
                 writeln!(out, "/* Parsed Schema *********************************************************************************************")?;
-                parsed_schema.print(&mut out)?;
+                parsed_schema.print(out)?;
                 writeln!(out, " * *********************************************************************************************/")?;
             }
 
@@ -524,25 +536,18 @@ impl Builder {
 
             if self.print {
                 writeln!(out, "/* Validated Schema *********************************************************************************************")?;
-                validated_schema.print(&mut out)?;
+                validated_schema.print(out)?;
                 writeln!(out, " * *********************************************************************************************/")?;
             }
 
 
             if self.print || self.generate {
-                base.report(&mut out);
+                base.report(out);
             }
 
 
-            if self.generate {
-                writeln!(out, 
-                    r#"
-pub mod {} {{
-use display_json::DisplayAsJsonPretty;
-use serde::{{Deserialize, Serialize}};
-"#, to_snake_case(&self.model_name)
-                )?;
-            }
+
+            let mut dependencies: IndexMap<&str, (validated_model::ExecutableDocument, IndexMap<Atom, HashSet<Atom>>)> = IndexMap::new();
 
             for (query_file_name, query_model_name) in &self.query_file_names 
             {
@@ -573,23 +578,24 @@ use serde::{{Deserialize, Serialize}};
                 
                         if self.print {
                             writeln!(out, "/* Parsed ExecutableDocument *********************************************************************************************")?;
-                            query_parsed_model.print(&mut out)?;
+                            query_parsed_model.print(out)?;
                             writeln!(out, " * *********************************************************************************************/")?;
                         }
                 
                         // let validated_executable = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema)?;
                             
-                        // validated_executable.generate(&mut out, &validated_schema)?;
+                        // validated_executable.generate(out, &validated_schema)?;
                 
                         if let Ok(validated_executable) = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema) {
                             if self.print {
                                 writeln!(out, "/* Validated ExecutableDocument *********************************************************************************************")?;
-                                validated_executable.print(&mut out)?;
+                                validated_executable.print(out)?;
                                 writeln!(out, " * *********************************************************************************************/")?;
                             }
 
                             if self.generate {
-                                validated_executable.generate(&mut out, &validated_schema)?;
+                                let d = validated_executable.gather_dependencies(&validated_schema)?;
+                                dependencies.insert(query_model_name, (validated_executable, d));
                             }
 
                             // drop(validated_executable);
@@ -602,10 +608,49 @@ use serde::{{Deserialize, Serialize}};
                     },
                 };
     
-                base.report(&mut out)?;
+                base.report(out)?;
             }
-            
+
             if self.generate {
+                writeln!(out, 
+                    r#"
+pub mod {} {{
+use display_json::DisplayAsJsonPretty;
+use serde::{{Deserialize, Serialize}};
+"#, to_snake_case(&self.model_name)
+                )?;
+
+
+                writeln!(out, "// Dependencies {:?}", dependencies)?;
+
+                let mut all_dependencies: HashSet<Atom> = HashSet::new();
+
+                for (_name, (_validated_executable, d1)) in &dependencies {
+                    writeln!(out, "// Dependency name {:?}", _name)?;
+                    for (_name, d2) in d1 {
+
+                    writeln!(out, "//   d2 name {:?}", _name)?;
+                        for d3 in d2 {
+                            writeln!(out, "// d3 {:?}", d3)?;
+                            all_dependencies.insert(d3.clone());
+                        }
+                    }
+                }
+                writeln!(out, "// All Dependencies {:?}", all_dependencies)?;
+
+                for name in all_dependencies {
+                    if let Some(defined_type) = validated_schema.defined_types.get(&name) {
+                        defined_type.generate(out, &None)?;
+                    }
+                }
+
+                writeln!(out, "// Executable docs")?;
+
+                for (_name, (validated_executable, dependencies)) in &dependencies {
+                    validated_executable.generate(out, &validated_schema, dependencies)?;
+                }
+
+
                 writeln!(out, 
                     r#"
 }} // End model {}
@@ -617,7 +662,7 @@ use serde::{{Deserialize, Serialize}};
             return Err(Error::BuildFailed(format!("No schema defined")));
         };
 
-        Ok(dest_path_string)
+        Ok(())
     }
 }
 

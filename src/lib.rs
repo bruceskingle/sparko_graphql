@@ -284,7 +284,7 @@ impl Client {
         let serialized = serde_json::to_string(&payload).unwrap();
 
         println!("NEW payload {}", &serialized);
-        println!("NEW query {}", &query);
+        println!("NEW query ***************************************************\n{}******************************************\n", &query);
         println!("NEW variables {}", &variables);
 
         let mut request = self.reqwest_client.post(&self.url)

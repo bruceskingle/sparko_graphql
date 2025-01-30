@@ -1,10 +1,11 @@
+use std::collections::HashSet;
 use std::fmt::Display;
 use std::io::Write;
 use std::rc::Rc;
 
 use graphql_parser::Pos;
 use indexmap::IndexMap;
-use inflections::case::{to_snake_case, to_constant_case};
+use inflections::case::to_snake_case;
 
 use crate::parsed_model::{BuiltinType, DefinedTypeName, OperationType};
 use crate::utils::to_pascal_case;
@@ -13,6 +14,11 @@ use crate::{parsed_model, Output};
 
 const TYPE_NAME: &str = "__typename";
 pub type FieldMap = IndexMap<Atom, Rc<Field>>;
+
+pub trait SelectionContext {
+    fn get_executable_document<'a>() -> &'a ExecutableDocument;
+    fn get_selections<'a>() ->&'a SelectionList;
+}
 
 #[derive(Debug)]
 pub enum DefinedType {
@@ -53,14 +59,53 @@ impl DefinedType {
     //     self.defined_type_name().name()
     // }
 
-    pub fn generate(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&SelectionList>, alias: &Option<Atom>) -> Result<(), Error> {
+    pub fn generate(&self, out: &mut Output<'_>, schema: &Rc<Schema>, alias: &Option<Atom>) -> Result<(), Error> {
         match self {
-            DefinedType::Scalar(name) => schema.get_scalar(name)?.generate(out, schema),
-            DefinedType::Object(name) => schema.get_object(name)?.generate(out, schema, executable_document, selections, alias),
-            DefinedType::Interface(name) => schema.get_interface(name)?.generate(out, schema, executable_document, selections, alias),
-            DefinedType::Union(name) => schema.get_union(name)?.generate(out, schema, executable_document, selections, alias),
-            DefinedType::Enum(name) => schema.get_enum(name)?.generate(out, schema, executable_document, selections, alias),
-            DefinedType::InputObject(name) => schema.get_input_object(name)?.generate(out, schema, executable_document, selections, alias),
+            DefinedType::Scalar(name) => schema.get_scalar(name)?.generate(out),
+            DefinedType::Object(name) => schema.get_object(name)?.generate(out, alias),
+            DefinedType::Interface(name) => schema.get_interface(name)?.generate(out, alias),
+            DefinedType::Union(name) => schema.get_union(name)?.generate(out, alias),
+            DefinedType::Enum(name) => schema.get_enum(name)?.generate(out, alias),
+            DefinedType::InputObject(name) => schema.get_input_object(name)?.generate(out, alias),
+        }
+    }
+
+    pub fn generate_selection(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, alias: &Option<Atom>, dependencies: &HashSet<Atom>) -> Result<(), Error> {
+        match self {
+            DefinedType::Scalar(name) => Err(Error::FatalBuildError("Can't generate selections on Scalar")),
+            DefinedType::Object(name) => schema.get_object(name)?.generate_selection(out, schema, executable_document, selections, alias, dependencies),
+            DefinedType::Interface(name) => schema.get_interface(name)?.generate_selection(out, schema, executable_document, selections, alias, dependencies),
+            DefinedType::Union(name) => schema.get_union(name)?.generate_selection(out, schema, executable_document, selections, alias, dependencies),
+            DefinedType::Enum(name) => Err(Error::FatalBuildError("Can't generate selections on Enum")),
+            DefinedType::InputObject(name) => schema.get_input_object(name)?.generate_selection(out, schema, executable_document, selections, alias, dependencies),
+        }
+    }
+    
+    fn gather_selection_dependencies(&self, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+        match self {
+            DefinedType::Scalar(name) => {
+                dependencies.insert(name.clone());
+                Ok(())
+            },
+            DefinedType::Object(name) => schema.get_object(name)?.gather_selection_dependencies(schema, executable_document, selections, dependencies),
+            DefinedType::Interface(name) => schema.get_interface(name)?.gather_selection_dependencies(schema, executable_document, selections, dependencies),
+            DefinedType::Union(name) => schema.get_union(name)?.gather_selection_dependencies(schema, executable_document, selections, dependencies),
+            DefinedType::Enum(name) => {
+                dependencies.insert(name.clone());
+                Ok(())
+            },
+            DefinedType::InputObject(name) => schema.get_input_object(name)?.gather_selection_dependencies(schema, executable_document, selections, dependencies),
+        }
+    }
+    
+    fn gather_dependencies(&self, schema: &Rc<Schema>, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+        match self {
+            DefinedType::Scalar(_) => Ok(()),
+            DefinedType::Object(name) => schema.get_object(name)?.gather_dependencies(schema, dependencies),
+            DefinedType::Interface(name) => schema.get_interface(name)?.gather_dependencies(schema, dependencies),
+            DefinedType::Union(name) => schema.get_union(name)?.gather_dependencies(schema, dependencies),
+            DefinedType::Enum(_) => Ok(()),
+            DefinedType::InputObject(name) => schema.get_input_object(name)?.gather_dependencies(schema, dependencies),
         }
     }
     
@@ -76,6 +121,17 @@ impl DefinedType {
     }
     
     fn graphql_type(&self) -> &str {
+        match self {
+            DefinedType::Scalar(name) => name,
+            DefinedType::Object(name) => name,
+            DefinedType::Interface(name) => name,
+            DefinedType::Union(name) => name,
+            DefinedType::Enum(name) => name,
+            DefinedType::InputObject(name) => name,
+        }
+    }
+    
+    fn name(&self) -> &Rc<String> {
         match self {
             DefinedType::Scalar(name) => name,
             DefinedType::Object(name) => name,
@@ -243,6 +299,27 @@ pub enum TypeDefinition {
 }
 
 impl TypeDefinition {
+    pub fn generate(&self, out: &mut Output<'_>, alias: &Option<Atom>) -> Result<(), Error> {
+        match self {
+            TypeDefinition::Scalar(content) => content.generate(out),
+            TypeDefinition::Object(content) => content.generate(out, alias),
+            TypeDefinition::Interface(content) => content.generate(out, alias),
+            TypeDefinition::Union(content) => content.generate(out, alias),
+            TypeDefinition::Enum(content) => content.generate(out, alias),
+            TypeDefinition::InputObject(content) => content.generate(out, alias),
+        }
+    }
+    // pub fn generate_selection(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, alias: &Option<Atom>) -> Result<(), Error> {
+    //     match self {
+    //         TypeDefinition::Scalar(_) => Err(Error::FatalBuildError("Can't generate selections on Scalar")),
+    //         TypeDefinition::Object(content) => content.generate_selection(out, schema, executable_document, selections, alias),
+    //         TypeDefinition::Interface(content) => content.generate_selection(out, schema, executable_document, selections, alias),
+    //         TypeDefinition::Union(content) => content.generate_selection(out, schema, executable_document, selections, alias),
+    //         TypeDefinition::Enum(_) => Err(Error::FatalBuildError("Can't generate selections on Enum")),
+    //         TypeDefinition::InputObject(content) => content.generate_selection(out, schema, executable_document, selections, alias),
+    //     }
+    // }
+
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         match self {
             TypeDefinition::Scalar(content) => content.print(out),
@@ -309,7 +386,7 @@ impl Scalar {
         }))
     }
     
-    fn generate(&self, out: &mut Output<'_>, _schema: &Rc<Schema>) -> Result<(), Error> {
+    fn generate(&self, out: &mut Output<'_>) -> Result<(), Error> {
         writeln!(out, "type {} = {};", &self.rust_name, &self.rust_type)?;
         writeln!(out, "")?;
         Ok(())
@@ -396,14 +473,26 @@ impl Object {
             }))
     }
     
-    fn generate(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&SelectionList>, alias: &Option<Atom>) -> Result<(), Error> {
-        generate_struct(out, schema, executable_document, selections, alias, &self.parsed.name, self, self.is_input)
+    fn generate(&self, out: &mut Output<'_>, alias: &Option<Atom>) -> Result<(), Error> {
+        generate_struct(out, alias, &self.parsed.name, self, self.is_input)
+    }
+    
+    fn generate_selection(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, alias: &Option<Atom>, dependencies: &HashSet<Atom>) -> Result<(), Error> {
+        generate_struct_selection(out, schema, executable_document, selections, alias, &self.parsed.name, self, self.is_input, dependencies)
+    }
+    
+    fn gather_selection_dependencies(&self, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+        gather_struct_selection_dependencies(schema, executable_document, selections, &self.parsed.name, self, dependencies)
+    }
+    
+    fn gather_dependencies(&self, schema: &Rc<Schema>, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+        gather_struct_dependencies(schema,self, dependencies)
     }
 }
 
 
 
-fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&SelectionList>, alias: &Option<Atom>, name: &Atom, context: &dyn Context, is_input: bool) -> Result<(), Error> {
+fn generate_struct(out: &mut Output<'_>, alias: &Option<Atom>, name: &Atom, context: &dyn Context, is_input: bool) -> Result<(), Error> {
     let name = if let Some(alias) = alias {
         alias
     }
@@ -412,152 +501,206 @@ fn generate_struct(out: &mut Output<'_>, schema: &Rc<Schema>, executable_documen
     };
     let rust_name = to_pascal_case(name);
     
-    if let Some(selections) = selections {
-        let abstract_name = Rc::new(format!("Abstract{}", to_pascal_case(name)));
-        let variants = selections.get_variants(&abstract_name, schema, executable_document, context)?;
-        if variants.len() > 1 {
-            writeln!(out, "/* {} variants */", variants.len())?;
-            let base_type_name = to_pascal_case(name);
-            let base_member_name = to_snake_case(name);
-            writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-            writeln!(out, "pub enum {} {{", base_type_name)?;
-            for (name, _variant) in &variants {
-                writeln!(out, "  {}({}),", name, name)?;
-            }
-    
-            writeln!(out, "}}")?;
-            writeln!(out, "")?;
 
-            for (name, (context, selections)) in &variants {
-                let rust_name = to_pascal_case(&name);
+    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+    writeln!(out, "#[serde(rename = \"{}\")]", name)?;
+    writeln!(out, "/* BRUCE */ pub struct {} {{", rust_name)?;
 
-                writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-                writeln!(out, "#[serde(rename = \"{}\")]", name)?;
-                writeln!(out, "pub struct {} {{", rust_name)?;
-
-                if name.as_ref() != name.as_ref() {
-                    writeln!(out, "#[serde(flatten)]")?;
-                    // writeln!(out, "#[serde(rename = \"{}\")]", self.parsed.name)?;
-                    writeln!(out, "pub {}_: {},", base_member_name, base_type_name)?;
-                    
-                }
-                let mut field_map = IndexMap::new();
-                selections.gather_fields(&mut field_map, *context, schema, executable_document, true)?;
-
-                selections.generate_fields(out, *context, schema, executable_document, true, &field_map)?;
-
-                writeln!(out, "}}")?;
-                writeln!(out, "")?;
-            }
-        }
-        else {
-            writeln!(out, "/* No variants */")?;
-            
-            writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-            writeln!(out, "#[serde(rename = \"{}\")]", name)?;
-            writeln!(out, "pub struct {} {{", rust_name)?;
-
-
-
-            let mut field_map = IndexMap::new();
-            selections.gather_fields(&mut field_map, context, schema, executable_document, true)?;
-
-            selections.generate_fields(out, context, schema, executable_document, true, &field_map)?;
-    
-            writeln!(out, "}}")?;
-            writeln!(out, "")?;
-
-            selections.generate_structs(out, context, schema, executable_document, true, &field_map)?;
-        }
+    for field in context.fields().values() {
+        writeln!(out, "    #[serde(rename = \"{}\")]", &field.parsed.name)?;
+        writeln!(out, "    pub {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(false))?;
     }
-    else {
-        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
-        writeln!(out, "#[serde(rename = \"{}\")]", name)?;
-        writeln!(out, "/* BRUCE */ pub struct {} {{", rust_name)?;
 
-        for field in context.fields().values() {
-            writeln!(out, "    #[serde(rename = \"{}\")]", &field.parsed.name)?;
-            writeln!(out, "    pub {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(false))?;
+    writeln!(out, "}}")?;
+    writeln!(out, "")?;
+
+    if is_input {
+        writeln!(out, "impl {} {{", rust_name)?;
+        {
+            let mut out = out.indent();
+
+            writeln!(out, "pub fn builder() -> {}Builder {{", rust_name)?;
+            writeln!(out, "    {}Builder {{", rust_name)?;
+            for field in context.fields().values() {
+                writeln!(out, "        {}_: None,", to_snake_case(&field.parsed.name))?;
+            }
+            writeln!(out, "    }}")?;
+            writeln!(out, "}}")?;
         }
     
         writeln!(out, "}}")?;
         writeln!(out, "")?;
 
-        if is_input {
-            writeln!(out, "impl {} {{", rust_name)?;
-            {
-                let mut out = out.indent();
+        writeln!(out, "#[derive(Debug)]")?;
+        writeln!(out, "pub struct {}Builder {{", rust_name)?;
 
-                writeln!(out, "pub fn builder() -> {}Builder {{", rust_name)?;
-                writeln!(out, "    {}Builder {{", rust_name)?;
-                for field in context.fields().values() {
-                    writeln!(out, "        {}_: None,", to_snake_case(&field.parsed.name))?;
-                }
-                writeln!(out, "    }}")?;
-                writeln!(out, "}}")?;
-            }
-        
-            writeln!(out, "}}")?;
-            writeln!(out, "")?;
+        for field in context.fields().values() {
+            writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(false))?;
+        }
+    
+        writeln!(out, "}}")?;
+        writeln!(out, "")?;
 
-            writeln!(out, "#[derive(Debug)]")?;
-            writeln!(out, "pub struct {}Builder {{", rust_name)?;
+        writeln!(out, "impl {}Builder {{", rust_name)?;
+        {
+            let mut out = out.indent();
 
             for field in context.fields().values() {
-                writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(false))?;
-            }
-        
-            writeln!(out, "}}")?;
-            writeln!(out, "")?;
+                writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&field.parsed.name), field.ty.rust_type(true))?;
+                {
+                    let mut out = out.indent();
 
-            writeln!(out, "impl {}Builder {{", rust_name)?;
+                    writeln!(out, "self.{}_ = Some(value);", to_snake_case(&field.parsed.name))?;
+                    writeln!(out, "self")?;
+                }
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+            }
+            writeln!(out, "pub fn build(self) -> Result<{}, sparko_graphql::error::Error> {{", rust_name)?;
             {
                 let mut out = out.indent();
 
                 for field in context.fields().values() {
-                    writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&field.parsed.name), field.ty.rust_type(true))?;
-                    {
-                        let mut out = out.indent();
-
-                        writeln!(out, "self.{}_ = Some(value);", to_snake_case(&field.parsed.name))?;
-                        writeln!(out, "self")?;
+                    if let Type::Required(_) = field.ty {
+                        writeln!(out, "if let None = self.{}_ {{", to_snake_case(&field.parsed.name))?;
+                        writeln!(out, "    return Err(sparko_graphql::error::Error::MissingRequiredValueError(\"{}\"))", field.parsed.name)?;
+                        writeln!(out, "}}")?;
                     }
-                    writeln!(out, "}}")?;
-                    writeln!(out, "")?;
                 }
-                writeln!(out, "pub fn build(self) -> Result<{}, sparko_graphql::error::Error> {{", rust_name)?;
+
+                writeln!(out, "Ok({} {{", rust_name)?;
                 {
                     let mut out = out.indent();
 
                     for field in context.fields().values() {
                         if let Type::Required(_) = field.ty {
-                            writeln!(out, "if let None = self.{}_ {{", to_snake_case(&field.parsed.name))?;
-                            writeln!(out, "    return Err(sparko_graphql::error::Error::MissingRequiredValueError(\"{}\"))", field.parsed.name)?;
-                            writeln!(out, "}}")?;
+                            writeln!(out, "{}_: self.{}_.unwrap(),", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
+                        }
+                        else {
+                            writeln!(out, "{}_: self.{}_,", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
                         }
                     }
-
-                    writeln!(out, "Ok({} {{", rust_name)?;
-                    {
-                        let mut out = out.indent();
-    
-                        for field in context.fields().values() {
-                            if let Type::Required(_) = field.ty {
-                                writeln!(out, "{}_: self.{}_.unwrap(),", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
-                            }
-                            else {
-                                writeln!(out, "{}_: self.{}_,", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
-                            }
-                        }
-                        writeln!(out, "}})")?;
-                    }
+                    writeln!(out, "}})")?;
                 }
-                writeln!(out, "}}")?;
+            }
+            writeln!(out, "}}")?;
+        }
+        writeln!(out, "}}")?;
+        writeln!(out, "")?;
+    }
+
+    Ok(())
+}
+
+fn generate_struct_selection(out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, alias: &Option<Atom>, name: &Atom, context: &dyn Context, is_input: bool, dependencies: &HashSet<Atom>) -> Result<(), Error> {
+    let name = if let Some(alias) = alias {
+        alias
+    }
+    else {
+        name
+    };
+    let rust_name = to_pascal_case(name);
+    
+    let abstract_name = Rc::new(format!("Abstract{}", to_pascal_case(name)));
+    let variants = selections.get_variants(&abstract_name, schema, executable_document, context)?;
+    if variants.len() > 1 {
+        writeln!(out, "/* {} variants */", variants.len())?;
+        let base_type_name = to_pascal_case(name);
+        let base_member_name = to_snake_case(name);
+        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+        writeln!(out, "pub enum {} {{", base_type_name)?;
+        for (name, _variant) in &variants {
+            writeln!(out, "    {}({}),", name, name)?;
+        }
+
+        writeln!(out, "}}")?;
+        writeln!(out, "")?;
+
+        for (name, (context, selections)) in &variants {
+            let rust_name = to_pascal_case(&name);
+
+            writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+            writeln!(out, "#[serde(rename = \"{}\")]", name)?;
+            writeln!(out, "pub struct {} {{", rust_name)?;
+
+            let mut field_map = IndexMap::new();
+            selections.gather_fields(&mut field_map, *context, schema, executable_document, true)?;
+
+            {
+                let mut out = out.indent();
+
+                if name.as_ref() != name.as_ref() {
+                    writeln!(out, "#[serde(flatten)]")?;
+                    // writeln!(out, "#[serde(rename = \"{}\")]", self.parsed.name)?;
+                    writeln!(out, "pub {}_: {},", base_member_name, base_type_name)?;
+                }
+                selections.generate_fields(&mut out, *context, &field_map)?;
             }
             writeln!(out, "}}")?;
             writeln!(out, "")?;
+
+            selections.generate_structs(out, *context, schema, executable_document, &field_map, dependencies)?;
         }
-    };
+    }
+    else {
+        writeln!(out, "/* No variants */")?;
+        
+        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+        writeln!(out, "#[serde(rename = \"{}\")]", name)?;
+        writeln!(out, "pub struct {} {{", rust_name)?;
+
+        let mut field_map = IndexMap::new();
+        selections.gather_fields(&mut field_map, context, schema, executable_document, true)?;
+
+        {
+            let mut out = out.indent();
+            
+            selections.generate_fields(&mut out, context, &field_map)?;
+        }
+
+        writeln!(out, "}}")?;
+        writeln!(out, "")?;
+
+        selections.generate_structs(out, context, schema, executable_document, &field_map, dependencies)?;
+    }
+
+    Ok(())
+}
+
+
+fn gather_struct_selection_dependencies(schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, name: &Atom, context: &dyn Context, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+    // TODO: Work out if all fields are selected and add if they are
+    let abstract_name = Rc::new(format!("Abstract{}", to_pascal_case(name)));
+    let variants = selections.get_variants(&abstract_name, schema, executable_document, context)?;
+    if variants.len() > 1 {
+        for (_, (context, selections)) in &variants {
+            let mut field_map = IndexMap::new();
+            selections.gather_fields(&mut field_map, *context, schema, executable_document, true)?;
+
+            selections.gather_dependencies(schema, executable_document, *context, &field_map, dependencies)?;
+            //(*context, &field_map, type_set)?;
+        }
+    }
+    else {
+        let mut field_map = IndexMap::new();
+        selections.gather_fields(&mut field_map, context, schema, executable_document, true)?;
+
+        selections.gather_dependencies(schema, executable_document, context, &field_map, dependencies)?;
+    }
+
+    Ok(())
+}
+
+fn gather_struct_dependencies(schema: &Rc<Schema>, context: &dyn Context, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+
+    for (name, field) in context.fields() {
+        if name.as_ref() == TYPE_NAME {}
+        else {
+            if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
+                defined_type.gather_dependencies(schema, dependencies)?;
+            }
+        }
+    }
 
     Ok(())
 }
@@ -627,9 +770,23 @@ impl Interface {
             })))
     }
     
-    fn generate(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&SelectionList>, alias: &Option<Atom>) -> Result<(), Error> {
-        generate_struct(out, schema, executable_document, selections, alias, &self.parsed.name, self, false)?;
+    fn generate(&self, out: &mut Output<'_>, alias: &Option<Atom>) -> Result<(), Error> {
+        generate_struct(out, alias, &self.parsed.name, self, false)?;
         Ok(())
+    }
+    
+    fn generate_selection(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, alias: &Option<Atom>, dependencies: &HashSet<Atom>) -> Result<(), Error> {
+        generate_struct_selection(out, schema, executable_document, selections, alias, &self.parsed.name, self, false, dependencies)?;
+        Ok(())
+    }
+    
+    fn gather_selection_dependencies(&self, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+        gather_struct_selection_dependencies(schema, executable_document, selections, &self.parsed.name, self, dependencies)?;
+        Ok(())
+    }
+    
+    fn gather_dependencies(&self, schema: &Rc<Schema>, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+        gather_struct_dependencies(schema,self, dependencies)
     }
 }
 
@@ -688,10 +845,22 @@ impl Union {
         }
         writeln!(out, "}}")
     }
-    
 
-    fn generate(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: Option<&SelectionList>, alias: &Option<Atom>) -> Result<(), Error> {
-        generate_struct(out, schema, executable_document, selections, alias, &self.parsed.name, self, false)
+    fn generate(&self, out: &mut Output<'_>, alias: &Option<Atom>) -> Result<(), Error> {
+        generate_struct(out, alias, &self.parsed.name, self, false)
+    }
+
+    fn generate_selection(&self, out: &mut Output<'_>, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, alias: &Option<Atom>, dependencies: &HashSet<Atom>) -> Result<(), Error> {
+        generate_struct_selection(out, schema, executable_document, selections, alias, &self.parsed.name, self, false, dependencies)
+    }
+    
+    fn gather_selection_dependencies(&self, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selections: &SelectionList, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+        gather_struct_selection_dependencies(schema, executable_document, selections, &self.parsed.name, self, dependencies)?;
+        Ok(())
+    }
+    
+    fn gather_dependencies(&self, schema: &Rc<Schema>, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+        gather_struct_dependencies(schema,self, dependencies)
     }
 }
 
@@ -717,15 +886,15 @@ impl Enum {
         }))
     }
     
-    fn generate(&self, out: &mut Output<'_>, _schema: &Rc<Schema>, _executable_document: &ExecutableDocument, _selections: Option<&SelectionList>, _alias: &Option<Atom>) -> Result<(), Error> {
-    // fn generate(&self, out: &mut Output<'_>, _schema: &Rc<Schema>, _selections: Option<&SelectionList>) -> Result<(), Error> {
+    fn generate(&self, out: &mut Output<'_>, _alias: &Option<Atom>) -> Result<(), Error> {
+    // fn generate(&self, out: &mut Output<'_>, _schema: &Rc<Schema>, _selections: &SelectionList) -> Result<(), Error> {
         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
         writeln!(out, "#[serde(rename = \"{}\")]", self.parsed.name)?;
         writeln!(out, "pub enum {} {{", to_pascal_case(&self.parsed.name))?;
 
         for variant in &self.parsed.variants {
             writeln!(out, "    #[serde(rename = \"{}\")]", &variant.name)?;
-            writeln!(out, "    {},", to_constant_case(&variant.name))?;
+            writeln!(out, "    {},", to_pascal_case(&variant.name))?;
         }
         writeln!(out, "}}")?;
         writeln!(out, "")?;
@@ -989,7 +1158,7 @@ impl Selection {
                 Ok(Selection::Field(Rc::new(SelectionField::new(err, selection_field, schema, executable_document, context)?)))
             },
             parsed_model::Selection::Fragment(fragment_spread) => Ok(Selection::FragmentSpread(Rc::new(FragmentSpread::new(err, fragment_spread,
-                 schema, executable_document, context)?))),
+                 schema, executable_document)?))),
         }
     }
 
@@ -1004,7 +1173,7 @@ impl Selection {
     pub fn generate_query(&self, out: &mut Output, context: &dyn Context, schema: &Rc<Schema>, executable_document: &ExecutableDocument, maybe_optional: bool) -> Result<(), Error> {
         match self {
             // Selection::List(selection_list) => selection_list.generate_query(out, context, schema, executable_document, maybe_optional),
-            Selection::Field(selection_field) => selection_field.generate_query(out, context, schema, executable_document, maybe_optional),
+            Selection::Field(selection_field) => selection_field.generate_query(out, context, schema, executable_document),
             Selection::FragmentSpread(fragment_spread) => fragment_spread.generate_query(out, context, schema, executable_document, maybe_optional),
         }
     }
@@ -1076,20 +1245,36 @@ impl SelectionList {
         Ok(())
     }
     
-    fn generate_structs(&self, out: &mut Output<'_>, context: &dyn Context, schema: &Rc<Schema>, executable_document: &ExecutableDocument, maybe_optional: bool, field_map: &IndexMap<Atom, Rc<SelectionField>>) -> Result<(), Error> {
+    fn generate_structs(&self, out: &mut Output<'_>, context: &dyn Context, schema: &Rc<Schema>, executable_document: &ExecutableDocument, field_map: &IndexMap<Atom, Rc<SelectionField>>, dependencies: &HashSet<Atom>) -> Result<(), Error> {
         for (name, selection_field) in field_map {
             if name.as_ref() == TYPE_NAME {}
             else {
                 if let Some(field) = context.fields().get(&selection_field.parsed.name) {
                     if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
-                        let alias = if name == &selection_field.parsed.name {
-                            None
-                        }
-                        else {
-                            Some(name.clone())
-                        };
+                        println!("defined_type.name()e={}", defined_type.name());
+                        println!("&field.parsed.name={}", &field.parsed.name);
+                        println!("dependencies={:?}", dependencies);
 
-                        defined_type.generate(out, schema, executable_document, Some(&selection_field.selections), &alias)?;
+                        if ! dependencies.contains(defined_type.name()) {
+                            defined_type.generate_selection(out, schema, executable_document, &selection_field.selections, &None, dependencies)?;
+                            
+                            //(out, schema, executable_document, Some(&selection_field.selections), &alias, type_set)?;
+                        }
+                        
+                        // println!("defined_type.name()={}", defined_type.name());
+                        // if defined_type.name().as_ref() == "PageInfo" {
+                        //     println!("STOP {:?}", type_set);
+                        // }
+                        // if type_set.insert(defined_type.name().clone()) {
+                        //     let alias = if name == &selection_field.parsed.name {
+                        //         None
+                        //     }
+                        //     else {
+                        //         Some(name.clone())
+                        //     };
+
+                            
+                        // }
                     }
                 }
                 else {
@@ -1100,11 +1285,49 @@ impl SelectionList {
         Ok(())
     }
     
-    fn generate_fields(&self, out: &mut Output<'_>, context: &dyn Context, schema: &Rc<Schema>, executable_document: &ExecutableDocument, maybe_optional: bool, field_map: &IndexMap<Atom, Rc<SelectionField>>) -> Result<(), Error> {
+    fn gather_dependencies(&self, schema: &Rc<Schema>, executable_document: &ExecutableDocument, context: &dyn Context, field_map: &IndexMap<Atom, Rc<SelectionField>>, dependencies: &mut HashSet<Atom>) -> Result<(), Error> {
+        for (name, selection_field) in field_map {
+            if name.as_ref() == TYPE_NAME {}
+            else {
+                println!("field {}", &selection_field.parsed.name);
+                if let Some(field) = context.fields().get(&selection_field.parsed.name) {
+                    if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
+                        defined_type.gather_selection_dependencies(schema, executable_document, &selection_field.selections, dependencies)?;
+                        // match defined_type {
+                        //     DefinedType::Scalar(_) => {
+                        //         dependencies.insert(defined_type.name().clone());
+                        //     },
+                        //     DefinedType::Object(content) => {
+                        //         // TODO: check to see if all fields selected
+                        //     },
+                        //     DefinedType::Interface(_) => {
+                        //         // TODO: check to see if all fields selected
+                        //     },
+                        //     DefinedType::Union(_) => {
+                        //         // TODO: check to see if all fields selected
+                        //     },
+                        //     DefinedType::Enum(_) => {
+                        //         dependencies.insert(defined_type.name().clone());
+                        //     },
+                        //     DefinedType::InputObject(_) => {
+                        //         dependencies.insert(defined_type.name().clone());
+                        //     },
+                        // };
+                    }
+                }
+                else {
+                    println!("Failed to find field {}", &selection_field.parsed.name);
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    fn generate_fields(&self, out: &mut Output<'_>, context: &dyn Context, field_map: &IndexMap<Atom, Rc<SelectionField>>) -> Result<(), Error> {
         
         writeln!(out, "// generate_fields for SelectionList {}", &field_map.len())?;
         for field in field_map.values() {
-            field.generate_fields(out, context, schema, executable_document, maybe_optional)?;
+            field.generate_fields(out, context)?;
         }
 
         Ok(())
@@ -1227,7 +1450,7 @@ impl SelectionField {
         writeln!(out, "}}")
     }
 
-    pub fn generate_query(&self, out: &mut Output, context: &dyn Context, schema: &Rc<Schema>, executable_document: &ExecutableDocument, maybe_optional: bool) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output, context: &dyn Context, schema: &Rc<Schema>, executable_document: &ExecutableDocument) -> Result<(), Error> {
         if let Some(alias) = &self.parsed.alias {
             writeln!(out, "{}: {}", alias, &self.parsed.name)?;
         }
@@ -1252,7 +1475,7 @@ impl SelectionField {
         Ok(())
     }
 
-    pub fn generate_fields(&self, out: &mut Output, context: &dyn Context, schema: &Rc<Schema>, executable_document: &ExecutableDocument, maybe_optional: bool) -> Result<(), Error> {
+    pub fn generate_fields(&self, out: &mut Output, context: &dyn Context) -> Result<(), Error> {
         if *self.parsed.name == TYPE_NAME {
             println!("HERE");
             writeln!(out, "/* HERE1 */ pub __typename: String,")?;
@@ -1261,6 +1484,8 @@ impl SelectionField {
             let field = match context.fields().get(&self.parsed.name) {
                 Some(f) => f,
                 None => {
+                    println!("&self.parsed.name={:?}", &self.parsed.name);
+                    println!("context.fields={:?}", context.fields());
                     panic!("Failed to find field {}", self.parsed.name);
                 },
             };
@@ -1290,7 +1515,7 @@ impl SelectionField {
         if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
             writeln!(out, "// {} is {}", &self.parsed.name, defined_type)?;
             
-            defined_type.generate(out, schema, executable_document, Some(&self.selections), &self.parsed.alias)?;
+            defined_type.generate(out, schema, &self.parsed.alias)?;
         }
         else {
             writeln!(out, "// Nothing to generate because {} is {}", &self.parsed.name, field.ty)?;
@@ -1381,7 +1606,7 @@ impl GenericOperation {
         writeln!(out, "}}")
     }
     
-    pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>, executable_document: &ExecutableDocument) -> Result<(), Error> {
+    pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>, executable_document: &ExecutableDocument, dependencies: &HashSet<Atom>) -> Result<(), Error> {
         let context = *self.get_context( schema)?;
 
         writeln!(out, "pub mod {} {{", to_snake_case(&self.parsed.name))?;
@@ -1393,6 +1618,10 @@ use serde::{{Deserialize, Serialize}};
 use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
 "#
             )?;
+
+            for name in dependencies {
+                writeln!(out, "use super::super::{};", name)?;
+            }
 
 
             if !self.variables.is_empty() {
@@ -1478,8 +1707,8 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                             writeln!(out, "variables: Variables {{")?;
                             {
                                 let mut out = out.indent();
-        
-                                for (name, field) in &self.variables {
+
+                                for name in self.variables.keys() {
                                     writeln!(out, "{}_,", to_snake_case(&name))?;
                                 }
                             }
@@ -1526,7 +1755,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
             {
                 let mut out = out.indent();
         
-                self.selections.generate_fields(&mut out, context, schema, executable_document, true, &field_map)?;
+                self.selections.generate_fields(&mut out, context, &field_map)?;
             }
             writeln!(out, "}}")?;
             writeln!(out, "")?;
@@ -1534,16 +1763,39 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
             writeln!(out, "impl NewGraphQLResponse for Response {{")?;
             writeln!(out, "}}")?;
             
-            self.selections.generate_structs(&mut out, context, schema, executable_document, true, &field_map)?;
+            self.selections.generate_structs(&mut out, context, schema, executable_document, &field_map, dependencies)?;
 
             for (_name, field) in &self.variables {
                 if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
-                    defined_type.generate(&mut out, schema, executable_document, None, &None)?;
+                    if ! dependencies.contains(defined_type.name()) {
+                        defined_type.generate(&mut out, schema, &None)?;
+                    }
                 }
             }
+
         }
         writeln!(out, "}}")?;
         Ok(())
+    }
+    
+    
+    
+    pub fn gather_dependencies(&self, schema: &Rc<Schema>, executable_document: &ExecutableDocument) -> Result<HashSet<Atom>, Error> {
+        let mut dependencies: HashSet<Atom> = HashSet::new();
+        let context = *self.get_context( schema)?;
+        let mut field_map = IndexMap::new();
+        
+        self.selections.gather_fields(&mut field_map, context, schema, executable_document, true)?;
+
+        self.selections.gather_dependencies(schema, executable_document, context, &field_map, &mut dependencies)?;
+
+        for (_name, field) in &self.variables {
+            if let ScalarType::DefinedType(defined_type) = &field.ty.get_scalar() {
+                defined_type.gather_dependencies(schema, &mut dependencies)?;
+            }
+        }
+
+        Ok(dependencies)
     }
 }
 
@@ -1613,7 +1865,7 @@ pub struct FragmentSpread {
 }
 
 impl FragmentSpread {
-    fn new(err: &mut ErrorCollector<'_>, parsed: &Rc<parsed_model::FragmentSpread>, _schema: &Rc<Schema>, executable_document: &parsed_model::ExecutableDocument, context: &dyn Context) -> Result<Self, Error> {
+    fn new(err: &mut ErrorCollector<'_>, parsed: &Rc<parsed_model::FragmentSpread>, _schema: &Rc<Schema>, executable_document: &parsed_model::ExecutableDocument) -> Result<Self, Error> {
         if let Some(_fragment) = executable_document.fragments.get(&parsed.name) {
 
             Ok(FragmentSpread {
@@ -1703,7 +1955,7 @@ impl ExecutableDocument {
                 }
             }
             writeln!(out, "}}")?;
-            
+
             writeln!(out, "queries {{")?;
             {
                 let mut out = out.indent();
@@ -1727,20 +1979,53 @@ impl ExecutableDocument {
         writeln!(out, "}}")
     }
 
-    pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>) -> Result<(), Error> {
-        writeln!(out, "pub mod {} {{", self.parsed.name)?;
+    fn operation_dependencies<'a>(dependencies: &'a IndexMap<Atom, HashSet<Atom>>, operation: &GenericOperation) -> Result<&'a HashSet<Rc<std::string::String>>, Error> {
+        if let Some(d) = dependencies.get(&operation.parsed.name) {
+            Ok(d)
+        }
+        else {
+            Err(Error::BuildFailed(format!("Unable to fined dependencies for operation {}", operation.parsed.name)))
+        }
+    }
 
+    pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>, dependencies: &IndexMap<Atom, HashSet<Atom>>) -> Result<(), Error> {
+       writeln!(out, "pub mod {} {{", self.parsed.name)?;
         {
             let mut out = out.indent();
             for query in &self.queries {
-                query.generate(&mut out, schema, self)?;
+                query.generate(&mut out, schema, self, Self::operation_dependencies(dependencies, query)?)?;
             }
 
             for mutation in &self.mutations {
-                mutation.generate(&mut out, schema, self)?;
+                mutation.generate(&mut out, schema, self, Self::operation_dependencies(dependencies, mutation)?)?;
             }
         }
+
+        // let mut new_type_set: HashSet<Atom> = HashSet::new();
+
+        // for name in type_set {
+        //     writeln!(out, "// type {}", name)?;
+        //     if let Some(defined_type) = schema.defined_types.get(&name) {
+        //         defined_type.generate(out, schema, self, None, &None)?;
+        //     }
+
+            
+        // }
         writeln!(out, "}} // End of executable_document {}", self.parsed.name)?;
         Ok(())
+    }
+    
+    pub fn gather_dependencies(&self, schema: &Rc<Schema>) -> Result<IndexMap<Atom, HashSet<Atom>>, Error> {
+        let mut dependencies: IndexMap<Atom, HashSet<Rc<String>>> = IndexMap::new();
+
+        for query in &self.queries {
+            dependencies.insert(query.parsed.name.clone(), query.gather_dependencies(schema, self)?);
+        }
+
+        for mutation in &self.mutations {
+            dependencies.insert(mutation.parsed.name.clone(), mutation.gather_dependencies(schema, self)?);
+        }
+
+        Ok(dependencies)
     }
 }
