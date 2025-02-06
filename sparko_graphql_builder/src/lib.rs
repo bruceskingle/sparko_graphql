@@ -2,7 +2,8 @@ use graphql_parser::{parse_query, Pos};
 use graphql_parser::schema::parse_schema;
 use indexmap::IndexMap;
 use inflections::case::to_snake_case;
-use std::collections::HashSet;
+use validated_model::SelectionManager;
+use std::collections::{HashMap, HashSet};
 // use model::{ExecutableDocument, Schema};
 use std::fmt::Display;
 use std::fs::File;
@@ -19,29 +20,126 @@ mod validated_model;
 // mod error;
 
 const STARS: &str = "***************************************************************************************************************************************************";
+const TYPE_NAME: &str = "__typename";
+
+pub trait Isomorphic {
+    fn is_isomorphic(&self, other: &Self) -> bool;
+}
+
+pub trait Print {
+    fn print(&self, out: &mut Output) -> std::io::Result<()>;
+}
+
+pub struct BagOfNamed<T: Print> {
+    map: IndexMap<Atom, Vec<T>>,
+}
+
+impl<T: Print> BagOfNamed<T> {
+    pub fn new() -> BagOfNamed<T> {
+        BagOfNamed {
+            map: IndexMap::new(),
+        }
+    }
+    
+    pub fn insert(&mut self, name: &Atom, value: T) {
+        let list = if let Some(existing) = self.map.get_mut(name) {
+            existing
+        }
+        else {
+            self.map.insert(name.clone(), Vec::new());
+            self.map.get_mut(name).unwrap()
+        };
+        list.push(value);
+    }
+    
+    pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
+        writeln!(out, "{{")?;
+        {
+            let mut out = out.indent();
+
+            for (name, list) in &self.map {
+                writeln!(out, "name {} {{", name)?;
+                {
+                    let mut out = out.indent();
+
+                    for item in list {
+                        item.print(&mut out)?;
+                    }
+                }
+                writeln!(out, "}}")?;
+            }
+        }
+        writeln!(out, "}}")
+    }
+}
 
 type Atom = Rc<String>;
 
-pub fn intern(value: String) -> Atom {
-    Rc::new(value)
+#[derive(Debug)]
+pub struct Registry {
+    pub atoms: HashSet<Atom>,
 }
 
-pub fn intern_option(value: Option<String>) -> Option<Atom> {
-    match value {
-        Some(value) => Some( Rc::new(value)),
-        None => None,
+impl Registry {
+    pub fn new() -> Registry {
+        Registry {
+            atoms: HashSet::new(),
+        }
+    }
+
+    pub fn intern(&mut self, value: String) -> Atom {
+        if let Some(atom) = self.atoms.get(&value) {
+            atom.clone()
+        }
+        else {
+            let new_value = Rc::new(value);
+            self.atoms.insert(new_value.clone());
+            new_value
+        }
+    }
+
+    pub fn intern_str(&mut self, value: &str) -> Atom {
+        self.intern(String::from(value))
+    }
+
+    pub fn intern_option(&mut self, value: Option<String>) -> Option<Atom> {
+        match value {
+            Some(value) => Some(self.intern(value)),
+            None => None,
+        }
+    }
+    
+    fn intern_vec(&mut self, input: Vec<String>) -> Vec<Rc<String>> {
+        let mut result = Vec::new();
+    
+        for value in input {
+            result.push(self.intern(value));
+        }
+    
+        result
     }
 }
 
-fn intern_vec(input: Vec<String>) -> Vec<Rc<String>> {
-    let mut result = Vec::new();
+// pub fn intern(value: String) -> Atom {
+//     Rc::new(value)
+// }
 
-    for value in input {
-        result.push(intern(value));
-    }
+// pub fn intern_option(value: Option<String>) -> Option<Atom> {
+//     match value {
+//         Some(value) => Some( Rc::new(value)),
+//         None => None,
+//     }
+// }
 
-    result
-}
+// fn intern_vec(input: Vec<String>) -> Vec<Rc<String>> {
+//     let mut result = Vec::new();
+
+//     for value in input {
+//         result.push(intern(value));
+//     }
+
+//     result
+// }
 
 #[derive(Debug)]
 pub enum Error {
@@ -68,11 +166,11 @@ impl Display for Error {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum BuildError {
     Unimplemented(Pos, &'static str),
-    SchemaSyntaxError(graphql_parser::schema::ParseError),
-    QuerySyntaxError(graphql_parser::query::ParseError),
+    SchemaSyntaxError(String),
+    QuerySyntaxError(String),
     UndefinedTypeError(Pos, String),
     TypeMismatchError(Pos, String),
     MissingScalarError(Pos, String),
@@ -82,6 +180,7 @@ pub enum BuildError {
     MissingEnumError(Pos, String),
     MissingInputObjectError(Pos, String),
     MissingFieldError(Pos, String),
+    SelectionOnNonObjectError(Pos, Atom),
     OptionalNonNullFieldError(Pos, String),
     MissingFragmentError(Pos, String),
     InvalidQueryError(Pos, String),
@@ -476,6 +575,7 @@ impl Builder {
 
         if let Err(error) = self.do_build(&mut out) {
             writeln!(out, "compile_warning!(\"Fatal build error {:?}\");", error)?;
+            println!("cargo-error: {:?}", error);
         }
 
 
@@ -504,14 +604,16 @@ impl Builder {
                 Ok(ast) => ast,
                 Err(parse_error) => {
                     // let msg = format!("Schema syntax error: {}", parse_error);
-                    return err.fail(BuildError::SchemaSyntaxError(parse_error));
+                    return err.fail(BuildError::SchemaSyntaxError(parse_error.to_string()));
                     // return Err(Error::BuildFailed(msg))
                 },
             };
             // let mut model = Schema::new(err, ast)?;
             // model.validate(err);
+
+            let mut registry = Registry::new();
     
-            let parsed_schema = match parsed_model::Schema::new(&mut err, ast) {
+            let parsed_schema = match parsed_model::Schema::new(&mut err, &mut registry, ast) {
                 Ok(result) => result,
                 Err(error) => {
                     base.report_errors();
@@ -525,7 +627,7 @@ impl Builder {
                 writeln!(out, " * *********************************************************************************************/")?;
             }
 
-            let validated_schema = match validated_model::Schema::new(&mut err, &parsed_schema) {
+            let validated_schema = match validated_model::Schema::new(&mut err, &parsed_schema, &mut registry) {
                 Ok(result) => result,
                 Err(error) => {
                     base.report_errors();
@@ -547,7 +649,10 @@ impl Builder {
 
 
 
-            let mut dependencies: IndexMap<&str, (validated_model::ExecutableDocument, IndexMap<Atom, HashSet<Atom>>)> = IndexMap::new();
+            // let mut dependencies: IndexMap<&str, (validated_model::ExecutableDocument, IndexMap<Atom, HashSet<Atom>>)> = IndexMap::new();
+
+            let mut documents = Vec::new();
+            let mut selection_manager = SelectionManager::new();
 
             for (query_file_name, query_model_name) in &self.query_file_names 
             {
@@ -561,6 +666,7 @@ impl Builder {
                 // Tell Cargo that if the given file changes, to rerun this build script.
                 println!("cargo::rerun-if-changed={}", query_file_name);
                 
+                selection_manager.create_document(registry.intern(to_snake_case(query_model_name)));
                 let mut base = BaseErrorCollector::new(query_file_name.clone());
                 let mut err = ErrorCollector::new(&mut base);
                 
@@ -574,7 +680,7 @@ impl Builder {
 
                 match parse_result {
                     Ok(query_ast) => {
-                        let query_parsed_model = parsed_model::ExecutableDocument::new(&mut err, query_ast.definitions, query_model_name, &validated_schema);
+                        let query_parsed_model = parsed_model::ExecutableDocument::new(&mut err, &mut registry, query_ast.definitions, query_model_name);
                 
                         if self.print {
                             writeln!(out, "/* Parsed ExecutableDocument *********************************************************************************************")?;
@@ -586,24 +692,24 @@ impl Builder {
                             
                         // validated_executable.generate(out, &validated_schema)?;
                 
-                        if let Ok(validated_executable) = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema) {
+                        if let Ok(validated_executable) = validated_model::ExecutableDocument::new(&mut err, &mut registry, &mut selection_manager, &query_parsed_model, &validated_schema) {
+                            
                             if self.print {
                                 writeln!(out, "/* Validated ExecutableDocument *********************************************************************************************")?;
                                 validated_executable.print(out)?;
                                 writeln!(out, " * *********************************************************************************************/")?;
                             }
 
-                            if self.generate {
-                                let d = validated_executable.gather_dependencies(&validated_schema)?;
-                                dependencies.insert(query_model_name, (validated_executable, d));
-                            }
-
-                            // drop(validated_executable);
+                            // if self.generate {
+                            //     let d = validated_executable.gather_dependencies(&validated_schema)?;
+                            //     dependencies.insert(query_model_name, (validated_executable, d));
+                            // }
+                            documents.push(validated_executable);
                         }
                     },
                     Err(parse_error) => {
                         // let msg = format!("Query syntax error: {}", parse_error);
-                        err.error(BuildError::QuerySyntaxError(parse_error));
+                        err.error(BuildError::QuerySyntaxError(parse_error.to_string()));
                         // return Err(Error::BuildFailed(msg))
                     },
                 };
@@ -611,7 +717,34 @@ impl Builder {
                 base.report(out)?;
             }
 
+            if self.print {
+                writeln!(out, "/* Selection Manager *********************************************************************************************")?;
+                selection_manager.print(out)?;
+                writeln!(out, " * *********************************************************************************************/")?;
+            }
+
             if self.generate {
+
+                selection_manager.allocate_names();
+                // //propogate dependencies
+
+                // let mut schema_types = HashSet::new();
+
+                // for document in &documents {
+                //     println!("Document {}", document.parsed.name);
+                //     for operation in &document.operations {
+
+                //         println!("    Operation {}", operation.parsed.name);
+                //         operation.response.print(out)?;
+                //         for name in &operation.schema_dependencies {
+                //             println!("        Type {}", name);
+                //             schema_types.insert(name);
+                //         }
+                //     }
+                // }
+
+
+
                 writeln!(out, 
                     r#"
 pub mod {} {{
@@ -620,34 +753,65 @@ use serde::{{Deserialize, Serialize}};
 "#, to_snake_case(&self.model_name)
                 )?;
 
-
-                writeln!(out, "// Dependencies {:?}", dependencies)?;
-
-                let mut all_dependencies: HashSet<Atom> = HashSet::new();
-
-                for (_name, (_validated_executable, d1)) in &dependencies {
-                    writeln!(out, "// Dependency name {:?}", _name)?;
-                    for (_name, d2) in d1 {
-
-                    writeln!(out, "//   d2 name {:?}", _name)?;
-                        for d3 in d2 {
-                            writeln!(out, "// d3 {:?}", d3)?;
-                            all_dependencies.insert(d3.clone());
-                        }
+                for name in &selection_manager.all_schema_imports {
+                    if let Some(object) = validated_schema.defined_types.get(name) {
+                        object.generate(out)?;
                     }
-                }
-                writeln!(out, "// All Dependencies {:?}", all_dependencies)?;
-
-                for name in all_dependencies {
-                    if let Some(defined_type) = validated_schema.defined_types.get(&name) {
-                        defined_type.generate(out, &None)?;
+                    else {
+                        println!("Failed to find {}", *name);
                     }
                 }
 
-                writeln!(out, "// Executable docs")?;
+                // println!("selection_manager {:?}", &selection_manager);
 
-                for (_name, (validated_executable, dependencies)) in &dependencies {
-                    validated_executable.generate(out, &validated_schema, dependencies)?;
+                // writeln!(out, "/* selection manager");
+                // selection_manager.print(out)?;
+
+                // selection_manager.set_document(Rc::new(String::from("luke")));
+                // selection_manager.set_operation(Rc::new(String::from("GetLuke")));
+                // let ctx = selection_manager.get_context();
+
+                // ctx.print(out);
+
+                // writeln!(out, " selection manager */");
+
+                for document in &documents {
+                    selection_manager.set_document(document.parsed.name.clone());
+                    document.generate(out, &validated_schema, &mut selection_manager)?;
+                }
+
+
+                // // writeln!(out, "// Dependencies {:?}", dependencies)?;
+
+                // let mut all_dependencies: HashSet<Atom> = HashSet::new();
+
+                // for (_name, (_validated_executable, d1)) in &dependencies {
+                //     writeln!(out, "// Dependency name {:?}", _name)?;
+                //     for (_name, d2) in d1 {
+
+                //     writeln!(out, "//   d2 name {:?}", _name)?;
+                //         for d3 in d2 {
+                //             writeln!(out, "// d3 {:?}", d3)?;
+                //             all_dependencies.insert(d3.clone());
+                //         }
+                //     }
+                // }
+                // writeln!(out, "// All Dependencies {:?}", all_dependencies)?;
+
+                // for name in all_dependencies {
+                //     if let Some(defined_type) = validated_schema.defined_types.get(&name) {
+                //         defined_type.generate(out, &None)?;
+                //     }
+                // }
+
+                // writeln!(out, "// Executable docs")?;
+
+                // for (_name, (validated_executable, dependencies)) in &dependencies {
+                //     validated_executable.generate(out, &validated_schema, dependencies)?;
+                // }
+
+                for document in documents {
+
                 }
 
 
@@ -712,12 +876,13 @@ mod tests {
 
          match parse_schema::<'_, String>(&schema_string) {
             Ok(ast) => {
-                let parsed_schema = parsed_model::Schema::new(&mut err, ast)?;
+                let mut registry = Registry::new();
+                let parsed_schema = parsed_model::Schema::new(&mut err, &mut registry, ast)?;
 
-                validated_model::Schema::new(&mut err, &parsed_schema)?;
+                validated_model::Schema::new(&mut err, &parsed_schema, &mut registry)?;
             },
             Err(parse_error) => {
-                err.error(BuildError::SchemaSyntaxError(parse_error));
+                err.error(BuildError::SchemaSyntaxError(parse_error.to_string()));
             },
         };
 
@@ -747,23 +912,25 @@ mod tests {
 
         match parse_schema::<'_, String>(&schema_string) {
             Ok(ast) => {
-                let parsed_schema = parsed_model::Schema::new(&mut err, ast)?;
-                let validated_schema = validated_model::Schema::new(&mut err, &parsed_schema)?;
-        
+                let mut registry = Registry::new();
+                let parsed_schema = parsed_model::Schema::new(&mut err, &mut registry, ast)?;
+                let validated_schema = validated_model::Schema::new(&mut err, &parsed_schema, &mut registry)?;
+                let mut selection_manager = SelectionManager::new();
+                selection_manager.create_document(registry.intern_str("query_model_name"));
                 match parse_query::<String>(&query) {
                     Ok(ast) => {
-                        let parsed_model = parsed_model::ExecutableDocument::new(&mut err, ast.definitions, "test", &validated_schema);
-                        validated_model::ExecutableDocument::new(&mut err, &parsed_model, &validated_schema)?;
+                        let parsed_model = parsed_model::ExecutableDocument::new(&mut err, &mut registry, ast.definitions, "test");
+                        validated_model::ExecutableDocument::new(&mut err, &mut registry, &mut selection_manager, &parsed_model, &validated_schema)?;
                     },
                     Err(parse_error) => {
                         // let msg = format!("Query syntax error: {}", parse_error);
-                        err.error(BuildError::QuerySyntaxError(parse_error));
+                        err.error(BuildError::QuerySyntaxError(parse_error.to_string()));
                         // return Err(Error::BuildFailed(msg))
                     },
                 };
             },
             Err(parse_error) => {
-                err.error(BuildError::SchemaSyntaxError(parse_error));
+                err.error(BuildError::SchemaSyntaxError(parse_error.to_string()));
             },
         };
 

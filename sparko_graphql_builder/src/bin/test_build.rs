@@ -21,18 +21,17 @@ fn main()  -> Result<(), Box<dyn Error>> {
     //     .with_query("../sparko_graphql_builder_test/graphql/example/get-meters.graphql", "meters")
     //     .build()?;
 
-
     // sparko_graphql_builder::builder("swapi")
     //     .with_schema("../sparko_graphql_builder_test/graphql/swapi/schema.graphql")
-    //     .with_query("../sparko_graphql_builder_test/graphql/swapi/get-luke.graphql", "luke")
-    //     .with_query("../sparko_graphql_builder_test/graphql/swapi/get-person.graphql", "person")
+    //     // .with_query("../sparko_graphql_builder_test/graphql/swapi/get-luke.graphql", "luke")
+    //     // .with_query("../sparko_graphql_builder_test/graphql/swapi/get-person.graphql", "person")
     //     .with_query("../sparko_graphql_builder_test/graphql/swapi/get-luke-strikes-back.graphql", "strikes")
-    //     .with_query("../sparko_graphql_builder_test/graphql/swapi/fragment.graphql", "fragment")
+    //     // .with_query("../sparko_graphql_builder_test/graphql/swapi/fragment.graphql", "fragment")
     //     .build()?;
 
     sparko_graphql_builder::builder("octopus")
-        .with_schema("../../marco-sparko/graphql/octopus/octopus-schema.graphql")
-        .with_query("../../marco-sparko/graphql/octopus/LatestBill.graphql", "latest_bill")
+        .with_schema("../sparko_graphql_builder_test/graphql/octopus/schema.graphql")
+        .with_query("../sparko_graphql_builder_test/graphql/octopus/main.graphql", "main")
         .build()?;
     Ok(())
 }

@@ -251,12 +251,6 @@ impl RequestManager {
 
 
 
-        // let response_json = response.json().await?;
-
-        // println!("response {:?}", response_json);
-
-        // let graphql_response:  GraphQLResponse = response_json;
-
         if let Some(errors) = graphql_response.errors {
             
             Self::report_error("GraphQL Errors");
@@ -268,7 +262,16 @@ impl RequestManager {
         // if let Some(response) = graphql_response.data {
         //     println!("response {}", serde_json::to_string_pretty(&response)?);
 
-            let object: R = serde_json::from_value(graphql_response.data)?;
+        
+            let json = graphql_response.data.clone();
+            let object: R = match serde_json::from_value(graphql_response.data) {
+                Ok(object) => object,
+                Err(error) => {
+                    // println!("Deserialization error {}", error);
+                    // println!("response_json {}", serde_json::to_string_pretty(&json)?);
+                    return Err(Box::new(Error::InvalidResponseError{json, error}))
+                },
+            };
             Ok(object)
         // }
         // else {
