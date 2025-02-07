@@ -48,7 +48,7 @@ pub use authenticated_request_manager::AuthenticatedRequestManager;
 
 
 pub trait NewGraphQLQuery<R: NewGraphQLResponse> {
-    fn get_query() -> &'static str;
+    fn get_query(&self) -> String;
     fn get_request_name() -> &'static str;
     fn get_variables(&self) -> Result<std::string::String, serde_json::Error>;
 }

@@ -201,7 +201,7 @@ impl RequestManager {
         // println!("NEW query {}", &query);
 
         let payload = NewRequest {
-            query: Q::get_query(),
+            query: &query.get_query(),
             variables: query.get_variables()?,
             operation_name: Q::get_request_name(),
         };
@@ -228,7 +228,7 @@ impl RequestManager {
             println!("HTTP status {}", status);
             
             Self::report_error("Query");
-            println!("{}",Q::get_query());
+            println!("{}", &query.get_query());
             
             Self::report_error("Variables");
             println!("{}", query.get_variables()?);

@@ -9,7 +9,7 @@ async fn test<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(query: &Q, request_m
         println!(r#"query: {},
             variables: {},
             operation_name: {},"#,
-            Q::get_query(),
+            &query.get_query(),
             query.get_variables().unwrap(),
             Q::get_request_name(),
         );

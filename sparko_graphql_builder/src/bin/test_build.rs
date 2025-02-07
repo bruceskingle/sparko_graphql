@@ -30,6 +30,8 @@ fn main()  -> Result<(), Box<dyn Error>> {
     //     .build()?;
 
     sparko_graphql_builder::builder("octopus")
+        .with_type("Date", "sparko_graphql::types::Date")
+        .with_type("DateTime", "sparko_graphql::types::DateTime")
         .with_schema("../sparko_graphql_builder_test/graphql/octopus/schema.graphql")
         .with_query("../sparko_graphql_builder_test/graphql/octopus/main.graphql", "main")
         .build()?;

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt::Display;
 use std::io::Write;
 use std::rc::Rc;
@@ -962,18 +963,18 @@ impl SelectionList {
         writeln!(out, "}}")
     }
     
-    pub fn generate_query(&self, out: &mut Output<'_>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output<'_>, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
         if ! &self.selections.is_empty() {
-            writeln!(out, "{{")?;
+            writeln!(out, "buf.push('{{');")?;
             {
                 let mut out = out.indent();
 
             
                 for selection in &self.selections {
-                    selection.generate_query(&mut out)?;
+                    selection.generate_query(&mut out, variables, fragments)?;
                 }
             }
-            writeln!(out, "}}")?;
+            writeln!(out, "buf.push('}}');")?;
         }
         Ok(())
     }
@@ -1005,12 +1006,12 @@ impl Selection{
         }
     }
 
-        pub fn generate_query(&self, out: &mut Output) -> Result<(), Error> {
+        pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
             match self {
                 // Selection::List(selection_list) => selection_list.generate_query(out, context, schema, executable_document, maybe_optional),
-                Selection::Field(selection_field) => selection_field.generate_query(out),
-                Selection::FragmentSpread(fragment_spread) => fragment_spread.generate_query(out),
-                Selection::InlineFragment(inline_fragment_spread) => inline_fragment_spread.generate_query(out),
+                Selection::Field(selection_field) => selection_field.generate_query(out, variables, fragments),
+                Selection::FragmentSpread(fragment_spread) => fragment_spread.generate_query(out, fragments),
+                Selection::InlineFragment(inline_fragment_spread) => inline_fragment_spread.generate_query(out, variables, fragments),
             }
         }
 
@@ -1066,28 +1067,28 @@ impl SelectionField {
         writeln!(out, "}}")
     }
 
-        pub fn generate_query(&self, out: &mut Output) -> Result<(), Error> {
+        pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
             if let Some(alias) = &self.alias {
-                writeln!(out, "{}: {}", alias, &self.name)?;
+                writeln!(out, "buf.push_str(\"{}: {}\\n\");", alias, &self.name)?;
             }
             else {
-                writeln!(out, "{}", &self.name)?;
+                writeln!(out, "buf.push_str(\"{}\\n\");", &self.name)?;
             }
     
             if ! self.arguments.is_empty() {
-                writeln!(out, "(")?;
+                writeln!(out, "buf.push('(');")?;
                 {
                     let mut out = out.indent();
     
                 
                     for argument in &self.arguments {
-                        argument.generate_query(&mut out)?;
+                        argument.generate_query(&mut out, variables)?;
                     }
                 }
-                writeln!(out, ")")?;
+                writeln!(out, "buf.push(')');")?;
             }
     
-            self.selections.generate_query(out)?;
+            self.selections.generate_query(out, variables, fragments)?;
             Ok(())
         }
 }
@@ -1290,7 +1291,7 @@ impl Display for Value {
             Value::Variable(name) => write!(f, "${}", name),
             Value::Int(number) => write!(f, "{}", number),
             // Value::Float(_) => todo!(),
-            Value::String(string) => write!(f, "\"{}\"", string),
+            Value::String(string) => write!(f, "\\\"{}\\\"", string),
             // Value::Boolean(_) => todo!(),
             // Value::Null => todo!(),
             // Value::Enum => todo!(),
@@ -1326,8 +1327,22 @@ impl Argument {
         writeln!(out, "}}")
     }
     
-    pub fn generate_query(&self, out: &mut Output<'_>) -> Result<(), Error> {
-        writeln!(out, "{}: {}", self.name, self.value)?;
+    pub fn generate_query(&self, out: &mut Output<'_>, variables: &crate::validated_model::FieldMap) -> Result<(), Error> {
+        if let Value::Variable(name) = &self.value {
+            let field = variables.get(&name).unwrap();
+            if field.ty.is_optional() {
+                writeln!(out, "if self.variables.{}_.is_some() {{", to_snake_case(&field.parsed.name))?;
+                writeln!(out, "    buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
+                writeln!(out, "}}")?;
+            }
+            else {
+                writeln!(out, "buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
+            }
+        }
+        else {
+            writeln!(out, "buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
+        }
+        
         Ok(())
     }
 }
@@ -1374,6 +1389,23 @@ impl FragmentDefinition{
         }
         writeln!(out, "}}")
     }
+
+    pub fn generate_query(&self, out: &mut Output<'_>, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
+        
+        writeln!(out, "")?;
+        writeln!(out, "buf.push_str(\"fragment {} on {}\");", self.name, self.type_condition)?;
+        writeln!(out, "buf.push('{{');")?;
+        {
+            let mut out = out.indent();
+
+            for selection in &self.selections.selections {
+                selection.generate_query(&mut out, variables, fragments)?;
+            }
+        }
+        writeln!(out, "buf.push('}}');")?;
+        
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -1401,8 +1433,9 @@ impl FragmentSpread {
         writeln!(out, "}}")
     }
 
-    pub fn generate_query(&self, out: &mut Output) -> Result<(), Error> {
-        writeln!(out, "...{}", &self.name)?;
+    pub fn generate_query(&self, out: &mut Output, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
+        fragments.insert(self.name.clone());
+        writeln!(out, "buf.push_str(\"...{}\");", &self.name)?;
         Ok(())
     }
 }
@@ -1450,22 +1483,22 @@ impl InlineFragmentSpread{
         writeln!(out, "}}")
     }
 
-    pub fn generate_query(&self, out: &mut Output) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
         if let Some(cond) = &self.type_condition {
-            writeln!(out, "... on {} {{", cond)?;
+            writeln!(out, "buf.push_str(\"... on {} {{\");", cond)?;
         }
         else {
-            writeln!(out, "... {{")?;
+            writeln!(out, "buf.push_str(\"... {{\");")?;
         }
         {
             let mut out = out.indent();
 
         
             for selection in &self.selections.selections {
-                selection.generate_query(&mut out)?;
+                selection.generate_query(&mut out, variables, fragments)?;
             }
         }
-        writeln!(out, "}}")?;
+        writeln!(out, "buf.push('}}');")?;
         Ok(())
     }
 }

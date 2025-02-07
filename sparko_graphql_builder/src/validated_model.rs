@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::io::Write;
 use std::rc::Rc;
@@ -11,6 +11,31 @@ use crate::parsed_model::{BuiltinType, DefinedTypeName, OperationType};
 use crate::utils::to_pascal_case;
 use crate::{Atom, BagOfNamed, BuildError, Error, ErrorCollector, Isomorphic, Print, Registry, TYPE_NAME};
 use crate::{parsed_model, Output};
+
+pub enum Optionality {
+    Optional,
+    Default,
+    Required,
+}
+
+impl Optionality {
+    pub fn required_by_default(&self) -> Optionality {
+        match self {
+            Optionality::Optional => Optionality::Optional,
+            Optionality::Default => Optionality::Required,
+            Optionality::Required => Optionality::Required,
+        }
+    }
+
+
+    pub fn optional_by_default(&self) -> Optionality {
+        match self {
+            Optionality::Optional => Optionality::Optional,
+            Optionality::Default => Optionality::Optional,
+            Optionality::Required => Optionality::Required,
+        }
+    }
+}
 
 // const TYPE_NAME: &str = "__typename";
 // pub type FieldMap = IndexMap<Atom, Rc<Field>>;
@@ -97,19 +122,19 @@ impl<T> SharedMap<T> {
         }
     }
     
-    fn values(&self) -> indexmap::map::Values<'_, Atom, Rc<T>> {
+    pub fn values(&self) -> indexmap::map::Values<'_, Atom, Rc<T>> {
         self.map.values()
     }
     
-    fn get(&self, name: &String) -> Option<&Rc<T>> {
+    pub fn get(&self, name: &String) -> Option<&Rc<T>> {
         self.map.get(name)
     }
     
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
     
-    fn keys(&self) -> indexmap::map::Keys<'_, Atom, Rc<T>> {
+    pub fn keys(&self) -> indexmap::map::Keys<'_, Atom, Rc<T>> {
         self.map.keys()
     }
 }
@@ -147,7 +172,7 @@ impl<T> SharedMapBuilder<T> {
 
 // type ViewMap = SharedMap<ViewField>;
 // pub type RawSelection = IndexMap<Atom, ViewMap>;
-type VariantMap = SharedMap<FieldMap>;
+// type VariantMap = SharedMap<FieldMap>;
 
 
 #[derive(Debug)]
@@ -157,7 +182,7 @@ pub struct Selection {
     pub parsed: Rc<parsed_model::SelectionList>,
     pub names: Vec<Atom>,
     pub fields: IndexMap<Atom, SelectionField>,
-    pub variants: IndexMap<Atom, IndexMap<Atom, SelectionField>>,
+    pub variants: Vec<Rc<Variant>>,
 }
 
 impl Print for Selection {
@@ -177,12 +202,12 @@ impl Print for Selection {
         {
             let mut out = out.indent();
 
-            for (name, field_map) in &self.variants {
-                writeln!(out, "{} {{", name)?;
+            for variant in &self.variants {
+                writeln!(out, "{:?} {{", variant.names)?;
                 {
                     let mut out = out.indent();
 
-                    for (_name, field) in field_map {
+                    for (_name, field) in &variant.fields {
                         field.print(&mut out);
                         // writeln!(out, "{}: {}", name, field)?;
                     }
@@ -212,11 +237,11 @@ impl Selection {
     //     self.variants.keys()
     // }
     
-    pub fn generate_query(&self, out: &mut Output<'_>) -> Result<(), Error> {
-        self.parsed.generate_query(out)
+    pub fn generate_query(&self, out: &mut Output<'_>, variables: &FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
+        self.parsed.generate_query(out, variables, fragments)
     }
     
-    fn generate_fields(&self, out: &mut Output<'_>, selection_manager: &SelectionManager, schema: &Schema) -> Result<(), Error> {
+    fn generate_fields(&self, out: &mut Output<'_>, selection_manager: &NameSpaceManager, schema: &Schema) -> Result<(), Error> {
         for field in self.fields.values() {
             field.generate_field(out, selection_manager, schema)?;
         }
@@ -276,7 +301,7 @@ impl Selection {
     //     Ok(())
     // }
     
-    fn generate(&self, out: &mut Output<'_>, selection_manager: &SelectionManager, schema: &Schema) -> Result<(), Error> {
+    fn generate(&self, out: &mut Output<'_>, selection_manager: &NameSpaceManager, schema: &Schema) -> Result<(), Error> {
         let name = selection_manager.get_name(&self.index);
 
         // let rust_name = to_pascal_case(name);
@@ -315,8 +340,8 @@ impl Selection {
                 let mut out = out.indent();
                 
                 self.generate_fields(&mut out, selection_manager, schema)?;
-                for (variant_name, variant_selection) in &self.variants {
-                    for (name, field) in variant_selection {
+                for variant_selection in &self.variants {
+                    for (name, field) in &variant_selection.fields {
                         field.generate_field(&mut out, selection_manager, schema)?;
                     }
                 }
@@ -333,8 +358,13 @@ impl Selection {
             let base_type_name = to_pascal_case(name);
             let base_member_name = to_snake_case(name);
             writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+            writeln!(out, "#[serde(tag = \"{}\")]", TYPE_NAME)?;
             writeln!(out, "pub enum {} {{", base_type_name)?;
-            for (name, _variant) in &self.variants {
+            if ! self.fields.is_empty() {
+                writeln!(out, "    {}({}),", abstract_name, abstract_name)?;
+            }
+            for variant in &self.variants {
+                let name = selection_manager.get_name(&variant.index);
                 writeln!(out, "    {}({}),", name, name)?;
             }
     
@@ -342,6 +372,33 @@ impl Selection {
             writeln!(out, "")?;
 
             if ! self.fields.is_empty() {
+                writeln!(out, "impl {} {{", base_type_name)?;
+        
+                {
+                    let mut out = out.indent();
+                    
+                    writeln!(out, "pub fn as_{}(&self) -> &{} {{", base_member_name, abstract_name)?;
+                    {
+                        let mut out = out.indent();
+                        writeln!(out, "match self {{")?;
+                        {
+                            let mut out = out.indent();
+
+                            writeln!(out, "{}::{}(content) => content.as_{}(),", base_type_name, abstract_name, base_member_name)?;
+                            for variant in &self.variants {
+                                let name = selection_manager.get_name(&variant.index);
+                                writeln!(out, "{}::{}(content) => content.as_{}(),", base_type_name, name, base_member_name)?;
+                            }
+                        }
+                        writeln!(out, "}}")?;
+                    }
+                    writeln!(out, "}}")?;
+                    writeln!(out, "")?;
+                }
+        
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+
                 writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
                 // writeln!(out, "#[serde(rename = \"{}\")]", name)?;
                 writeln!(out, "pub struct {} {{", abstract_name)?;
@@ -354,12 +411,28 @@ impl Selection {
         
                 writeln!(out, "}}")?;
                 writeln!(out, "")?;
+
+                writeln!(out, "impl {} {{", abstract_name)?;
+        
+                {
+                    let mut out = out.indent();
+                    
+                    writeln!(out, "pub fn as_{}(&self) -> &{} {{", base_member_name, abstract_name)?;
+                    writeln!(out, "    self")?;
+                    writeln!(out, "}}")?;
+                }
+        
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
             }
 
-            for (variant_name, variant_selection) in &self.variants {
+            for variant in &self.variants {
+                let variant_name = selection_manager.get_name(&variant.index);
+                let rust_variant_name = to_pascal_case(&variant_name);
+
                 writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
                 writeln!(out, "#[serde(rename = \"{}\")]", variant_name)?;
-                writeln!(out, "pub struct {} {{", to_pascal_case(&variant_name))?;
+                writeln!(out, "pub struct {} {{", rust_variant_name)?;
         
                 {
                     let mut out = out.indent();
@@ -371,9 +444,22 @@ impl Selection {
                     }
                     
                     // self.generate_variant_fields(&mut out, variant_name, selection_manager)?;
-                    for (name, field) in variant_selection {
+                    for (_name, field) in &variant.fields {
                         field.generate_field(&mut out, selection_manager, schema)?;
                     }
+                }
+        
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+
+                writeln!(out, "impl {} {{", rust_variant_name)?;
+        
+                {
+                    let mut out = out.indent();
+                    
+                    writeln!(out, "pub fn as_{}(&self) -> &{} {{", base_member_name, abstract_name)?;
+                    writeln!(out, "    &self.{}_", base_member_name)?;
+                    writeln!(out, "}}")?;
                 }
         
                 writeln!(out, "}}")?;
@@ -452,12 +538,70 @@ impl Selection {
 //     }
 // }
 
+#[derive(Debug)]
+pub struct Variant {
+    pub index: usize,
+    pub names: Vec<Atom>,
+    pub fields: IndexMap<Atom, SelectionField>,
+}
+
+// impl Variant {
+//     fn generate(&self, out: &mut Output<'_>, selection_manager: &NameSpaceManager, schema: &Schema, selection_index: usize,) -> Result<(), Error> {
+//         let base_name = selection_manager.get_name(&selection_index);
+//         let abstract_name = Rc::new(format!("Abstract{}", base_name));
+//             let base_type_name = to_pascal_case(base_name);
+//             let base_member_name = to_snake_case(base_name);
+
+
+
+
+//         let variant_name = selection_manager.get_name(&self.index);
+//         let rust_variant_name = to_pascal_case(&variant_name);
+
+//         writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+//         writeln!(out, "#[serde(rename = \"{}\")]", variant_name)?;
+//         writeln!(out, "pub struct {} {{", rust_variant_name)?;
+
+//         {
+//             let mut out = out.indent();
+
+//             if ! self.fields.is_empty() {
+//                 writeln!(out, "#[serde(flatten)]")?;
+//                 // writeln!(out, "#[serde(rename = \"{}\")]", self.parsed.name)?;
+//                 writeln!(out, "pub {}_: {},", base_member_name, abstract_name)?;
+//             }
+            
+//             // self.generate_variant_fields(&mut out, variant_name, selection_manager)?;
+//             for (_name, field) in &self.fields {
+//                 field.generate_field(&mut out, selection_manager, schema)?;
+//             }
+//         }
+
+//         writeln!(out, "}}")?;
+//         writeln!(out, "")?;
+
+//         writeln!(out, "impl {} {{", rust_variant_name)?;
+
+//         {
+//             let mut out = out.indent();
+            
+//             writeln!(out, "pub fn as_{}(&self) -> &{} {{", base_member_name, abstract_name)?;
+//             writeln!(out, "    &self.{}_", base_member_name)?;
+//             writeln!(out, "}}")?;
+//         }
+
+//         writeln!(out, "}}")?;
+//         writeln!(out, "")?;
+//         Ok(())
+//     }
+// }
+
 pub struct SelectionBuilder {
     pub graphql_type_name: Atom,
     pub parsed: Rc<parsed_model::SelectionList>,
     pub preferred_type_names: Vec<Atom>,
     pub fields: IndexMap<Atom, SelectionField>,
-    pub variants: IndexMap<Atom, IndexMap<Atom, SelectionField>>,
+    pub variants: IndexMap<Atom, IndexMap<Rc<String>, SelectionField>>,
 }
 
 impl SelectionBuilder {
@@ -483,7 +627,15 @@ impl SelectionBuilder {
 
     pub fn with_field(&mut self, variant_name: &Option<Atom>, field_name: &Atom, field: SelectionField) -> &mut Self {
         if let Some(variant_name) = variant_name {
-            self.variants.entry(variant_name.clone()).or_insert(IndexMap::new()).insert(field_name.clone(), field);
+            if let Some(variant) = self.variants.get_mut(variant_name) {
+                variant.insert(field_name.clone(), field);
+            }
+            else {
+                let mut fields = IndexMap::new();
+                fields.insert(field_name.clone(), field);
+                self.variants.insert(variant_name.clone(), fields);
+            }
+            // self.variants.entry(variant_name.clone()).or_insert(IndexMap::new()).insert(field_name.clone(), field);
         }
         else {
             self.fields.insert(field_name.clone(), field); 
@@ -503,7 +655,7 @@ impl SelectionBuilder {
         self
     }
 
-    pub fn build(self, manager: &mut SelectionManager) -> Rc<Selection> {
+    pub fn build(self, manager: &mut NameSpaceManager) -> Rc<Selection> {
         
         manager.insert(self.graphql_type_name, self.parsed, self.preferred_type_names, self.fields, self.variants)
         // let index = manager.selections.len();
@@ -579,9 +731,9 @@ impl SelectionFieldType {
     // }
 
     // if nonnull then the type is coerced to be nonnull at all levels
-    pub fn rust_type(&self, selection_manager: &SelectionManager, schema: &Schema, nonnull: bool) -> String {
+    pub fn rust_type(&self, selection_manager: &NameSpaceManager, schema: &Schema, nonnull: bool) -> String {
         // Will never be called with Required variant.
-        fn do_rust_type(input: &SelectionFieldType, selection_manager: &SelectionManager, schema: &Schema, nonnull: bool) -> String {
+        fn do_rust_type(input: &SelectionFieldType, selection_manager: &NameSpaceManager, schema: &Schema, nonnull: bool) -> String {
             match input {
                 SelectionFieldType::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
                 SelectionFieldType::Scalar(name) => schema.defined_types.get(name).unwrap().rust_name().to_string(),
@@ -614,7 +766,7 @@ pub struct SelectionField {
     pub optional: bool,
 }
 impl SelectionField {
-    fn generate_field(&self, out: &mut Output, selection_manager: &SelectionManager, schema: &Schema) -> Result<(), std::io::Error> {
+    fn generate_field(&self, out: &mut Output, selection_manager: &NameSpaceManager, schema: &Schema) -> Result<(), std::io::Error> {
         if *self.name != TYPE_NAME {
             let field_name = to_snake_case(&self.name);
 
@@ -992,9 +1144,9 @@ impl Type {
     }
     
     // if nonnull then the type is coerced to be nonnull at all levels
-    pub fn rust_type(&self, nonnull: bool) -> String {
+    pub fn rust_type(&self, optionality: Optionality) -> String {
         // Will never be called with Required variant.
-        fn do_rust_type(input: &Type, nonnull: bool) -> String {
+        fn do_rust_type(input: &Type, optionality: Optionality) -> String {
             match input {
                 Type::Scalar(wrapped) => {
                     match wrapped {
@@ -1003,22 +1155,55 @@ impl Type {
                     }
                 },
                 Type::Required(_) => unreachable!(),
-                Type::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(nonnull)),
+                Type::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(optionality)),
             }
         }
 
-        if let Type::Required(wrapped) = self {
-            do_rust_type(wrapped, nonnull)
+        let (new_optionality, new_type) = if let Type::Required(wrapped) = self {
+            (optionality.required_by_default(), &**wrapped)
         }
         else {
-            if nonnull {
-                do_rust_type(self, nonnull)
-            }
-            else {
-                format!("Option<{}>", do_rust_type(self, nonnull))
-            }
+            (optionality.optional_by_default(), self)
+        };
+
+        if let Optionality::Optional = new_optionality {
+            format!("Option<{}>", do_rust_type(new_type, optionality))
+        }
+        else {
+            do_rust_type(new_type, optionality)
+        }
+
+
+        // if let Type::Required(wrapped) = self {
+        //     do_rust_type(wrapped, optionality.required_by_default())
+        // }
+        // else {
+            
+        //     if nonnull {
+        //         do_rust_type(self, nonnull)
+        //     }
+        //     else {
+        //         format!("Option<{}>", do_rust_type(self, nonnull))
+        //     }
+        // }
+    }
+    
+    pub fn is_optional(&self) -> bool {
+        if let Type::Required(_) = self {
+            false
+        }
+        else {
+            true
         }
     }
+    
+    // fn rust_type_is_optional(&self) -> bool {
+    //     match self {
+    //         Type::Scalar(scalar_type) => true,
+    //         Type::Required(wrapped) => false,
+    //         Type::Array(wrapped) => wrapped.rust_type_is_optional(),
+    //     }
+    // }
 }
 
 impl Display for Type {
@@ -1136,19 +1321,25 @@ impl Scalar {
         
     }
     
-    fn new(registry: &mut Registry, parsed: &Rc<parsed_model::Scalar>) -> TypeDefinition {
-
-        let rust_type = registry.intern_str("serde_json::Value"); // TODO: get proper types
+    fn new(registry: &mut Registry, parsed: &Rc<parsed_model::Scalar>, types: &HashMap<String, String>) -> TypeDefinition {
+        println!("&*parsed.name={}", &*parsed.name);
+        let rust_name =  registry.intern(to_pascal_case(&parsed.name));
+        let rust_type = if let Some(fqn) = types.get(&*parsed.name) {
+            registry.intern_str(fqn)
+        }
+        else {
+            registry.intern_str("serde_json::Value")
+        };
 
         TypeDefinition::Scalar(Rc::new(Scalar {
             parsed: parsed.clone(),
-            rust_name: registry.intern(to_pascal_case(&parsed.name)),
+            rust_name,
             rust_type,
         }))
     }
     
     fn generate(&self, out: &mut Output<'_>) -> Result<(), Error> {
-        writeln!(out, "type {} = {};", &self.rust_name, &self.rust_type)?;
+        writeln!(out, "type {} = {}; // B1", &self.rust_name, &self.rust_type)?;
         writeln!(out, "")?;
         Ok(())
     }
@@ -1278,7 +1469,7 @@ fn generate_struct(out: &mut Output<'_>, name: &Atom, rust_name: &Atom, context:
 
     for field in context.fields().values() {
         writeln!(out, "    #[serde(rename = \"{}\")]", &field.parsed.name)?;
-        writeln!(out, "    pub {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(false))?;
+        writeln!(out, "    pub {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Default))?;
     }
 
     writeln!(out, "}}")?;
@@ -1305,7 +1496,7 @@ fn generate_struct(out: &mut Output<'_>, name: &Atom, rust_name: &Atom, context:
         writeln!(out, "pub struct {}Builder {{", rust_name)?;
 
         for field in context.fields().values() {
-            writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(false))?;
+            writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Default))?;
         }
     
         writeln!(out, "}}")?;
@@ -1316,7 +1507,7 @@ fn generate_struct(out: &mut Output<'_>, name: &Atom, rust_name: &Atom, context:
             let mut out = out.indent();
 
             for field in context.fields().values() {
-                writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&field.parsed.name), field.ty.rust_type(true))?;
+                writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Required))?;
                 {
                     let mut out = out.indent();
 
@@ -1881,13 +2072,13 @@ impl Schema {
         }
     }
 
-    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Schema>, registry: &mut Registry) -> Result<Rc<Self>, Error> {
+    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Schema>, registry: &mut Registry, types: &HashMap<String, String>) -> Result<Rc<Self>, Error> {
 
         let mut defined_types: IndexMap<Atom, TypeDefinition> = IndexMap::new();
 
         for parsed_type in parsed.named_types.values() {
             let defined_type = match parsed_type {
-                parsed_model::TypeDefinition::Scalar(type_def) => Scalar::new(registry, &type_def),
+                parsed_model::TypeDefinition::Scalar(type_def) => Scalar::new(registry, &type_def, types),
                 parsed_model::TypeDefinition::Object(object) => TypeDefinition::Object(Object::new(err, registry, &object, &parsed)?),
                 parsed_model::TypeDefinition::Interface(interface) => Interface::new(err, registry, interface, &parsed)?,
                 parsed_model::TypeDefinition::Union(union) => Union::new(err, registry, union, &parsed)?,
@@ -2578,7 +2769,7 @@ impl GenericOperation {
     //     Ok(())
     // }
     
-    fn create_selection(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut SelectionManager, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>,
+    fn create_selection(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>,
         preferred_type_names: Vec<Atom>, graphql_type_name: Atom, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap) -> Result<Rc<Selection>, Error>
     {
         let mut selection_builder = SelectionBuilder::new(graphql_type_name, selections);
@@ -2590,7 +2781,7 @@ impl GenericOperation {
         Ok(selection_builder.build(selection_manager))
     }
 
-    fn create_selection_field(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut SelectionManager, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>,
+    fn create_selection_field(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>,
         field_name: Atom, preferred_type_names: Vec<Atom>, graphql_type_name: Atom, selections: &Rc<parsed_model::SelectionList>, optional: bool, fields: &FieldMap) -> Result<SelectionField, Error>
     {
         // let mut selection_builder = SelectionBuilder::new(selections);
@@ -2613,7 +2804,7 @@ impl GenericOperation {
 
 
 
-    fn new_get_dependencies(selection_manager: &mut SelectionManager, schema: &Rc<Schema>, fields: &FieldMap) -> Result<(), Error> {
+    fn new_get_dependencies(selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fields: &FieldMap) -> Result<(), Error> {
         for (name, field) in fields {
             match field.ty.get_scalar() {
                 ScalarType::DefinedType(defined_type) => {
@@ -2676,7 +2867,7 @@ impl GenericOperation {
         
     }
     
-    fn new_gather_dependencies(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut SelectionManager, selections: &Rc<parsed_model::SelectionList>, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>,
+    fn new_gather_dependencies(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut NameSpaceManager, selections: &Rc<parsed_model::SelectionList>, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>,
         variant_name: Option<Atom>, fields: &FieldMap, selection_builder: &mut SelectionBuilder) -> Result<(), Error>
     {
         // let mut is_interface = is_interface;
@@ -3048,7 +3239,7 @@ impl GenericOperation {
     //     Ok(())
     // }
 
-    fn new(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut SelectionManager, parsed: &Rc<parsed_model::GenericOperation>, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>)-> Result<Self, Error> {
+    fn new(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut NameSpaceManager, parsed: &Rc<parsed_model::GenericOperation>, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>)-> Result<Self, Error> {
 
         let mut variable_builder = FieldMap::builder();
 
@@ -3110,7 +3301,7 @@ impl GenericOperation {
         writeln!(out, "}}")
     }
     
-    pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selection_manager: &SelectionManager) -> Result<(), Error> {
+    pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selection_manager: &NameSpaceManager) -> Result<(), Error> {
         let context = *self.get_context( schema)?;
 
         writeln!(out, "pub mod {} {{", to_snake_case(&self.parsed.name))?;
@@ -3155,12 +3346,116 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                 
                     for (name, field) in &self.variables {
                         writeln!(out, "#[serde(rename = \"{}\")]", &field.parsed.name)?;
-                        writeln!(out, "{}_: {},", to_snake_case(&name), field.ty.rust_type(false))?;
+                        if field.ty.is_optional() {
+                            writeln!(out, "#[serde(skip_serializing_if = \"Option::is_none\")]")?;
+                        }
+                        writeln!(out, "{}_: {},", to_snake_case(&name), field.ty.rust_type(Optionality::Default))?;
                     }
                 }
 
                 writeln!(out, "}}")?;
                 writeln!(out, "")?;
+
+
+
+
+                //-------
+
+                let rust_name = "Variables";
+
+                writeln!(out, "impl {} {{", rust_name)?;
+                {
+                    let mut out = out.indent();
+        
+                    writeln!(out, "pub fn builder() -> {}Builder {{", rust_name)?;
+                    writeln!(out, "    {}Builder {{", rust_name)?;
+                    for field in self.variables.values() {
+                        writeln!(out, "        {}_: None,", to_snake_case(&field.parsed.name))?;
+                    }
+                    writeln!(out, "    }}")?;
+                    writeln!(out, "}}")?;
+
+
+        
+                    writeln!(out, "pub fn get_formal_params(&self, buf: &mut String) {{")?;
+                    // writeln!(out, "    let mut buf = String::new();")?;
+                    for (name, field) in &self.variables {
+                        if field.ty.is_optional() {
+                            writeln!(out, "    if self.{}_.is_some() {{", to_snake_case(&field.parsed.name))?;
+                            writeln!(out, "        buf.push_str(\"${}: {},\");", &name, field.graphql_name())?;
+                            writeln!(out, "    }}")?;
+                        }
+                        else {
+                            writeln!(out, "    buf.push_str(\"${}: {},\");", &name, field.graphql_name())?;
+                        }
+                    }
+
+                    // writeln!(out, "    buf")?;
+                    // writeln!(out, "    }}")?;
+                    writeln!(out, "}}")?;
+                }
+            
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+        
+                writeln!(out, "")?;
+                writeln!(out, "pub struct {}Builder {{", rust_name)?;
+        
+                for field in self.variables.values() {
+                    writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Optional))?;
+                }
+            
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+        
+                writeln!(out, "impl {}Builder {{", rust_name)?;
+                {
+                    let mut out = out.indent();
+        
+                    for field in self.variables.values() {
+                        writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Required))?;
+                        {
+                            let mut out = out.indent();
+        
+                            writeln!(out, "self.{}_ = Some(value);", to_snake_case(&field.parsed.name))?;
+                            writeln!(out, "self")?;
+                        }
+                        writeln!(out, "}}")?;
+                        writeln!(out, "")?;
+                    }
+                    writeln!(out, "pub fn build(self) -> Result<{}, sparko_graphql::error::Error> {{", rust_name)?;
+                    {
+                        let mut out = out.indent();
+        
+                        for field in self.variables.values() {
+                            if let Type::Required(_) = field.ty {
+                                writeln!(out, "if let None = self.{}_ {{", to_snake_case(&field.parsed.name))?;
+                                writeln!(out, "    return Err(sparko_graphql::error::Error::MissingRequiredValueError(\"{}\"))", field.parsed.name)?;
+                                writeln!(out, "}}")?;
+                            }
+                        }
+        
+                        writeln!(out, "Ok({} {{", rust_name)?;
+                        {
+                            let mut out = out.indent();
+        
+                            for field in self.variables.values() {
+                                if let Type::Required(_) = field.ty {
+                                    writeln!(out, "{}_: self.{}_.unwrap(),", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
+                                }
+                                else {
+                                    writeln!(out, "{}_: self.{}_,", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
+                                }
+                            }
+                            writeln!(out, "}})")?;
+                        }
+                    }
+                    writeln!(out, "}}")?;
+                }
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+
+                //-------
             }
 
             writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
@@ -3179,25 +3474,25 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
 
                 writeln!(out, "const REQUEST_NAME: &str = \"{}\";", self.parsed.name)?;
 
-                if self.variables.is_empty() {
-                    writeln!(out, "const {}: &str = r#\"{} {}", self.parsed.operation.to_upper_case(), self.parsed.operation.to_lower_case(), self.parsed.name)?;
-                }
-                else {
-                    writeln!(out, "const {}: &str = r#\"{} {}(", self.parsed.operation.to_upper_case(), self.parsed.operation.to_lower_case(), self.parsed.name)?;
-                    {
-                        let mut out = out.indent();
+                // if self.variables.is_empty() {
+                //     writeln!(out, "const {}: &str = r#\"{} {}", self.parsed.operation.to_upper_case(), self.parsed.operation.to_lower_case(), self.parsed.name)?;
+                // }
+                // else {
+                //     writeln!(out, "const {}: &str = r#\"{} {}(", self.parsed.operation.to_upper_case(), self.parsed.operation.to_lower_case(), self.parsed.name)?;
+                //     {
+                //         let mut out = out.indent();
                     
-                        for (name, field) in &self.variables {
-                            writeln!(out, "${}: {},", to_snake_case(&name), field.graphql_name()
-                            // field.rust_type(schema, Maybe::Maybe, &None)
-                            )?;
-                        }
-                    }
-                    write!(out, ")")?;
-                }
-                self.response.generate_query(&mut out)?;
+                //         for (name, field) in &self.variables {
+                //             writeln!(out, "${}: {},", to_snake_case(&name), field.graphql_name()
+                //             // field.rust_type(schema, Maybe::Maybe, &None)
+                //             )?;
+                //         }
+                //     }
+                //     write!(out, ")")?;
+                // }
+                // self.response.generate_query(&mut out)?;
                 
-                writeln!(out, "\"#;")?;
+                // writeln!(out, "\"#;")?;
                 writeln!(out, "")?;
 
                 if self.variables.is_empty() {
@@ -3217,7 +3512,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                         let mut out = out.indent();
                     
                         for (name, field) in &self.variables {
-                            writeln!(out, "{}_: {},", to_snake_case(&name), field.ty.rust_type(false))?;
+                            writeln!(out, "{}_: {},", to_snake_case(&name), field.ty.rust_type(Optionality::Default))?;
                         }
                     }
                     writeln!(out, ") -> {} {{", self.parsed.operation)?;
@@ -3252,9 +3547,44 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                 writeln!(out.indent(), "Self::REQUEST_NAME")?;
                 writeln!(out, "}}")?;
 
-                writeln!(out, "fn get_query() -> &'static str {{")?;
-                writeln!(out.indent(), "Self::{}", self.parsed.operation.to_upper_case())?;
+                writeln!(out, "fn get_query(&self) -> String {{")?;
+                // writeln!(out.indent(), "Self::{}", self.parsed.operation.to_upper_case())?;
+                {
+                    let mut out = out.indent();
+                    writeln!(out, "let mut buf = String::from(\"{} {}\");", self.parsed.operation.to_lower_case(), self.parsed.name)?;
+
+                    if ! self.variables.is_empty() {
+
+                        writeln!(out, "buf.push('(');")?;
+                        writeln!(out, "self.variables.get_formal_params(&mut buf);")?;
+                        writeln!(out, "buf.push(')');")?;
+                        
+                    }
+
+                    let mut done_fragments = HashSet::new();
+                    let mut fragments = HashSet::new();
+                    self.response.generate_query(&mut out, &self.variables, &mut fragments)?;
+
+                    while ! fragments.is_empty() {
+                        fragments = Self::generate_fragments(&mut out, &self.variables, executable_document, &fragments, &mut done_fragments)?;
+                        // let mut new_fragments = HashSet::new();
+                        // for fragment_name in &fragments {
+                        //     if ! done_fragments.contains(fragment_name) {
+                        //         let fragment = executable_document.parsed.fragments.get(fragment_name).unwrap();
+
+                        //         fragment.generate_query(&mut out, &self.variables, &mut new_fragments)?;
+                        //         done_fragments.insert(fragment_name);
+                        //     }
+                        // }
+                        // if new_fragments.is_empty() {
+                        //     break;
+                        // }
+                        // fragments = new_fragments;
+                    }
+                    writeln!(out, "buf")?;
+                }
                 writeln!(out, "}}")?;
+                writeln!(out, "")?;
 
                 writeln!(out, "fn get_variables(&self) -> Result<std::string::String, serde_json::Error> {{")?;
                 if self.variables.is_empty() {
@@ -3298,6 +3628,20 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
         }
         writeln!(out, "}}")?;
         Ok(())
+    }
+    
+    fn generate_fragments(out: &mut Output<'_>, variables: &SharedMap<Field>, executable_document: &ExecutableDocument, fragments: &HashSet<Rc<String>>, done_fragments: &mut HashSet<Rc<String>>) -> Result<HashSet<Rc<String>>, Error> {
+        let mut new_fragments = HashSet::new();
+        for fragment_name in fragments {
+            if ! done_fragments.contains(fragment_name) {
+                let fragment = executable_document.parsed.fragments.get(fragment_name).unwrap();
+
+                fragment.generate_query(out, variables, &mut new_fragments)?;
+                done_fragments.insert(fragment_name.clone());
+            }
+        }
+
+        Ok(new_fragments)
     }
     
     
@@ -3451,8 +3795,23 @@ impl Print for SelectionContext {
 
 
 #[derive(Debug)]
-pub struct SelectionManager {
-    pub selections: Vec<Rc<Selection>>,
+pub enum NameSpaceItem {
+    Selection(Rc<Selection>),
+    Variant(Rc<Variant>),
+}
+
+impl NameSpaceItem {
+    fn generate(&self, out: &mut Output<'_>, selection_manager: &NameSpaceManager, schema: &Schema) -> Result<(), Error> {
+        match self {
+            NameSpaceItem::Selection(selection) => selection.generate(out, selection_manager, schema),
+            NameSpaceItem::Variant(variant) => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct NameSpaceManager {
+    pub items: Vec<NameSpaceItem>,
     // pub imports: IndexMap<Atom, IndexMap<Atom, HashSet<usize>>>,
     pub all_schema_imports: HashSet<Atom>,
     // pub schema_imports: IndexMap<Atom, IndexMap<Atom, HashSet<Atom>>>,
@@ -3462,7 +3821,7 @@ pub struct SelectionManager {
     pub operation_name: Option<Atom>,
 }
 
-impl Print for SelectionManager {
+impl Print for NameSpaceManager {
     fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "SelectionManager {{")?;
         {
@@ -3513,10 +3872,10 @@ impl Print for SelectionManager {
     }
 }
 
-impl SelectionManager {
-    pub fn new() -> SelectionManager {
-        SelectionManager {
-            selections: Vec::new(),
+impl NameSpaceManager {
+    pub fn new() -> NameSpaceManager {
+        NameSpaceManager {
+            items: Vec::new(),
             all_schema_imports: HashSet::new(),
             // imports: IndexMap::new(),
             // schema_imports: IndexMap::new(),
@@ -3534,10 +3893,16 @@ impl SelectionManager {
             for (operation, context) in map {
                 println!("operation {}", operation);
                 for id in &context.imports {
-                    if let Some(selection) = self.selections.get(*id) {
+                    if let Some(item) = self.items.get(*id) {
+                        let selection_names = match item {
+                            NameSpaceItem::Selection(content ) => &content.names,
+                            NameSpaceItem::Variant(content ) => &content.names,
+                        };
+
+
                         let default_name = Rc::new(format!("Type{}", id));
                         let mut name = &default_name;
-                        for posible_name in &selection.names {
+                        for posible_name in selection_names {
                             if ! context.names.contains_key(posible_name) {
                                 name = posible_name;
                                 break;
@@ -3646,50 +4011,82 @@ impl SelectionManager {
         // panic!("Failed to set_document?");
     }
 
-    fn insert(&mut self, graphql_type_name: Atom, parsed: Rc<parsed_model::SelectionList>, names: Vec<Rc<String>>, fields: IndexMap<Atom, SelectionField>, variants: IndexMap<Atom, IndexMap<Atom, SelectionField>>) -> Rc<Selection> {
+    fn insert(&mut self, graphql_type_name: Atom, parsed: Rc<parsed_model::SelectionList>, names: Vec<Rc<String>>, fields: IndexMap<Atom, SelectionField>, p_variants: IndexMap<Atom, IndexMap<Rc<String>, SelectionField>>) -> Rc<Selection> {
         
         
         println!("insert {:?}", &names);
-        let index = self.selections.len();
 
-        self.selections.push( Rc::new(Selection {
-            index,
+        let mut variants: Vec<Rc<Variant>> = Vec::new();
+        for (name, fields) in p_variants {
+            let index = self.items.len();
+
+            let variant = Rc::new(Variant{
+                index,
+                names: vec!(name.clone()),
+                fields,
+            });
+
+            
+            self.items.push( NameSpaceItem::Variant(variant.clone()));
+            self.get_context_mut().imports.insert(index);
+
+            variants.push(variant);
+        }
+
+
+        let selection_index = self.items.len();
+
+        let content = Rc::new(Selection {
+            index: selection_index,
             graphql_type_name,
             parsed,
             names,
             fields,
             variants,
-        }));
+        });
 
-        let check = self.selections.get(index);
+        let result = content.clone();
 
-        if let Some(check) = check {
-            if check.index == index {
-                let result = check.clone();
-                self.get_context_mut().imports.insert(index);
+        self.items.push( NameSpaceItem::Selection(content));
+        self.get_context_mut().imports.insert(selection_index);
+        
 
-                return result
+        result
 
-                // if let Some(document_name) = &self.document_name {
-                //     if let Some(map) = self.imports.get_mut(document_name) {
-                //         if let Some(operation_name) = &self.operation_name {
-                //             if let Some(set) = map.get_mut(operation_name) {
-                //                 set.insert(index);
+        // let check = self.items.get(index);
+
+        // if let Some(check) = check {
+        //     if let NameSpaceItem::Selection { id, content } = check {
+        //         if content.index == index {
+        //             let result = check.clone();
+        //             self.get_context_mut().imports.insert(index);
+
+        //             return result
+        //         }
+        //         else {
+        //             panic!("SelectionManager index error expected {} got {}", index, check.index);
+        //         }
+
+        //         // if let Some(document_name) = &self.document_name {
+        //         //     if let Some(map) = self.imports.get_mut(document_name) {
+        //         //         if let Some(operation_name) = &self.operation_name {
+        //         //             if let Some(set) = map.get_mut(operation_name) {
+        //         //                 set.insert(index);
                             
-                //                 return check.clone()
-                //             }
-                //         }
-                //     }
-                // }
-                // panic!("Failed to set_document?");
-            }
-            else {
-                panic!("SelectionManager index error expected {} got {}", index, check.index);
-            }
-        }
-        else  {
-            panic!("SelectionManager index error expected {} got None", index);
-        }
+        //         //                 return check.clone()
+        //         //             }
+        //         //         }
+        //         //     }
+        //         // }
+        //         // panic!("Failed to set_document?");
+        //     }
+        //     else {
+        //         panic!("SelectionManager index error expected {} got {}", index, check.index);
+        //     }
+        // }
+        // else  {
+        //     panic!("SelectionManager index error expected {} got None", index);
+        // }
     }
     
     fn get_schema_dependencies(&self) -> &HashSet<Atom> {
@@ -3712,9 +4109,13 @@ impl SelectionManager {
         self.names.get(id).unwrap()
     }
     
-    fn get(&self, id: usize) -> &Rc<Selection> {
-        if let Some(selection) = self.selections.get(id) {
-            selection
+    fn get(&self, id: usize) -> &NameSpaceItem {
+        if let Some(item) = self.items.get(id) {
+            // match item {
+            //     NameSpaceItem::Selection(content ) => content,
+            //     NameSpaceItem::Variant(_) => panic!("Expecting selection {} but found Variant", id),
+            // }
+            item
         }
         else {
             panic!("Cant find selection {}", id);
@@ -3746,7 +4147,7 @@ pub struct ExecutableDocument {
 }
 
 impl ExecutableDocument {
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry,  selection_manager: &mut SelectionManager, parsed: &Rc<parsed_model::ExecutableDocument>, schema: &Rc<Schema>) ->  Result<Self, Error> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut Registry,  selection_manager: &mut NameSpaceManager, parsed: &Rc<parsed_model::ExecutableDocument>, schema: &Rc<Schema>) ->  Result<Self, Error> {
 
         // let mut fragments: IndexMap<Rc<String>, FragmentDefinition> = IndexMap::new();
 
@@ -3835,7 +4236,7 @@ impl ExecutableDocument {
     //     }
     // }
 
-    pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>, selection_manager: &mut SelectionManager) -> Result<(), Error> {
+    pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>, selection_manager: &mut NameSpaceManager) -> Result<(), Error> {
        writeln!(out, "pub mod {} {{", self.parsed.name)?;
         {
             let mut out = out.indent();

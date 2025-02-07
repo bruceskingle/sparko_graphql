@@ -2,7 +2,7 @@ use graphql_parser::{parse_query, Pos};
 use graphql_parser::schema::parse_schema;
 use indexmap::IndexMap;
 use inflections::case::to_snake_case;
-use validated_model::SelectionManager;
+use validated_model::NameSpaceManager;
 use std::collections::{HashMap, HashSet};
 // use model::{ExecutableDocument, Schema};
 use std::fmt::Display;
@@ -511,6 +511,7 @@ pub struct Builder {
     model_name: String,
     schema_file_name: Option<String>,
     query_file_names: Vec<(String, String)>,
+    types: HashMap<String, String>,
     print: bool,
     generate: bool,
 }
@@ -520,6 +521,7 @@ pub fn builder(model_name: impl Into<String>) -> Builder {
         model_name: model_name.into(),
         schema_file_name: None,
         query_file_names: Vec::new(),
+        types: HashMap::new(),
         print: false,
         generate: true,
     }
@@ -537,6 +539,12 @@ impl Builder {
 
     pub fn with_query(&mut self, file_name: &str, model_name: &str) -> &mut Builder {
         self.query_file_names.push((file_name.to_string(), model_name.to_string()));
+
+        self
+    }
+    
+    pub fn with_type(&mut self, name: &str, fully_qualified_type: &str) -> &mut Builder {
+        self.types.insert(name.into(), fully_qualified_type.into());
 
         self
     }
@@ -627,7 +635,7 @@ impl Builder {
                 writeln!(out, " * *********************************************************************************************/")?;
             }
 
-            let validated_schema = match validated_model::Schema::new(&mut err, &parsed_schema, &mut registry) {
+            let validated_schema = match validated_model::Schema::new(&mut err, &parsed_schema, &mut registry, &self.types) {
                 Ok(result) => result,
                 Err(error) => {
                     base.report_errors();
@@ -652,7 +660,7 @@ impl Builder {
             // let mut dependencies: IndexMap<&str, (validated_model::ExecutableDocument, IndexMap<Atom, HashSet<Atom>>)> = IndexMap::new();
 
             let mut documents = Vec::new();
-            let mut selection_manager = SelectionManager::new();
+            let mut selection_manager = NameSpaceManager::new();
 
             for (query_file_name, query_model_name) in &self.query_file_names 
             {
@@ -873,13 +881,14 @@ mod tests {
     }
 
     fn do_test_schema(schema_string: &str, mut err:  &mut ErrorCollector<'_>) -> Result<(), Error> {
+        let types = HashMap::new();
 
          match parse_schema::<'_, String>(&schema_string) {
             Ok(ast) => {
                 let mut registry = Registry::new();
                 let parsed_schema = parsed_model::Schema::new(&mut err, &mut registry, ast)?;
 
-                validated_model::Schema::new(&mut err, &parsed_schema, &mut registry)?;
+                validated_model::Schema::new(&mut err, &parsed_schema, &mut registry, &types)?;
             },
             Err(parse_error) => {
                 err.error(BuildError::SchemaSyntaxError(parse_error.to_string()));
@@ -907,15 +916,15 @@ mod tests {
     }
 
     fn do_test_query(schema_string: &str, query: &str, mut err:  &mut ErrorCollector<'_>) -> Result<(), Error> {
-
+        let types = HashMap::new();
         
 
         match parse_schema::<'_, String>(&schema_string) {
             Ok(ast) => {
                 let mut registry = Registry::new();
                 let parsed_schema = parsed_model::Schema::new(&mut err, &mut registry, ast)?;
-                let validated_schema = validated_model::Schema::new(&mut err, &parsed_schema, &mut registry)?;
-                let mut selection_manager = SelectionManager::new();
+                let validated_schema = validated_model::Schema::new(&mut err, &parsed_schema, &mut registry, &types)?;
+                let mut selection_manager = NameSpaceManager::new();
                 selection_manager.create_document(registry.intern_str("query_model_name"));
                 match parse_query::<String>(&query) {
                     Ok(ast) => {
@@ -1057,9 +1066,6 @@ r#"query GetPerson {
        out.report_errors();
         panic!("Expected MissingFieldError");
     }
-
-
-
 
 
 
