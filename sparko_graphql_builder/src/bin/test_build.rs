@@ -33,7 +33,9 @@ fn main()  -> Result<(), Box<dyn Error>> {
         .with_type("Date", "sparko_graphql::types::Date")
         .with_type("DateTime", "sparko_graphql::types::DateTime")
         .with_schema("../sparko_graphql_builder_test/graphql/octopus/schema.graphql")
-        .with_query("../sparko_graphql_builder_test/graphql/octopus/main.graphql", "main")
+        // .with_query("../sparko_graphql_builder_test/graphql/octopus/main.graphql", "main")
+        .with_query("../../marco-sparko/graphql/octopus/LatestBill.graphql", "latest_bill")
+        // .with_print(true)
         .build()?;
     Ok(())
 }
