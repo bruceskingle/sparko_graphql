@@ -1,0 +1,13 @@
+query GetLuke {
+  person(id: "cGVvcGxlOjE=") {
+    name
+  	birthYear
+  }
+}
+
+query GetHan {
+  person(id: "idOfHan=") {
+    name
+  	birthYear
+  }
+}

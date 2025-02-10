@@ -1,0 +1,24 @@
+query GetLuke {
+  person(id: "cGVvcGxlOjE=") {
+    name
+  	birthYear
+  }
+  film(id: "ZmlsbXM6Mg==") {
+    id
+    title
+  }
+}
+
+query GetTwoFilms {
+  directorFilm: film(id: "ZmlsbXM6MQ==") {
+    id
+    title
+    director
+  }
+  
+  releaseDateFilm: film(id: "ZmlsbXM6Mg==") {
+    id
+    title
+    releaseDate
+  }
+}

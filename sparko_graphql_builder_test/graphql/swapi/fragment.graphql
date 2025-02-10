@@ -1,0 +1,16 @@
+query getFimSummaries {
+  film(id: "ZmlsbXM6MQ==") {
+    ...FilmSummary
+  }
+  
+  releaseDateFilm: film(id: "ZmlsbXM6Mg==") {
+    ...FilmSummary
+    releaseDate
+  }
+}
+
+fragment FilmSummary on Film {
+  id
+  title
+  episodeID?
+}

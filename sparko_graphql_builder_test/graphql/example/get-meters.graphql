@@ -1,0 +1,28 @@
+fragment Mpan on ElectricityMeter {
+  mpan
+}
+
+fragment Mprn on GasMeter {
+  mprn
+}
+
+query GetMeters1 {
+  meters {
+  	id
+  }
+}
+
+query GetMeters2 {
+  meters {
+  	id
+    ...Mpan
+  }
+}
+
+query GetMeters3 {
+  meters {
+  	id
+    ...Mpan
+    ...Mprn
+  }
+}

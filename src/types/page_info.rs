@@ -32,6 +32,27 @@ pub struct ForwardPageInfo {
     pub has_next_page: bool
 }
 
+#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+#[serde(rename_all = "camelCase")]
+pub struct ReversePageInfo {
+    pub end_cursor: String,
+    pub has_previous_page: bool
+}
+
+// #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+// #[serde(rename_all = "camelCase")]
+// pub struct Query<P,V> {
+//     pub params: P,
+//     pub value: V
+// }
+
+// #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+// #[serde(rename_all = "camelCase")]
+// pub struct ForwardPageParams {
+//     pub after: String,
+//     pub first: Int
+// }
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ForwardPageOf<T> 
@@ -42,10 +63,51 @@ pub struct ForwardPageOf<T>
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct ReversePageOf<T> 
+{
+    pub page_info: ReversePageInfo,
+    pub edges: Vec<EdgeOf<T>>
+}
+
+pub enum PageOf<T> {
+  Forward(ForwardPageOf<T>),
+  Reverse(ReversePageOf<T>)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct  EdgeOf<T>
 {
-  pub node: T
+  pub node: T,
+  // pub cursor: String
 }
+
+// #[derive(GraphQLVariables)]
+// pub struct NodeIdSelector {
+//   pub id: ID,
+// }
+
+
+
+// pub enum PageSelector {
+//   Forward(ForwardPageSelector),
+//   Reverse(ReversePageSelector)
+// }
+
+
+// #[derive(GraphQLVariables)]
+// pub struct ForwardPageSelector {
+//   pub after: Option<String>,
+//   pub first: Int,
+// }
+
+
+// #[derive(GraphQLVariables)]
+// pub struct ReversePageSelector {
+//   pub before: Option<String>,
+//   pub last: Int,
+// }
+
 
 #[cfg(test)]
 mod tests {

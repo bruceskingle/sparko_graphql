@@ -36,7 +36,9 @@ pub enum Error {
     JsonError(serde_json::Error),
     HttpError(StatusCode),
     InvalidInputError(Box<dyn StdError>),
-    InternalError(String)
+    InvalidResponseError{json: serde_json::Value, error: serde_json::Error},
+    InternalError(String),
+    MissingRequiredValueError(&'static str),
 }
 
 impl Display for Error {
@@ -64,7 +66,14 @@ impl Display for Error {
             Error::JsonError(err) => f.write_fmt(format_args!("JsonError({})", err)),
             Error::HttpError(err) => f.write_fmt(format_args!("HttpError({})", err)),
             Error::InvalidInputError(err) => f.write_fmt(format_args!("InvalidInputError({})", err)),
-            Error::InternalError(err) => f.write_fmt(format_args!("InternalError({})", err))
+            Error::InvalidResponseError{json, error} => write!(f, "InvalidResponseError({} {})", 
+            if let Ok(str) = serde_json::to_string_pretty(&json) {
+                str
+            } else {
+                json.to_string()
+            }, error),
+            Error::InternalError(err) => f.write_fmt(format_args!("InternalError({})", err)),
+            Error::MissingRequiredValueError(field) => write!(f, "MissingRequiredValueError({})", field),
         }
     }
 }

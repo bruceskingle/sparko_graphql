@@ -1,0 +1,107 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'sparko_graphql_builder'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=sparko_graphql_builder",
+                    "--",
+                    "--test-threads=1"
+                ],
+                "filter": {
+                    "name": "sparko_graphql_builder",
+                    "kind": "lib"
+                }
+            },
+            "args": ["--test-threads=1"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'sparko_graphql_core'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=sparko_graphql_core"
+                ],
+                "filter": {
+                    "name": "sparko_graphql_core",
+                    "kind": "lib"
+                }
+            },
+            "args": ["--test-threads=1"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'sparko_graphql'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=sparko_graphql"
+                ],
+                "filter": {
+                    "name": "sparko_graphql",
+                    "kind": "lib"
+                }
+            },
+            "args": ["--test-threads=1"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'test_build.rs'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=test_build",
+                    "--package=sparko_graphql_builder"
+                ],
+                "filter": {
+                    "name": "test_build",
+                    "kind": "bin"
+                }
+            },
+            "env": {
+                "OUT_DIR": "/tmp"
+            },
+            "cwd": "${workspaceFolder}/sparko_graphql_builder"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'test_swapi'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=test_swapi",
+                    "--package=sparko_graphql_builder_test"
+                ],
+                "filter": {
+                    "name": "test_swapi",
+                    "kind": "bin"
+                }
+            },
+            "env": {
+                "OUT_DIR": "/tmp"
+            },
+            "cwd": "${workspaceFolder}/sparko_graphql_builder_test"
+        }
+    ]
+}

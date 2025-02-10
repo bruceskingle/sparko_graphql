@@ -22,8 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ******************************************************************************/
 
-
-use std::collections::HashMap;
+use std::sync::Arc;
 
 use display_json::DisplayAsJsonPretty;
 use serde::{Deserialize, Serialize};
@@ -74,29 +73,6 @@ impl ParamBuffer {
     }
 }
 
-pub struct VariableBuffer {
-    map: HashMap<String, serde_json::Value>
-}
-
-impl VariableBuffer {
-    pub fn new() -> VariableBuffer {
-        VariableBuffer {
-            map: HashMap::new()
-        }
-    }
-
-    pub fn push_variable<T: Serialize>(&mut self, prefix: &str, name: &str, value: &T) -> Result<(), Error> {
-       self.map.insert(format!("{}{}", prefix, name), serde_json::to_value(value)?);
-       Ok(())
-    }
-
-    pub fn to_string(self) -> Result<String, Error> {
-        serde_json::to_string_pretty(&self.map)
-    }
-}
-
-const EMPTY_STRING: String = String::new();
-
 pub struct GraphQL;
 
 impl GraphQL {
@@ -115,10 +91,12 @@ impl GraphQL {
     }
 }
 
+
+
 pub trait GraphQLQueryParams {
     fn get_formal_part(&self, params: &mut ParamBuffer, prefix: &str);
     fn get_actual_part(&self, params: &mut ParamBuffer, prefix: &str);
-    fn get_variables_part(&self, variables: &mut VariableBuffer, prefix: &str) -> Result<(), Error>;
+    fn get_variables_part(&self, variables: &mut serde_json::Map<String, serde_json::Value>, prefix: &str) -> Result<(), Error>;
 
 
     fn get_formal(&self) -> String {
@@ -136,20 +114,15 @@ pub trait GraphQLQueryParams {
     }
 
     fn get_variables(&self) -> Result<String, Error> {
-        let mut variables = VariableBuffer::new();
-        self.get_variables_part(&mut variables, "")?;
-
-        variables.to_string()
+        serde_json::to_string_pretty(&self.get_variable_map()?)
     }
 
-    fn get_variable_map(&self) -> Result<HashMap<String, serde_json::Value>, Error>  {
-        let mut variables = VariableBuffer::new();
+    fn get_variable_map(&self) -> Result<serde_json::Map<String, serde_json::Value>, Error>  {
+        let mut variables: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
         self.get_variables_part(&mut variables, "")?;
 
-        Ok(variables.map)
-    }
-
-    
+        Ok(variables)
+    }    
 }
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
@@ -163,7 +136,7 @@ impl GraphQLQueryParams for NoParams {
     fn get_actual_part(&self, _params: &mut ParamBuffer, _prefix: &str) {
     }
 
-    fn get_variables_part(&self, _variables: &mut VariableBuffer, _prefix: &str) -> Result<(), Error> {
+    fn get_variables_part(&self, _variables: &mut serde_json::Map<String, serde_json::Value>, _prefix: &str) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -175,23 +148,26 @@ pub trait GraphQLType<Q: GraphQLQueryParams> {
     }
 
     fn get_query_attributes(params: &Q, prefix: &str) -> String;
+}
 
-    // fn get_request_name(&self) -> &'static str;
-    // fn get_query(&self) -> String ;
-    // fn get_query(&self) -> String {
-    //     format!(r#"
-    //     query {}{} {{
-    //         account{} {{
-    //             id
-    //             properties{} {{
-    //                 {}
-    //             }}
-    //         }}
-    //     }}
-    //     "#, self.get_request_name(), self.get_params().get_formal(),
-    //         self.get_params().get_actual(""),
-    //         self.get_params().properties.get_actual("properties_"),
-    //         PropertySimpleView::get_query_part()
-    // )
-    // }
+
+pub trait TokenManager {
+    /*
+    use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+   --> src/lib.rs:547:5
+    |
+547 |     async fn get_authenticator(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
+    |     ^^^^^
+    |
+    = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+    = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+     */
+    // Returns a bearer token, which may be cached.
+    // async fn get_authenticator(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
+    fn get_authenticator(&mut self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
+
+    // Returns a fresh bearer token forcing a reauthentication
+    // async fn authenticate(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
+    fn authenticate(&mut self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
 }

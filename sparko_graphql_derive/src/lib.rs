@@ -1,5 +1,5 @@
 /*****************************************************************************
-MIT License
+ MIT License
 
 Copyright (c) 2024 Bruce Skingle
 
@@ -22,23 +22,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ******************************************************************************/
 
-pub mod date;
-pub use date::Date;
+use sparko_graphql_core::{graph_ql_type, graph_ql_type_params};
 
-pub mod datetime;
-pub use datetime::DateTime;
+#[proc_macro_derive(GraphQLType, attributes(graphql))]
+pub fn derive_graphql_type(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
-pub mod boolean;
-pub use boolean::Boolean;
+    graph_ql_type::derive_graphql_type2(item.into()).unwrap().into()
+}
 
-pub mod id;
-pub use id::ID;
 
-pub mod int;
-pub use int::Int;
 
-pub mod float;
-pub use float::Float;
+#[proc_macro_derive(GraphQLQueryParams, attributes(graphql))]
+pub fn derive_graphql_query_params(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
-mod page_info;
-pub use page_info::*;
+    graph_ql_type_params::derive_graphql_query_params2(item.into()).unwrap().into()
+}

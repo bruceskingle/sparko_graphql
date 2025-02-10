@@ -1,1 +1,3 @@
 /target
+sparko_graphql_builder_test/src/bin/test_octopus.rs
+sparko_graphql_builder_test/graphql/octopus
