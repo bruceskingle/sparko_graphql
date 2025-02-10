@@ -404,6 +404,7 @@ enum BaseOutput {
     Stdout,
 
 #[cfg(test)]
+#[allow(dead_code)]
     Buffer(Vec<u8>),
 }
 
@@ -469,6 +470,7 @@ impl BaseOutput {
 
 #[cfg(test)]
 impl BaseOutput {
+    #[allow(dead_code)]
     pub fn new() -> BaseOutput {
         BaseOutput::Buffer(Vec::new())
     }
@@ -612,7 +614,7 @@ impl Builder {
 
 
             if self.print || self.generate {
-                base.report(out);
+                base.report(out)?;
             }
 
             let mut documents = Vec::new();

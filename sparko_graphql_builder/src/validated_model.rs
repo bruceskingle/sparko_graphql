@@ -194,7 +194,7 @@ impl Selection {
                         
                         self.generate_fields(&mut out, selection_manager, schema)?;
                         for variant_selection in &self.variants {
-                            for (name, field) in &variant_selection.fields {
+                            for field in variant_selection.fields.values() {
                                 field.generate_field(&mut out, selection_manager, schema)?;
                             }
                         }
@@ -258,7 +258,7 @@ impl Selection {
                                     for implementor in &interface.implemented_by {
                                         let enum_variant_name = to_pascal_case(&implementor);
                 
-                                        if let Some(variant) = variant_map.get(implementor) {
+                                        if let Some(_) = variant_map.get(implementor) {
                                             writeln!(out, "{}::{}(content) => content.as_{}(),", base_type_name, enum_variant_name, base_member_name)?;
                                         }
                                         else {
@@ -358,7 +358,6 @@ pub struct Variant {
 
 pub struct SelectionBuilder {
     pub graphql_type_name: Name,
-    pub parsed: Rc<parsed_model::SelectionList>,
     pub preferred_type_names: Vec<Name>,
     pub fields: IndexMap<Name, SelectionField>,
     pub variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>,
@@ -366,10 +365,9 @@ pub struct SelectionBuilder {
 }
 
 impl SelectionBuilder {
-    pub fn new(registry: &mut NameRegistry, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, interface: &Option<Rc<Interface>>) -> SelectionBuilder {
+    pub fn new(graphql_type_name: Name, interface: &Option<Rc<Interface>>) -> SelectionBuilder {
         SelectionBuilder {
             graphql_type_name,
-            parsed: selections.clone(),
             preferred_type_names: Vec::new(),
             fields: IndexMap::new(),
             variants: IndexMap::new(),
@@ -379,7 +377,7 @@ impl SelectionBuilder {
 
     pub fn with_field(&mut self, variant_name: &Option<(Name, Name)>, field_name: &Name, field: SelectionField) -> &mut Self {
         if let Some((variant_name, variant_type_condition)) = variant_name {
-            if let Some((tc, variant)) = self.variants.get_mut(variant_name) {
+            if let Some((_, variant)) = self.variants.get_mut(variant_name) {
                 variant.insert(field_name.clone(), field);
             }
             else {
@@ -394,11 +392,6 @@ impl SelectionBuilder {
         self
     }
 
-    pub fn with_name(&mut self, name: &Name) -> &mut Self {
-        self.preferred_type_names.push(name.clone());
-        self
-    }
-
     pub fn with_preferred_type_names(&mut self, preferred_type_names: Vec<Name>) -> &mut Self {
         for name in preferred_type_names {
             self.preferred_type_names.push(name);
@@ -407,7 +400,7 @@ impl SelectionBuilder {
     }
 
     pub fn build(self, manager: &mut NameSpaceManager) -> Rc<Selection> {
-        manager.insert(self.graphql_type_name, self.parsed, self.preferred_type_names, self.fields, self.variants, self.interface)
+        manager.insert(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface)
     }
 }
 
@@ -590,28 +583,6 @@ impl DefinedType {
             DefinedType::InputObject(name) => name,
         }
     }
-    
-    fn name(&self) -> &Rc<String> {
-        match self {
-            DefinedType::Scalar(name) => name,
-            DefinedType::Object(name) => name,
-            DefinedType::Interface(name) => name,
-            DefinedType::Union(name) => name,
-            DefinedType::Enum(name) => name,
-            DefinedType::InputObject(name) => name,
-        }
-    }
-    
-    pub fn get_fields<'a>(&self, schema: &'a Schema) -> Result<Option<&'a FieldMap>, Error> {
-        Ok(match self {
-            DefinedType::Scalar(_) => None,
-            DefinedType::Object(name) => Some(&schema.get_object(name)?.fields),
-            DefinedType::Interface(name) => Some(&schema.get_interface(name)?.fields),
-            DefinedType::Union(name) => Some(&schema.get_union(name)?.fields),
-            DefinedType::Enum(_) => None,
-            DefinedType::InputObject(name) => Some(&schema.get_input_object(name)?.fields),
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -683,13 +654,6 @@ impl ScalarType {
                 }
             },
             parsed_model::ScalarType::BuiltinType(builtin_type) => Ok(ScalarType::BuiltinType(builtin_type.clone())),
-        }
-    }
-    
-    pub fn get_fields<'a>(&self, schema: &'a Schema) -> Result<Option<&'a FieldMap>, Error> {
-        match self {
-            ScalarType::DefinedType(defined_type) => defined_type.get_fields(schema),
-            ScalarType::BuiltinType(_) => Ok(None),
         }
     }
 }
@@ -777,10 +741,6 @@ impl Type {
             Type::Required(wrapped) => wrapped.get_scalar(),
             Type::Array(wrapped) => wrapped.get_scalar(),
         }
-    }
-
-    pub fn get_fields<'a>(&self, schema: &'a Schema) -> Result<Option<&'a FieldMap>, Error> {
-        self.get_scalar().get_fields(schema)
     }
     
     // if nonnull then the type is coerced to be nonnull at all levels
@@ -993,16 +953,6 @@ impl Object {
                 fields: builder.build(),
                 is_input: parsed.is_input,
             }))
-    }
-
-    fn from_fields(registry: &mut NameRegistry, name: Name, fields: FieldMap) -> Rc<Self> {
-        Rc::new(Object {
-            rust_name: registry.intern(to_pascal_case(&name)),
-            name,
-            fully_implements: Vec::new(),
-            fields,
-            is_input: false,
-        })
     }
     
 
@@ -1388,19 +1338,19 @@ impl Schema {
         writeln!(out, "}}")
     }
 
-    pub fn get_scalar(&self, name: &Name) -> Result<&Rc<Scalar>, Error> {
-        if let Some(type_definition) = &self.defined_types.get(name) {
-            if let TypeDefinition::Scalar(type_definition) = type_definition {
-                Ok(type_definition)
-            }
-            else {
-                Err(Error::BuildFailed(format!("Expected Scalar for \"{}\" but found {}", name, type_definition.type_name())))
-            }
-        }
-        else {
-            Err(Error::BuildFailed(format!("Failed to find Scalar \"{}\"", name)))
-        }
-    }
+    // pub fn get_scalar(&self, name: &Name) -> Result<&Rc<Scalar>, Error> {
+    //     if let Some(type_definition) = &self.defined_types.get(name) {
+    //         if let TypeDefinition::Scalar(type_definition) = type_definition {
+    //             Ok(type_definition)
+    //         }
+    //         else {
+    //             Err(Error::BuildFailed(format!("Expected Scalar for \"{}\" but found {}", name, type_definition.type_name())))
+    //         }
+    //     }
+    //     else {
+    //         Err(Error::BuildFailed(format!("Failed to find Scalar \"{}\"", name)))
+    //     }
+    // }
 
     pub fn get_object(&self, name: &Name) -> Result<&Rc<Object>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
@@ -1444,19 +1394,19 @@ impl Schema {
         }
     }
     
-    fn get_enum(&self, name: &Name) -> Result<&Rc<Enum>, Error> {
-        if let Some(type_definition) = &self.defined_types.get(name) {
-            if let TypeDefinition::Enum(type_definition) = type_definition {
-                Ok(type_definition)
-            }
-            else {
-                Err(Error::BuildFailed(format!("Expected Enum for \"{}\" but found {}", name, type_definition.type_name())))
-            }
-        }
-        else {
-            Err(Error::BuildFailed(format!("Failed to find Enum \"{}\"", name)))
-        }
-    }
+    // fn get_enum(&self, name: &Name) -> Result<&Rc<Enum>, Error> {
+    //     if let Some(type_definition) = &self.defined_types.get(name) {
+    //         if let TypeDefinition::Enum(type_definition) = type_definition {
+    //             Ok(type_definition)
+    //         }
+    //         else {
+    //             Err(Error::BuildFailed(format!("Expected Enum for \"{}\" but found {}", name, type_definition.type_name())))
+    //         }
+    //     }
+    //     else {
+    //         Err(Error::BuildFailed(format!("Failed to find Enum \"{}\"", name)))
+    //     }
+    // }
 
     pub fn get_input_object(&self, name: &Name) -> Result<&Rc<Object>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
@@ -1581,7 +1531,7 @@ println!("SelectionQueryField {}", selection_field.name);
             position: selection_field.position.clone(),
             optional: selection_field.optional,
             arguments: selection_field.arguments.clone(),
-            selections: Rc::new(SelectionQueryList::new(&selection_field.selections, interface, registry, schema, fields, format!("field {} {:?}", selection_field.name, interface))?),
+            selections: Rc::new(SelectionQueryList::new(&selection_field.selections, interface, registry, schema, fields)?),
         })))
     }
 
@@ -1679,7 +1629,7 @@ impl SelectionQueryInlineFragmentSpread{
         println!("SelectionQueryInlineFragmentSpread {:?}", parsed.type_condition);
         Ok(SelectionQuery::InlineFragment(Rc::new(SelectionQueryInlineFragmentSpread {
             position: parsed.position.clone(),
-            selections: Rc::new(SelectionQueryList::new(&parsed.selections, &None, registry, schema, fields, format!("fragment_spread {:?}", &parsed.type_condition))?),
+            selections: Rc::new(SelectionQueryList::new(&parsed.selections, &None, registry, schema, fields)?),
             type_condition: parsed.type_condition.clone(),
         })))
     }
@@ -1748,9 +1698,6 @@ impl SelectionQuery {
 #[derive(Debug)]
 pub struct SelectionQueryList {
     pub selections: Vec<SelectionQuery>,
-    pub debug: String,
-    pub interface_name: String,
-    pub added_type: bool,
 }
 
 impl Print for SelectionQueryList {
@@ -1768,7 +1715,7 @@ impl Print for SelectionQueryList {
 }
 
 impl SelectionQueryList {
-    fn new(parsed: &parsed_model::SelectionList, interface: &Option<&Rc<Interface>>, registry: &mut NameRegistry, schema: &Rc<Schema>, fields: &FieldMap, debug: String) -> Result<Self, Error> {
+    fn new(parsed: &parsed_model::SelectionList, interface: &Option<&Rc<Interface>>, registry: &mut NameRegistry, schema: &Rc<Schema>, fields: &FieldMap) -> Result<Self, Error> {
         let mut selections = Vec::new();
         let mut has_typename = false;
 
@@ -1825,7 +1772,7 @@ impl SelectionQueryList {
             }
         }
         println!("has_typename {}", has_typename);
-        let added_type = if interface.is_some() && ! has_typename {
+        if interface.is_some() && ! has_typename {
             selections.push(SelectionQuery::Field(Rc::new(SelectionQueryField {
                 name: registry.intern_str(TYPE_NAME),
                 alias: None,
@@ -1833,9 +1780,6 @@ impl SelectionQueryList {
                 optional: false,
                 arguments: Vec::new(),
                 selections: Rc::new(SelectionQueryList {
-                    interface_name: String::from("None"),
-                    added_type: false,
-                    debug: format!("Added __type"),
                     selections: Vec::new(),
                 }),
             })));
@@ -1846,19 +1790,8 @@ impl SelectionQueryList {
                 println!(" {:?}", sq)
             }
             println!("*******************************************");
-            true
         }
-        else {
-            false
-        };
-
-        let interface_name = if let Some(interface) = interface {
-            interface.parsed.name.to_string()
-        }
-        else {
-            String::from("None")
-        };
-        Ok(Self { selections, interface_name, added_type, debug })
+        Ok(Self { selections})
     }
     
     pub fn generate_query(&self, out: &mut Output<'_>, variables: &FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
@@ -1912,7 +1845,7 @@ impl GenericOperation {
                 parsed: parsed.clone(),
                 variables,
                 response,
-                selection_query_list: SelectionQueryList::new(&parsed.selections, &None, registry, schema, fields, format!("Operation {}", parsed.name))?
+                selection_query_list: SelectionQueryList::new(&parsed.selections, &None, registry, schema, fields)?
             })
     }
 
@@ -1931,34 +1864,11 @@ impl GenericOperation {
             },
         }
     }
-
-    fn get_context2<'a>(err: Option<&mut ErrorCollector>, operation: &OperationType, name: &Name, position: &Pos, schema: &'a Rc<Schema>) -> Result<Box<&'a dyn Context>, Error> {
-        match operation {
-            OperationType::Query => Ok(Box::new(schema.get_object(&schema.query)?.as_ref())),
-            OperationType::Mutation => {
-                if let Some(mutation) = &schema.mutation {
-                    Ok(Box::new(schema.get_object(mutation)?.as_ref()))
-                }
-                else {
-                    if let Some(err) = err {
-                        err.fail(BuildError::MissingObjectError(position.clone(), format!("Mutation {} used but no Mutation root found", name)))
-                    }
-                    else {
-                        Err(Error::BuildFailed(format!("Previously validated Mutation {} used but no Mutation root found", name)))
-                    }
-                }
-            },
-        }
-    }
-
-    fn get_context<'a>(&self, schema: &'a Rc<Schema>) -> Result<Box<&'a dyn Context>, Error> {
-        Self::get_context2(None, &self.parsed.operation, &self.parsed.name, &self.parsed.position, schema)
-    }
     
     fn create_selection(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
         preferred_type_names: Vec<Name>, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap, interface: &Option<Rc<Interface>>) -> Result<Rc<Selection>, Error>
     {
-        let mut selection_builder = SelectionBuilder::new(registry, graphql_type_name, selections, interface);
+        let mut selection_builder = SelectionBuilder::new(graphql_type_name, interface);
         
         selection_builder.with_preferred_type_names(preferred_type_names);
 
@@ -1980,7 +1890,7 @@ impl GenericOperation {
     }
 
     fn new_get_dependencies(selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fields: &FieldMap) -> Result<(), Error> {
-        for (name, field) in fields {
+        for field in fields.values() {
             match field.ty.get_scalar() {
                 ScalarType::DefinedType(defined_type) => {
                     match defined_type {
@@ -2208,8 +2118,6 @@ impl GenericOperation {
     }
     
     pub fn generate(&self, out: &mut Output, schema: &Rc<Schema>, executable_document: &ExecutableDocument, selection_manager: &NameSpaceManager) -> Result<(), Error> {
-        let context = *self.get_context( schema)?;
-
         writeln!(out, "pub mod {} {{", to_snake_case(&self.parsed.name))?;
         {
             let mut out = out.indent();
@@ -2232,7 +2140,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
 
 
             writeln!(out, "// Start dependencies")?;
-            for (name, id) in &selection_manager.get_context().names {
+            for id in selection_manager.get_context().names.values() {
                 let selection = selection_manager.get(*id);
 
                 selection.generate(&mut out, selection_manager, schema)?;
@@ -2486,35 +2394,6 @@ fn get_field<'a>(schema: &'a Rc<Schema>, fields: &'a SharedMap<Field>, name: &St
     }
 }
 
-pub struct FragmentSpread {
-    pub parsed: Rc<parsed_model::FragmentSpread>,
-}
-
-impl FragmentSpread {
-    fn new(err: &mut ErrorCollector<'_>, parsed: &Rc<parsed_model::FragmentSpread>, _schema: &Rc<Schema>, executable_document: &parsed_model::ExecutableDocument) -> Result<Self, Error> {
-        if let Some(_fragment) = executable_document.fragments.get(&parsed.name) {
-
-            Ok(FragmentSpread {
-                parsed: parsed.clone(),
-            })
-        }
-        else {
-            err.fail(BuildError::MissingFragmentError(parsed.position.clone(), parsed.name.to_string()))
-        }
-        
-    }
-
-    pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
-        writeln!(out, "FragmentSpread {{")?;
-        {
-            let mut out = out.indent();
-
-            self.parsed.print(&mut out)?;
-        }
-        writeln!(out, "}}")
-    }
-}
-
 #[derive(Debug)]
 pub struct SelectionContext {
     pub imports: HashSet<usize>,
@@ -2550,7 +2429,7 @@ impl NameSpaceItem {
     fn generate(&self, out: &mut Output<'_>, selection_manager: &NameSpaceManager, schema: &Schema) -> Result<(), Error> {
         match self {
             NameSpaceItem::Selection(selection) => selection.generate(out, selection_manager, schema),
-            NameSpaceItem::Variant(variant) => Ok(()),
+            NameSpaceItem::Variant(_) => Ok(()),
         }
     }
 }
@@ -2690,10 +2569,8 @@ impl NameSpaceManager {
     pub fn get_context(&self) -> &SelectionContext {
         if let Some(document_name) = &self.document_name {
             if let Some(map) = self.contexts.get(document_name) {
-                let xm = format!("{:?}", map);
                 if let Some(operation_name) = &self.operation_name {
                     if let Some(context) = map.get(operation_name) {
-                        let xc = format!("{:?}", context);
                         return context;
                     }
                 }
@@ -2707,7 +2584,7 @@ impl NameSpaceManager {
         self.all_schema_imports.insert(name);
     }
 
-    fn insert(&mut self, graphql_type_name: Name, parsed: Rc<parsed_model::SelectionList>, names: Vec<Rc<String>>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>) -> Rc<Selection> {
+    fn insert(&mut self, graphql_type_name: Name, names: Vec<Rc<String>>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>) -> Rc<Selection> {
         
         
         println!("insert {:?}", &names);
@@ -2794,7 +2671,7 @@ impl FragmentDefinition {
     fn new(registry: &mut NameRegistry, parsed: &Rc<parsed_model::FragmentDefinition>, schema: &Rc<Schema>, fields: &FieldMap)-> Result<Self, Error> {
         Ok(FragmentDefinition {
             name: parsed.name.clone(),
-            selection_query_list: SelectionQueryList::new(&parsed.selections, &None, registry, schema, fields, format!("fragment def {}", parsed.name))?,
+            selection_query_list: SelectionQueryList::new(&parsed.selections, &None, registry, schema, fields)?,
             type_condition: parsed.type_condition.clone(),
         })
     }

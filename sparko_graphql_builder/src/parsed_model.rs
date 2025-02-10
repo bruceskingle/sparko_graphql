@@ -297,7 +297,6 @@ pub enum DefinedTypeName {
     Union,
     Enum,
     InputObject,
-    Selection,
 }
 
 impl DefinedTypeName {
@@ -309,7 +308,6 @@ impl DefinedTypeName {
             DefinedTypeName::Union => "Union",
             DefinedTypeName::Enum => "Enum",
             DefinedTypeName::InputObject => "InputObject",
-            DefinedTypeName::Selection => "Selection",
         }
     }
 }
@@ -634,7 +632,7 @@ impl Enum {
                 let mut out = out.indent();
 
                 for variant in &self.variants {
-                    writeln!(out, "{}", variant.name)?;
+                    variant.print(&mut out)?;
                 }
             }
             writeln!(out, "}}")?;
@@ -804,21 +802,21 @@ impl Schema {
         writeln!(out, "}}")
     }
 
-    pub fn get_scalar(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Scalar>> {
-        if let Some(type_definition) = &self.named_types.get(name) {
-            if let TypeDefinition::Scalar(type_definition) = type_definition {
-                Some(type_definition)
-            }
-            else {
-                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Scalar for \"{}\" but found {}", name, type_definition.type_name())));
-                None
-            }
-        }
-        else {
-            err.error(BuildError::MissingScalarError(position.clone(), format!("Failed to find Scalar \"{}\"", name)));
-            None
-        }
-    }
+    // pub fn get_scalar(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Scalar>> {
+    //     if let Some(type_definition) = &self.named_types.get(name) {
+    //         if let TypeDefinition::Scalar(type_definition) = type_definition {
+    //             Some(type_definition)
+    //         }
+    //         else {
+    //             err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Scalar for \"{}\" but found {}", name, type_definition.type_name())));
+    //             None
+    //         }
+    //     }
+    //     else {
+    //         err.error(BuildError::MissingScalarError(position.clone(), format!("Failed to find Scalar \"{}\"", name)));
+    //         None
+    //     }
+    // }
 
     pub fn get_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Object>> {
         if let Some(type_definition) = &self.named_types.get(name) {
@@ -852,53 +850,53 @@ impl Schema {
         }
     }
     
-    fn get_union(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Union>> {
-        if let Some(type_definition) = &self.named_types.get(name) {
-            if let TypeDefinition::Union(union) = type_definition {
-                Some(union)
-            }
-            else {
-                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Union for \"{}\" but found {}", name, type_definition.type_name())));
-                None
-            }
-        }
-        else {
-            err.error(BuildError::MissingUnionError(position.clone(), format!("Failed to find Union \"{}\"", name)));
-            None
-        }
-    }
+    // fn get_union(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Union>> {
+    //     if let Some(type_definition) = &self.named_types.get(name) {
+    //         if let TypeDefinition::Union(union) = type_definition {
+    //             Some(union)
+    //         }
+    //         else {
+    //             err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Union for \"{}\" but found {}", name, type_definition.type_name())));
+    //             None
+    //         }
+    //     }
+    //     else {
+    //         err.error(BuildError::MissingUnionError(position.clone(), format!("Failed to find Union \"{}\"", name)));
+    //         None
+    //     }
+    // }
     
-    fn get_enum(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Enum>> {
-        if let Some(type_definition) = &self.named_types.get(name) {
-            if let TypeDefinition::Enum(type_definition) = type_definition {
-                Some(type_definition)
-            }
-            else {
-                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Enum for \"{}\" but found {}", name, type_definition.type_name())));
-                None
-            }
-        }
-        else {
-            err.error(BuildError::MissingEnumError(position.clone(), format!("Failed to find Enum \"{}\"", name)));
-            None
-        }
-    }
+    // fn get_enum(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Enum>> {
+    //     if let Some(type_definition) = &self.named_types.get(name) {
+    //         if let TypeDefinition::Enum(type_definition) = type_definition {
+    //             Some(type_definition)
+    //         }
+    //         else {
+    //             err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Enum for \"{}\" but found {}", name, type_definition.type_name())));
+    //             None
+    //         }
+    //     }
+    //     else {
+    //         err.error(BuildError::MissingEnumError(position.clone(), format!("Failed to find Enum \"{}\"", name)));
+    //         None
+    //     }
+    // }
 
-    pub fn get_input_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Object>> {
-        if let Some(type_definition) = &self.named_types.get(name) {
-            if let TypeDefinition::InputObject(object) = type_definition {
-                Some(object)
-            }
-            else {
-                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected InputObject for \"{}\" but found {}", name, type_definition.type_name())));
-                None
-            }
-        }
-        else {
-            err.error(BuildError::MissingInputObjectError(position.clone(), format!("Failed to find InputObject \"{}\"", name)));
-            None
-        }
-    }
+    // pub fn get_input_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Object>> {
+    //     if let Some(type_definition) = &self.named_types.get(name) {
+    //         if let TypeDefinition::InputObject(object) = type_definition {
+    //             Some(object)
+    //         }
+    //         else {
+    //             err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected InputObject for \"{}\" but found {}", name, type_definition.type_name())));
+    //             None
+    //         }
+    //     }
+    //     else {
+    //         err.error(BuildError::MissingInputObjectError(position.clone(), format!("Failed to find InputObject \"{}\"", name)));
+    //         None
+    //     }
+    // }
 }
 
 #[derive(Debug)]
