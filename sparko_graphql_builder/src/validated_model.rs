@@ -9,7 +9,7 @@ use inflections::case::to_snake_case;
 
 use crate::parsed_model::{BuiltinType, DefinedTypeName, OperationType};
 use crate::utils::to_pascal_case;
-use crate::{Atom, BuildError, Error, ErrorCollector, Isomorphic, Print, Registry, TYPE_NAME};
+use crate::{Name, BuildError, Error, ErrorCollector, Isomorphic, Print, NameRegistry, TYPE_NAME};
 use crate::{parsed_model, Output};
 
 pub enum Optionality {
@@ -39,7 +39,7 @@ impl Optionality {
 
 pub type FieldMap = SharedMap<Field>;
 
-pub type RawSharedMap<T> = IndexMap<Atom, Rc<T>>;
+pub type RawSharedMap<T> = IndexMap<Name, Rc<T>>;
 
 #[derive(Debug, Clone)]
 pub struct SharedMap<T> {
@@ -53,7 +53,7 @@ impl<T> SharedMap<T> {
         }
     }
     
-    pub fn values(&self) -> indexmap::map::Values<'_, Atom, Rc<T>> {
+    pub fn values(&self) -> indexmap::map::Values<'_, Name, Rc<T>> {
         self.map.values()
     }
     
@@ -65,7 +65,7 @@ impl<T> SharedMap<T> {
         self.map.is_empty()
     }
     
-    pub fn keys(&self) -> indexmap::map::Keys<'_, Atom, Rc<T>> {
+    pub fn keys(&self) -> indexmap::map::Keys<'_, Name, Rc<T>> {
         self.map.keys()
     }
 }
@@ -90,7 +90,7 @@ impl<T> SharedMapBuilder<T> {
         }
     }
 
-    pub fn insert(&mut self, key: Atom, value: Rc<T>) -> Option<Rc<T>> {
+    pub fn insert(&mut self, key: Name, value: Rc<T>) -> Option<Rc<T>> {
         self.map.insert(key, value)
     }
 
@@ -103,10 +103,10 @@ impl<T> SharedMapBuilder<T> {
 #[derive(Debug)]
 pub struct Selection {
     pub index: usize,
-    pub graphql_type_name: Atom,
+    pub graphql_type_name: Name,
     // pub parsed: Rc<parsed_model::SelectionList>,
-    pub names: Vec<Atom>,
-    pub fields: IndexMap<Atom, SelectionField>,
+    pub names: Vec<Name>,
+    pub fields: IndexMap<Name, SelectionField>,
     pub variants: Vec<Rc<Variant>>,
     pub interface: Option<Rc<Interface>>,
 }
@@ -351,22 +351,22 @@ impl Selection {
 #[derive(Debug)]
 pub struct Variant {
     pub index: usize,
-    pub names: Vec<Atom>,
-    pub fields: IndexMap<Atom, SelectionField>,
-    pub type_condition: Atom,
+    pub names: Vec<Name>,
+    pub fields: IndexMap<Name, SelectionField>,
+    pub type_condition: Name,
 }
 
 pub struct SelectionBuilder {
-    pub graphql_type_name: Atom,
+    pub graphql_type_name: Name,
     pub parsed: Rc<parsed_model::SelectionList>,
-    pub preferred_type_names: Vec<Atom>,
-    pub fields: IndexMap<Atom, SelectionField>,
-    pub variants: IndexMap<Atom, (Atom, IndexMap<Atom, SelectionField>)>,
+    pub preferred_type_names: Vec<Name>,
+    pub fields: IndexMap<Name, SelectionField>,
+    pub variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>,
     interface: Option<Rc<Interface>>,
 }
 
 impl SelectionBuilder {
-    pub fn new(registry: &mut Registry, graphql_type_name: Atom, selections: &Rc<parsed_model::SelectionList>, interface: &Option<Rc<Interface>>) -> SelectionBuilder {
+    pub fn new(registry: &mut NameRegistry, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, interface: &Option<Rc<Interface>>) -> SelectionBuilder {
         SelectionBuilder {
             graphql_type_name,
             parsed: selections.clone(),
@@ -377,7 +377,7 @@ impl SelectionBuilder {
         }
     }
 
-    pub fn with_field(&mut self, variant_name: &Option<(Atom, Atom)>, field_name: &Atom, field: SelectionField) -> &mut Self {
+    pub fn with_field(&mut self, variant_name: &Option<(Name, Name)>, field_name: &Name, field: SelectionField) -> &mut Self {
         if let Some((variant_name, variant_type_condition)) = variant_name {
             if let Some((tc, variant)) = self.variants.get_mut(variant_name) {
                 variant.insert(field_name.clone(), field);
@@ -394,12 +394,12 @@ impl SelectionBuilder {
         self
     }
 
-    pub fn with_name(&mut self, name: &Atom) -> &mut Self {
+    pub fn with_name(&mut self, name: &Name) -> &mut Self {
         self.preferred_type_names.push(name.clone());
         self
     }
 
-    pub fn with_preferred_type_names(&mut self, preferred_type_names: Vec<Atom>) -> &mut Self {
+    pub fn with_preferred_type_names(&mut self, preferred_type_names: Vec<Name>) -> &mut Self {
         for name in preferred_type_names {
             self.preferred_type_names.push(name);
         }
@@ -414,8 +414,8 @@ impl SelectionBuilder {
 #[derive(Debug)]
 pub enum SelectionFieldType {
     BuiltinType(BuiltinType),
-    Scalar(Atom),
-    Enum(Atom),
+    Scalar(Name),
+    Enum(Name),
     Selection(usize),
     Required(Box<SelectionFieldType>),
     Array(Box<SelectionFieldType>),
@@ -466,7 +466,7 @@ impl SelectionFieldType {
 
 #[derive(Debug)]
 pub struct SelectionField {
-    pub name: Atom,
+    pub name: Name,
     pub selection_type: SelectionFieldType,
     pub optional: bool,
 }
@@ -492,12 +492,12 @@ impl Print for SelectionField {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DefinedType {
-    Scalar(Atom),
-    Object(Atom),
-    Interface(Atom),
-    Union(Atom),
-    Enum(Atom),
-    InputObject(Atom),
+    Scalar(Name),
+    Object(Name),
+    Interface(Name),
+    Union(Name),
+    Enum(Name),
+    InputObject(Name),
 }
 
 impl Isomorphic for DefinedType {
@@ -884,7 +884,7 @@ impl TypeDefinition {
         self.defined_type_name().name()
     }
 
-    pub fn rust_name(&self) -> &Atom {
+    pub fn rust_name(&self) -> &Name {
         match self {
             TypeDefinition::Scalar(object) => &object.rust_name,
             TypeDefinition::Object(object) => &object.rust_name,
@@ -902,8 +902,8 @@ pub trait Context {
 
 pub struct Scalar {
     pub parsed: Rc<parsed_model::Scalar>,
-    pub rust_name: Atom,
-    pub rust_type: Atom,
+    pub rust_name: Name,
+    pub rust_type: Name,
 }
 
 impl Scalar {
@@ -921,7 +921,7 @@ impl Scalar {
         writeln!(out, "}}")
     }
     
-    fn new(registry: &mut Registry, parsed: &Rc<parsed_model::Scalar>, types: &HashMap<String, String>) -> TypeDefinition {
+    fn new(registry: &mut NameRegistry, parsed: &Rc<parsed_model::Scalar>, types: &HashMap<String, String>) -> TypeDefinition {
         println!("&*parsed.name={}", &*parsed.name);
         let rust_name =  registry.intern(to_pascal_case(&parsed.name));
         let rust_type = if let Some(fqn) = types.get(&*parsed.name) {
@@ -946,9 +946,9 @@ impl Scalar {
 }
 
 pub struct Object {
-    pub name: Atom,
-    pub rust_name: Atom,
-    pub fully_implements: Vec<Atom>,
+    pub name: Name,
+    pub rust_name: Name,
+    pub fully_implements: Vec<Name>,
     pub fields: FieldMap,
     pub is_input: bool,
 }
@@ -960,7 +960,7 @@ impl Context for Object {
 }
 
 impl Object {
-    fn new(err: &mut ErrorCollector, registry: &mut Registry, parsed: &Rc<parsed_model::Object>, schema: &Rc<parsed_model::Schema>,) -> Result<Rc<Self>, Error> {
+    fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, parsed: &Rc<parsed_model::Object>, schema: &Rc<parsed_model::Schema>,) -> Result<Rc<Self>, Error> {
         let mut fully_implements = Vec::new();
 
         for interface_name in &parsed.implements {
@@ -995,7 +995,7 @@ impl Object {
             }))
     }
 
-    fn from_fields(registry: &mut Registry, name: Atom, fields: FieldMap) -> Rc<Self> {
+    fn from_fields(registry: &mut NameRegistry, name: Name, fields: FieldMap) -> Rc<Self> {
         Rc::new(Object {
             rust_name: registry.intern(to_pascal_case(&name)),
             name,
@@ -1039,7 +1039,7 @@ impl Object {
     }
 }
 
-fn generate_struct(out: &mut Output<'_>, name: &Atom, rust_name: &Atom, context: &dyn Context, is_input: bool) -> Result<(), Error> {
+fn generate_struct(out: &mut Output<'_>, name: &Name, rust_name: &Name, context: &dyn Context, is_input: bool) -> Result<(), Error> {
    
 
     writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
@@ -1137,8 +1137,8 @@ fn generate_struct(out: &mut Output<'_>, name: &Atom, rust_name: &Atom, context:
 #[derive(Debug)]
 pub struct Interface {
     pub parsed: Rc<parsed_model::Interface>,
-    pub rust_name: Atom,
-    pub implemented_by: Vec<Atom>,
+    pub rust_name: Name,
+    pub implemented_by: Vec<Name>,
     pub fields: FieldMap,
 }
 
@@ -1169,7 +1169,7 @@ impl Interface {
         writeln!(out, "}}")
     }
 
-    fn new(err: &mut ErrorCollector, registry: &mut Registry, parsed: &Rc<parsed_model::Interface>, schema: &Rc<parsed_model::Schema>,) -> Result<TypeDefinition, Error> {
+    fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, parsed: &Rc<parsed_model::Interface>, schema: &Rc<parsed_model::Schema>,) -> Result<TypeDefinition, Error> {
         let mut implemented_by = Vec::new();
 
         
@@ -1209,7 +1209,7 @@ impl Interface {
 
 pub struct Union {
     pub parsed: Rc<parsed_model::Union>,
-    pub rust_name: Atom,
+    pub rust_name: Name,
     pub fields: FieldMap,
 }
 
@@ -1220,7 +1220,7 @@ impl Context for Union {
 }
 
 impl Union {
-    fn new(err: &mut ErrorCollector, registry: &mut Registry, parsed: &Rc<parsed_model::Union>, schema: &Rc<parsed_model::Schema>,) -> Result<TypeDefinition, Error> {
+    fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, parsed: &Rc<parsed_model::Union>, schema: &Rc<parsed_model::Schema>,) -> Result<TypeDefinition, Error> {
         let mut builder = FieldMap::builder();
         let mut err = err.child();
 
@@ -1272,7 +1272,7 @@ impl Union {
 
 pub struct Enum {
     pub parsed: Rc<parsed_model::Enum>,
-    pub rust_name: Atom,
+    pub rust_name: Name,
 }
 
 impl Enum {
@@ -1286,7 +1286,7 @@ impl Enum {
         writeln!(out, "}}")
     }
 
-    pub fn new(registry: &mut Registry, parsed: &Rc<parsed_model::Enum>) -> TypeDefinition {
+    pub fn new(registry: &mut NameRegistry, parsed: &Rc<parsed_model::Enum>) -> TypeDefinition {
         TypeDefinition::Enum(Rc::new(Enum {
             parsed: parsed.clone(),
             rust_name: registry.intern(to_pascal_case(&parsed.name)),
@@ -1358,10 +1358,10 @@ impl Field{
 
 
 pub struct Schema {
-    pub defined_types: IndexMap<Atom, TypeDefinition>,
-    pub query: Atom,
-    pub mutation: Option<Atom>,
-    pub subscription: Option<Atom>,
+    pub defined_types: IndexMap<Name, TypeDefinition>,
+    pub query: Name,
+    pub mutation: Option<Name>,
+    pub subscription: Option<Name>,
     pub __typename: Rc<Field>,
 }
 
@@ -1388,7 +1388,7 @@ impl Schema {
         writeln!(out, "}}")
     }
 
-    pub fn get_scalar(&self, name: &Atom) -> Result<&Rc<Scalar>, Error> {
+    pub fn get_scalar(&self, name: &Name) -> Result<&Rc<Scalar>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::Scalar(type_definition) = type_definition {
                 Ok(type_definition)
@@ -1402,7 +1402,7 @@ impl Schema {
         }
     }
 
-    pub fn get_object(&self, name: &Atom) -> Result<&Rc<Object>, Error> {
+    pub fn get_object(&self, name: &Name) -> Result<&Rc<Object>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::Object(object) = type_definition {
                 Ok(object)
@@ -1416,7 +1416,7 @@ impl Schema {
         }
     }
 
-    pub fn get_interface(&self, name: &Atom) -> Result<&Rc<Interface>, Error> {
+    pub fn get_interface(&self, name: &Name) -> Result<&Rc<Interface>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::Interface(interface) = type_definition {
                 Ok(interface)
@@ -1430,7 +1430,7 @@ impl Schema {
         }
     }
     
-    fn get_union(&self, name: &Atom) -> Result<&Rc<Union>, Error> {
+    fn get_union(&self, name: &Name) -> Result<&Rc<Union>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::Union(union) = type_definition {
                 Ok(union)
@@ -1444,7 +1444,7 @@ impl Schema {
         }
     }
     
-    fn get_enum(&self, name: &Atom) -> Result<&Rc<Enum>, Error> {
+    fn get_enum(&self, name: &Name) -> Result<&Rc<Enum>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::Enum(type_definition) = type_definition {
                 Ok(type_definition)
@@ -1458,7 +1458,7 @@ impl Schema {
         }
     }
 
-    pub fn get_input_object(&self, name: &Atom) -> Result<&Rc<Object>, Error> {
+    pub fn get_input_object(&self, name: &Name) -> Result<&Rc<Object>, Error> {
         if let Some(type_definition) = &self.defined_types.get(name) {
             if let TypeDefinition::InputObject(object) = type_definition {
                 Ok(object)
@@ -1472,7 +1472,7 @@ impl Schema {
         }
     }
 
-    fn new_get_object(out: &mut ErrorCollector, name: &Option<Atom>, position: &Pos, defined_types: &IndexMap<Atom, TypeDefinition>) -> Option<Atom> {
+    fn new_get_object(out: &mut ErrorCollector, name: &Option<Name>, position: &Pos, defined_types: &IndexMap<Name, TypeDefinition>) -> Option<Name> {
         if let Some(name) = name {
             if let Some(type_definition) = &defined_types.get(name) {
                 if let TypeDefinition::Object(_) = type_definition {
@@ -1493,7 +1493,7 @@ impl Schema {
         }
     }
 
-    fn new_get_default_object(out: &mut ErrorCollector, name: Atom, defined_types: &IndexMap<Atom, TypeDefinition>, missing_error: Option<BuildError>) -> Option<Atom> {
+    fn new_get_default_object(out: &mut ErrorCollector, name: Name, defined_types: &IndexMap<Name, TypeDefinition>, missing_error: Option<BuildError>) -> Option<Name> {
         if let Some(type_definition) = &defined_types.get(&name) {
             if let TypeDefinition::Object(_) = type_definition {
                 Some(name)
@@ -1511,9 +1511,9 @@ impl Schema {
         }
     }
 
-    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Schema>, registry: &mut Registry, types: &HashMap<String, String>) -> Result<Rc<Self>, Error> {
+    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Schema>, registry: &mut NameRegistry, types: &HashMap<String, String>) -> Result<Rc<Self>, Error> {
 
-        let mut defined_types: IndexMap<Atom, TypeDefinition> = IndexMap::new();
+        let mut defined_types: IndexMap<Name, TypeDefinition> = IndexMap::new();
 
         for parsed_type in parsed.named_types.values() {
             let defined_type = match parsed_type {
@@ -1563,8 +1563,8 @@ impl Schema {
 
 #[derive(Debug)]
 pub struct SelectionQueryField {
-    pub name: Atom,
-    pub alias: Option<Atom>,
+    pub name: Name,
+    pub alias: Option<Name>,
     pub position: Pos,
     pub optional: bool,
     pub arguments: Vec<Rc<parsed_model::Argument>>,
@@ -1572,7 +1572,7 @@ pub struct SelectionQueryField {
 }
 
 impl SelectionQueryField {
-    pub fn new(selection_field: &Rc<parsed_model::SelectionField>, interface: &Option<&Rc<Interface>>, registry: &mut Registry, schema: &Rc<Schema>, fields: &FieldMap) -> Result<SelectionQuery, Error> {
+    pub fn new(selection_field: &Rc<parsed_model::SelectionField>, interface: &Option<&Rc<Interface>>, registry: &mut NameRegistry, schema: &Rc<Schema>, fields: &FieldMap) -> Result<SelectionQuery, Error> {
 println!("SelectionQueryField {}", selection_field.name);
 
         Ok(SelectionQuery::Field(Rc::new(SelectionQueryField {
@@ -1608,7 +1608,7 @@ println!("SelectionQueryField {}", selection_field.name);
         writeln!(out, "}}")
     }
 
-        pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
+        pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
             if let Some(alias) = &self.alias {
                 writeln!(out, "buf.push_str(\"{}: {}\\n\");", alias, &self.name)?;
             }
@@ -1636,7 +1636,7 @@ println!("SelectionQueryField {}", selection_field.name);
 
 #[derive(Debug)]
 pub struct SelectionQueryFragmentSpread {
-    pub name: Atom,
+    pub name: Name,
     pub position: Pos,
 }
 
@@ -1659,7 +1659,7 @@ impl SelectionQueryFragmentSpread {
         writeln!(out, "}}")
     }
 
-    pub fn generate_query(&self, out: &mut Output, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output, fragments: &mut HashSet<Name>) -> Result<(), Error> {
         fragments.insert(self.name.clone());
         writeln!(out, "buf.push_str(\"...{}\\n\");", &self.name)?;
         Ok(())
@@ -1671,11 +1671,11 @@ impl SelectionQueryFragmentSpread {
 pub struct SelectionQueryInlineFragmentSpread {
     pub position: Pos,
     pub selections: Rc<SelectionQueryList>,
-    pub type_condition: Option<Atom>,
+    pub type_condition: Option<Name>,
 }
 
 impl SelectionQueryInlineFragmentSpread{
-    pub fn new(parsed: &parsed_model::InlineFragmentSpread, registry: &mut Registry, schema: &Rc<Schema>, fields: &FieldMap) -> Result<SelectionQuery, Error> {
+    pub fn new(parsed: &parsed_model::InlineFragmentSpread, registry: &mut NameRegistry, schema: &Rc<Schema>, fields: &FieldMap) -> Result<SelectionQuery, Error> {
         println!("SelectionQueryInlineFragmentSpread {:?}", parsed.type_condition);
         Ok(SelectionQuery::InlineFragment(Rc::new(SelectionQueryInlineFragmentSpread {
             position: parsed.position.clone(),
@@ -1696,7 +1696,7 @@ impl SelectionQueryInlineFragmentSpread{
         writeln!(out, "}}")
     }
 
-    pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
         if let Some(cond) = &self.type_condition {
             writeln!(out, "buf.push_str(\"... on {} {{\\n\");", cond)?;
         }
@@ -1735,7 +1735,7 @@ impl Print for SelectionQuery {
 
 impl SelectionQuery {
     
-    pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
         match self {
             SelectionQuery::Field(selection_field) => selection_field.generate_query(out, variables, fragments),
             SelectionQuery::FragmentSpread(fragment_spread) => fragment_spread.generate_query(out, fragments),
@@ -1768,7 +1768,7 @@ impl Print for SelectionQueryList {
 }
 
 impl SelectionQueryList {
-    fn new(parsed: &parsed_model::SelectionList, interface: &Option<&Rc<Interface>>, registry: &mut Registry, schema: &Rc<Schema>, fields: &FieldMap, debug: String) -> Result<Self, Error> {
+    fn new(parsed: &parsed_model::SelectionList, interface: &Option<&Rc<Interface>>, registry: &mut NameRegistry, schema: &Rc<Schema>, fields: &FieldMap, debug: String) -> Result<Self, Error> {
         let mut selections = Vec::new();
         let mut has_typename = false;
 
@@ -1861,7 +1861,7 @@ impl SelectionQueryList {
         Ok(Self { selections, interface_name, added_type, debug })
     }
     
-    pub fn generate_query(&self, out: &mut Output<'_>, variables: &FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output<'_>, variables: &FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
         if ! &self.selections.is_empty() {
             writeln!(out, "buf.push('{{');")?;
             {
@@ -1886,7 +1886,7 @@ pub struct GenericOperation {
 }
 
 impl GenericOperation {
-    fn new(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut NameSpaceManager, parsed: &Rc<parsed_model::GenericOperation>, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>)-> Result<Self, Error> {
+    fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, parsed: &Rc<parsed_model::GenericOperation>, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>)-> Result<Self, Error> {
 
         let mut variable_builder = FieldMap::builder();
 
@@ -1916,7 +1916,7 @@ impl GenericOperation {
             })
     }
 
-    fn get_fields<'a>(err: &mut ErrorCollector, operation: &OperationType, name: &Atom, position: &Pos, schema: &'a Rc<Schema>) -> Result<&'a FieldMap, Error> {
+    fn get_fields<'a>(err: &mut ErrorCollector, operation: &OperationType, name: &Name, position: &Pos, schema: &'a Rc<Schema>) -> Result<&'a FieldMap, Error> {
         match operation {
             OperationType::Query => {
                 Ok(&schema.get_object(&schema.query)?.fields)
@@ -1932,7 +1932,7 @@ impl GenericOperation {
         }
     }
 
-    fn get_context2<'a>(err: Option<&mut ErrorCollector>, operation: &OperationType, name: &Atom, position: &Pos, schema: &'a Rc<Schema>) -> Result<Box<&'a dyn Context>, Error> {
+    fn get_context2<'a>(err: Option<&mut ErrorCollector>, operation: &OperationType, name: &Name, position: &Pos, schema: &'a Rc<Schema>) -> Result<Box<&'a dyn Context>, Error> {
         match operation {
             OperationType::Query => Ok(Box::new(schema.get_object(&schema.query)?.as_ref())),
             OperationType::Mutation => {
@@ -1955,8 +1955,8 @@ impl GenericOperation {
         Self::get_context2(None, &self.parsed.operation, &self.parsed.name, &self.parsed.position, schema)
     }
     
-    fn create_selection(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>,
-        preferred_type_names: Vec<Atom>, graphql_type_name: Atom, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap, interface: &Option<Rc<Interface>>) -> Result<Rc<Selection>, Error>
+    fn create_selection(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
+        preferred_type_names: Vec<Name>, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap, interface: &Option<Rc<Interface>>) -> Result<Rc<Selection>, Error>
     {
         let mut selection_builder = SelectionBuilder::new(registry, graphql_type_name, selections, interface);
         
@@ -1967,8 +1967,8 @@ impl GenericOperation {
         Ok(selection_builder.build(selection_manager))
     }
 
-    fn create_selection_field(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>,
-        field_name: Atom, preferred_type_names: Vec<Atom>, graphql_type_name: Atom, selections: &Rc<parsed_model::SelectionList>, optional: bool, fields: &FieldMap, interface: &Option<Rc<Interface>>) -> Result<SelectionField, Error>
+    fn create_selection_field(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
+        field_name: Name, preferred_type_names: Vec<Name>, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, optional: bool, fields: &FieldMap, interface: &Option<Rc<Interface>>) -> Result<SelectionField, Error>
     {
         let index = Self::create_selection(err, registry, selection_manager, schema, fragments, preferred_type_names, graphql_type_name, selections, fields, interface)?.index;
    
@@ -2039,8 +2039,8 @@ impl GenericOperation {
         
     }
     
-    fn new_gather_dependencies(err: &mut ErrorCollector, registry: &mut Registry, selection_manager: &mut NameSpaceManager, selections: &Rc<parsed_model::SelectionList>, schema: &Rc<Schema>, fragments: &IndexMap<Atom, Rc<parsed_model::FragmentDefinition>>,
-        variant_name: Option<(Atom, Atom)>, fields: &FieldMap, selection_builder: &mut SelectionBuilder) -> Result<(), Error>
+    fn new_gather_dependencies(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, selections: &Rc<parsed_model::SelectionList>, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
+        variant_name: Option<(Name, Name)>, fields: &FieldMap, selection_builder: &mut SelectionBuilder) -> Result<(), Error>
     {
         for selection in &selections.selections {
             match selection {
@@ -2518,8 +2518,8 @@ impl FragmentSpread {
 #[derive(Debug)]
 pub struct SelectionContext {
     pub imports: HashSet<usize>,
-    pub schema_imports: HashSet<Atom>,
-    pub names: IndexMap<Atom, usize>,
+    pub schema_imports: HashSet<Name>,
+    pub names: IndexMap<Name, usize>,
 }
 
 impl SelectionContext {
@@ -2558,11 +2558,11 @@ impl NameSpaceItem {
 #[derive(Debug)]
 pub struct NameSpaceManager {
     pub items: Vec<NameSpaceItem>,
-    pub all_schema_imports: HashSet<Atom>,
-    pub contexts: IndexMap<Atom, IndexMap<Atom, SelectionContext>>,
-    pub names: IndexMap<usize, Atom>,
-    pub document_name: Option<Atom>,
-    pub operation_name: Option<Atom>,
+    pub all_schema_imports: HashSet<Name>,
+    pub contexts: IndexMap<Name, IndexMap<Name, SelectionContext>>,
+    pub names: IndexMap<usize, Name>,
+    pub document_name: Option<Name>,
+    pub operation_name: Option<Name>,
 }
 
 impl Print for NameSpaceManager {
@@ -2651,12 +2651,12 @@ impl NameSpaceManager {
        }
     }
 
-    pub fn create_document(&mut self, document_name: Atom) {
+    pub fn create_document(&mut self, document_name: Name) {
         self.contexts.insert(document_name.clone(), IndexMap::new());
         self.document_name = Some(document_name);
     }
 
-    pub fn create_operation(&mut self, operation_name: Atom) {
+    pub fn create_operation(&mut self, operation_name: Name) {
         if let Some(document_name) = &self.document_name {
             if let Some(map) = self.contexts.get_mut(document_name) {
                 map.insert(operation_name.clone(), SelectionContext::new());
@@ -2667,11 +2667,11 @@ impl NameSpaceManager {
         panic!("Failed to create_operation?");
     }
 
-    pub fn set_document(&mut self, document_name: Atom) {
+    pub fn set_document(&mut self, document_name: Name) {
         self.document_name = Some(document_name);
     }
 
-    pub fn set_operation(&mut self, operation_name: Atom) {
+    pub fn set_operation(&mut self, operation_name: Name) {
         self.operation_name = Some(operation_name);
     }
 
@@ -2702,12 +2702,12 @@ impl NameSpaceManager {
         panic!("Failed to set_document?");
     }
 
-    fn import_schema(&mut self, name: Atom) {
+    fn import_schema(&mut self, name: Name) {
         self.get_context_mut().schema_imports.insert(name.clone());
         self.all_schema_imports.insert(name);
     }
 
-    fn insert(&mut self, graphql_type_name: Atom, parsed: Rc<parsed_model::SelectionList>, names: Vec<Rc<String>>, fields: IndexMap<Atom, SelectionField>, p_variants: IndexMap<Atom, (Atom, IndexMap<Atom, SelectionField>)>, interface: Option<Rc<Interface>>) -> Rc<Selection> {
+    fn insert(&mut self, graphql_type_name: Name, parsed: Rc<parsed_model::SelectionList>, names: Vec<Rc<String>>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>) -> Rc<Selection> {
         
         
         println!("insert {:?}", &names);
@@ -2751,11 +2751,11 @@ impl NameSpaceManager {
         result
     }
     
-    fn get_schema_dependencies(&self) -> &HashSet<Atom> {
+    fn get_schema_dependencies(&self) -> &HashSet<Name> {
         &self.get_context().schema_imports
     }
     
-    fn get_name(&self, id: &usize) -> &Atom {
+    fn get_name(&self, id: &usize) -> &Name {
         println!("get_name({}) = {:?}", id, self.names.get(id));
         self.names.get(id).unwrap()
     }
@@ -2771,9 +2771,9 @@ impl NameSpaceManager {
 }
 
 pub struct FragmentDefinition {
-    pub name: Atom,
+    pub name: Name,
     pub selection_query_list: SelectionQueryList,
-    pub type_condition: Atom,
+    pub type_condition: Name,
 }
 
 impl Print for FragmentDefinition {
@@ -2791,7 +2791,7 @@ impl Print for FragmentDefinition {
 }
 
 impl FragmentDefinition {
-    fn new(registry: &mut Registry, parsed: &Rc<parsed_model::FragmentDefinition>, schema: &Rc<Schema>, fields: &FieldMap)-> Result<Self, Error> {
+    fn new(registry: &mut NameRegistry, parsed: &Rc<parsed_model::FragmentDefinition>, schema: &Rc<Schema>, fields: &FieldMap)-> Result<Self, Error> {
         Ok(FragmentDefinition {
             name: parsed.name.clone(),
             selection_query_list: SelectionQueryList::new(&parsed.selections, &None, registry, schema, fields, format!("fragment def {}", parsed.name))?,
@@ -2799,7 +2799,7 @@ impl FragmentDefinition {
         })
     }
 
-    pub fn generate_query(&self, out: &mut Output<'_>, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output<'_>, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
         
         writeln!(out, "")?;
         writeln!(out, "buf.push_str(\"fragment {} on {}\\n\");", self.name, self.type_condition)?;
@@ -2819,12 +2819,12 @@ impl FragmentDefinition {
 
 pub struct ExecutableDocument {
     pub parsed: Rc<parsed_model::ExecutableDocument>,
-    pub fragments: IndexMap<Atom, FragmentDefinition>,
+    pub fragments: IndexMap<Name, FragmentDefinition>,
     pub operations: Vec<GenericOperation>,
 }
 
 impl ExecutableDocument {
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry,  selection_manager: &mut NameSpaceManager, parsed: &Rc<parsed_model::ExecutableDocument>, schema: &Rc<Schema>) ->  Result<Self, Error> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry,  selection_manager: &mut NameSpaceManager, parsed: &Rc<parsed_model::ExecutableDocument>, schema: &Rc<Schema>) ->  Result<Self, Error> {
 
         let mut fragments: IndexMap<Rc<String>, FragmentDefinition> = IndexMap::new();
 

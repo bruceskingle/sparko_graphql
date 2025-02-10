@@ -5,18 +5,18 @@ use graphql_parser::Pos;
 use indexmap::IndexMap;
 use inflections::case::to_snake_case;
 
-use crate::Atom;
+use crate::Name;
 use crate::BuildError;
 use crate::BuildWarning;
 use crate::Error;
 use crate::ErrorCollector;
 use crate::Isomorphic;
 use crate::Output;
-use crate::Registry;
+use crate::NameRegistry;
 use crate::TYPE_NAME;
 
 
-pub type FieldMap = IndexMap<Atom, Rc<Field>>;
+pub type FieldMap = IndexMap<Name, Rc<Field>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinType {
@@ -69,7 +69,7 @@ impl Display for BuiltinType {
 
 #[derive(Debug)]
 pub struct DefinedType {
-    pub name: Atom,
+    pub name: Name,
     pub position: Pos
 }
 
@@ -80,7 +80,7 @@ impl Isomorphic for DefinedType {
 }
 
 impl DefinedType {
-    fn new(registry: &mut Registry, v: String, position: Pos) -> ScalarType {
+    fn new(registry: &mut NameRegistry, v: String, position: Pos) -> ScalarType {
         ScalarType::DefinedType(Rc::new(DefinedType{
             name: registry.intern(v),
             position
@@ -118,7 +118,7 @@ impl Isomorphic for ScalarType {
 }
 
 impl ScalarType {
-    fn new(registry: &mut Registry, v: String, position: Pos) -> ScalarType {
+    fn new(registry: &mut NameRegistry, v: String, position: Pos) -> ScalarType {
         if let Some(builtin_type) = BuiltinType::from_str(&v) {
             ScalarType::BuiltinType(builtin_type)
         }
@@ -176,7 +176,7 @@ impl Isomorphic for Type {
 }
 
 impl Type {
-    fn new(registry: &mut Registry, parsed: graphql_parser::schema::Type<'_, String>, position: Pos) -> Type {
+    fn new(registry: &mut NameRegistry, parsed: graphql_parser::schema::Type<'_, String>, position: Pos) -> Type {
         match parsed {
             graphql_parser::query::Type::NamedType(name) => Type::Scalar(ScalarType::new(registry, name, position)),
             graphql_parser::query::Type::ListType(wrapped) => Type::Array(Box::new(Type::new(registry, *wrapped, position))),
@@ -336,7 +336,7 @@ impl TypeDefinition {
         }
     }
 
-    pub fn name(&self) -> &Atom {
+    pub fn name(&self) -> &Name {
         match self {
             TypeDefinition::Scalar(content) => &content.name,
             TypeDefinition::Object(content) => &content.name,
@@ -377,11 +377,11 @@ impl TypeDefinition {
 #[derive(Debug)]
 pub struct Scalar {
     pub position: Pos,
-    pub name: Atom,
+    pub name: Name,
 }
 
 impl Scalar {
-    fn new(registry: &mut Registry, scalar_type: graphql_parser::schema::ScalarType<'_, String>) -> TypeDefinition {
+    fn new(registry: &mut NameRegistry, scalar_type: graphql_parser::schema::ScalarType<'_, String>) -> TypeDefinition {
         TypeDefinition::Scalar(Rc::new(Scalar {
             position: scalar_type.position,
             name: registry.intern(scalar_type.name),
@@ -404,9 +404,9 @@ impl Scalar {
 #[derive(Debug)]
 pub struct Object {
     pub position: Pos,
-    pub name: Atom,
+    pub name: Name,
     pub fields: FieldMap,
-    pub implements: Vec<Atom>,
+    pub implements: Vec<Name>,
     pub is_input: bool,
 }
 
@@ -445,7 +445,7 @@ impl Object {
         
     }
 
-    pub fn from_object(_err: &mut ErrorCollector, registry: &mut Registry, object_type: graphql_parser::schema::ObjectType<'_, String>) -> TypeDefinition {
+    pub fn from_object(_err: &mut ErrorCollector, registry: &mut NameRegistry, object_type: graphql_parser::schema::ObjectType<'_, String>) -> TypeDefinition {
         let mut fields: FieldMap = IndexMap::new();
 
         for f in object_type.fields {
@@ -462,7 +462,7 @@ impl Object {
         }))
     }
     
-    fn from_input_object(_err: &mut ErrorCollector<'_>, registry: &mut Registry, object_type: graphql_parser::schema::InputObjectType<'_, String>) -> TypeDefinition {
+    fn from_input_object(_err: &mut ErrorCollector<'_>, registry: &mut NameRegistry, object_type: graphql_parser::schema::InputObjectType<'_, String>) -> TypeDefinition {
         let mut fields = IndexMap::new();
 
         for f in object_type.fields {
@@ -484,9 +484,9 @@ impl Object {
 #[derive(Debug)]
 pub struct Interface {
     pub position: Pos,
-    pub name: Atom,
+    pub name: Name,
     pub fields: FieldMap,
-    pub implements: Vec<Atom>,
+    pub implements: Vec<Name>,
 }
 
 impl Interface {
@@ -520,7 +520,7 @@ impl Interface {
         writeln!(out, "}}")
     }
     
-    pub fn new(_err: &mut ErrorCollector, registry: &mut Registry, interface_type: graphql_parser::schema::InterfaceType<'_, String>) -> TypeDefinition {
+    pub fn new(_err: &mut ErrorCollector, registry: &mut NameRegistry, interface_type: graphql_parser::schema::InterfaceType<'_, String>) -> TypeDefinition {
         let mut fields = IndexMap::new();
 
         for f in interface_type.fields {
@@ -541,8 +541,8 @@ impl Interface {
 #[derive(Debug)]
 pub struct Union {
     pub position: Pos,
-    pub name: Atom,
-    pub types: Vec<Atom>,
+    pub name: Name,
+    pub types: Vec<Name>,
 }
 
 impl Union {
@@ -566,7 +566,7 @@ impl Union {
         writeln!(out, "}}")
     }
 
-    fn new(_err: &mut ErrorCollector, registry: &mut Registry, union_type: graphql_parser::schema::UnionType<'_, String>) -> TypeDefinition {
+    fn new(_err: &mut ErrorCollector, registry: &mut NameRegistry, union_type: graphql_parser::schema::UnionType<'_, String>) -> TypeDefinition {
         TypeDefinition::Union(Rc::new(Union {
             position: union_type.position,
             name: registry.intern(union_type.name),
@@ -577,7 +577,7 @@ impl Union {
 
 #[derive(Debug)]
 pub struct Variant {
-    pub name: Atom,
+    pub name: Name,
     pub position: Pos,
     pub description: Option<String>,
 }
@@ -595,7 +595,7 @@ impl Variant {
         writeln!(out, "}}")
     }
 
-    pub fn new(_err: &mut ErrorCollector, registry: &mut Registry, enum_type: graphql_parser::schema::EnumValue<'_, String>) -> Self {
+    pub fn new(_err: &mut ErrorCollector, registry: &mut NameRegistry, enum_type: graphql_parser::schema::EnumValue<'_, String>) -> Self {
         Variant {
             name: registry.intern(enum_type.name),
             position: enum_type.position,
@@ -603,7 +603,7 @@ impl Variant {
         }
     }
     
-    fn new_vec(err: &mut ErrorCollector, registry: &mut Registry, values: Vec<graphql_parser::schema::EnumValue<'_, String>>) -> Vec<Variant> {
+    fn new_vec(err: &mut ErrorCollector, registry: &mut NameRegistry, values: Vec<graphql_parser::schema::EnumValue<'_, String>>) -> Vec<Variant> {
         let mut result =  Vec::new();
 
         for value in values {
@@ -616,7 +616,7 @@ impl Variant {
 
 #[derive(Debug)]
 pub struct Enum {
-    pub name: Atom,
+    pub name: Name,
     pub position: Pos,
     pub variants: Vec<Variant>,
 }
@@ -642,7 +642,7 @@ impl Enum {
         writeln!(out, "}}")
     }
 
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry, enum_type: graphql_parser::schema::EnumType<'_, String>) -> TypeDefinition {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, enum_type: graphql_parser::schema::EnumType<'_, String>) -> TypeDefinition {
         TypeDefinition::Enum(Rc::new(Enum {
             name: registry.intern(enum_type.name),
             position: enum_type.position,
@@ -653,7 +653,7 @@ impl Enum {
 
 #[derive(Debug)]
 pub struct Field {
-    pub name: Atom,
+    pub name: Name,
     pub position:Pos,
     pub ty: Type,
 }
@@ -680,7 +680,7 @@ impl Field {
         
     }
 
-    fn do_new(registry: &mut Registry, position: Pos, name: String, field_type: graphql_parser::schema::Type<'_, String>) -> Rc<Field> {
+    fn do_new(registry: &mut NameRegistry, position: Pos, name: String, field_type: graphql_parser::schema::Type<'_, String>) -> Rc<Field> {
         let ty = Type::new(registry, field_type, position.clone());
         Rc::new(Field {
             position,
@@ -690,15 +690,15 @@ impl Field {
         
     }
 
-    pub fn from_input_value(registry: &mut Registry, field: graphql_parser::schema::InputValue<'_, String>) -> Rc<Field> {
+    pub fn from_input_value(registry: &mut NameRegistry, field: graphql_parser::schema::InputValue<'_, String>) -> Rc<Field> {
         Self::do_new(registry, field.position, field.name, field.value_type)
     }
 
-    pub fn from_field(registry: &mut Registry, field: graphql_parser::schema::Field<'_, String>) -> Rc<Field> {
+    pub fn from_field(registry: &mut NameRegistry, field: graphql_parser::schema::Field<'_, String>) -> Rc<Field> {
         Self::do_new(registry, field.position, field.name, field.field_type)
     }
     
-    fn from_variable(registry: &mut Registry, variable: graphql_parser::query::VariableDefinition<'_, String>) -> Rc<Field> {
+    fn from_variable(registry: &mut NameRegistry, variable: graphql_parser::query::VariableDefinition<'_, String>) -> Rc<Field> {
         Self::do_new(registry, variable.position, variable.name, variable.var_type)
     }
 }
@@ -706,13 +706,13 @@ impl Field {
 #[derive(Debug)]
 pub struct SchemaDefinition {
     pub position: Pos,
-    pub query: Option<Atom>,
-    pub mutation: Option<Atom>,
-    pub subscription: Option<Atom>,
+    pub query: Option<Name>,
+    pub mutation: Option<Name>,
+    pub subscription: Option<Name>,
 }
 
 impl SchemaDefinition {
-    fn new(_err: &mut ErrorCollector, registry: &mut Registry, schema_definition: graphql_parser::schema::SchemaDefinition<'_, String>) -> Self {
+    fn new(_err: &mut ErrorCollector, registry: &mut NameRegistry, schema_definition: graphql_parser::schema::SchemaDefinition<'_, String>) -> Self {
         SchemaDefinition {
             position: schema_definition.position,
             query: registry.intern_option(schema_definition.query),
@@ -724,13 +724,13 @@ impl SchemaDefinition {
 
 #[derive(Debug)]
 pub struct Schema {
-    pub named_types: IndexMap<Atom, TypeDefinition>,
+    pub named_types: IndexMap<Name, TypeDefinition>,
     pub schema_definition: Option<SchemaDefinition>,
     pub __typename: Rc<Field>,
 }
 
 impl Schema {
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry, ast: graphql_parser::schema::Document<'_, String>) -> Result<Rc<Self>, Error> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, ast: graphql_parser::schema::Document<'_, String>) -> Result<Rc<Self>, Error> {
         let mut model = Schema {
             named_types: IndexMap::new(),
             schema_definition: None,
@@ -804,7 +804,7 @@ impl Schema {
         writeln!(out, "}}")
     }
 
-    pub fn get_scalar(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Scalar>> {
+    pub fn get_scalar(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Scalar>> {
         if let Some(type_definition) = &self.named_types.get(name) {
             if let TypeDefinition::Scalar(type_definition) = type_definition {
                 Some(type_definition)
@@ -820,7 +820,7 @@ impl Schema {
         }
     }
 
-    pub fn get_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Object>> {
+    pub fn get_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Object>> {
         if let Some(type_definition) = &self.named_types.get(name) {
             if let TypeDefinition::Object(object) = type_definition {
                 Some(object)
@@ -836,7 +836,7 @@ impl Schema {
         }
     }
 
-    pub fn get_interface(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Interface>> {
+    pub fn get_interface(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Interface>> {
         if let Some(type_definition) = &self.named_types.get(name) {
             if let TypeDefinition::Interface(interface) = type_definition {
                 Some(interface)
@@ -852,7 +852,7 @@ impl Schema {
         }
     }
     
-    fn get_union(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Union>> {
+    fn get_union(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Union>> {
         if let Some(type_definition) = &self.named_types.get(name) {
             if let TypeDefinition::Union(union) = type_definition {
                 Some(union)
@@ -868,7 +868,7 @@ impl Schema {
         }
     }
     
-    fn get_enum(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Enum>> {
+    fn get_enum(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Enum>> {
         if let Some(type_definition) = &self.named_types.get(name) {
             if let TypeDefinition::Enum(type_definition) = type_definition {
                 Some(type_definition)
@@ -884,7 +884,7 @@ impl Schema {
         }
     }
 
-    pub fn get_input_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Atom) -> Option<&Rc<Object>> {
+    pub fn get_input_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Object>> {
         if let Some(type_definition) = &self.named_types.get(name) {
             if let TypeDefinition::InputObject(object) = type_definition {
                 Some(object)
@@ -932,7 +932,7 @@ pub enum Selection {
 } 
 
 impl Selection{
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry, selection: graphql_parser::query::Selection<'_, String> ) -> Result<Selection, BuildError> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, selection: graphql_parser::query::Selection<'_, String> ) -> Result<Selection, BuildError> {
         Ok(match selection {
             graphql_parser::query::Selection::OptionalField(field) => 
                 SelectionField::new(err, registry, *field, true),
@@ -953,8 +953,8 @@ impl Selection{
 
 #[derive(Debug)]
 pub struct SelectionField {
-    pub name: Atom,
-    pub alias: Option<Atom>,
+    pub name: Name,
+    pub alias: Option<Name>,
     pub position: Pos,
     pub optional: bool,
     pub arguments: Vec<Rc<Argument>>,
@@ -962,7 +962,7 @@ pub struct SelectionField {
 }
 
 impl SelectionField {
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry, field: graphql_parser::query::Field<'_, String>, optional: bool) -> Selection {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, field: graphql_parser::query::Field<'_, String>, optional: bool) -> Selection {
         Selection::Field(Rc::new(SelectionField {
             name: registry.intern(field.name),
             alias: registry.intern_option(field.alias),
@@ -1023,7 +1023,7 @@ impl OperationType {
 
 #[derive(Debug)]
 pub struct GenericOperation {
-    pub name: Atom,
+    pub name: Name,
     pub position: Pos,
     pub operation: OperationType,
     pub selections: Rc<SelectionList>,
@@ -1031,15 +1031,15 @@ pub struct GenericOperation {
 }
 
 impl GenericOperation {
-    pub fn from_query(err: &mut ErrorCollector, registry: &mut Registry, query: graphql_parser::query::Query<'_, String>) -> Result<Rc<GenericOperation>, Error> {
+    pub fn from_query(err: &mut ErrorCollector, registry: &mut NameRegistry, query: graphql_parser::query::Query<'_, String>) -> Result<Rc<GenericOperation>, Error> {
         Self::new(err, registry, OperationType::Query, query.name, query.position, query.selection_set, query.variable_definitions)
     }
 
-    pub fn from_mutation(err: &mut ErrorCollector, registry: &mut Registry, query: graphql_parser::query::Mutation<'_, String>) -> Result<Rc<GenericOperation>, Error> {
+    pub fn from_mutation(err: &mut ErrorCollector, registry: &mut NameRegistry, query: graphql_parser::query::Mutation<'_, String>) -> Result<Rc<GenericOperation>, Error> {
         Self::new(err, registry, OperationType::Mutation, query.name, query.position, query.selection_set, query.variable_definitions)
     }
 
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry, operation: OperationType, name: Option<String>, position: Pos, selection_set: graphql_parser::query::SelectionSet<'_, String>, 
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, operation: OperationType, name: Option<String>, position: Pos, selection_set: graphql_parser::query::SelectionSet<'_, String>, 
         variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>) -> Result<Rc<GenericOperation>, Error> {
         let name = match name {
             Some(name) => name,
@@ -1089,7 +1089,7 @@ impl GenericOperation {
 
 
 
-fn build_variables(_err: &mut ErrorCollector, registry: &mut Registry, variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>) -> FieldMap {
+fn build_variables(_err: &mut ErrorCollector, registry: &mut NameRegistry, variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>) -> FieldMap {
     let mut variables = IndexMap::new();
 
     for variable in variable_definitions {
@@ -1100,7 +1100,7 @@ fn build_variables(_err: &mut ErrorCollector, registry: &mut Registry, variable_
     variables
 }
 
-fn build_selections(err: &mut ErrorCollector, registry: &mut Registry, selection_set: graphql_parser::query::SelectionSet<'_, String>) -> Rc<SelectionList> {
+fn build_selections(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_set: graphql_parser::query::SelectionSet<'_, String>) -> Rc<SelectionList> {
 
     let mut selections = Vec::new();
 
@@ -1117,7 +1117,7 @@ fn build_selections(err: &mut ErrorCollector, registry: &mut Registry, selection
     })
 }
 
-fn build_arguments(err: &mut ErrorCollector, registry: &mut Registry, arguments: Vec<(String, graphql_parser::query::Value<'_, String>)>) -> Vec<Rc<Argument>> {
+fn build_arguments(err: &mut ErrorCollector, registry: &mut NameRegistry, arguments: Vec<(String, graphql_parser::query::Value<'_, String>)>) -> Vec<Rc<Argument>> {
     let mut result = Vec::new();
 
     for (name, value) in arguments {
@@ -1129,13 +1129,13 @@ fn build_arguments(err: &mut ErrorCollector, registry: &mut Registry, arguments:
 
 #[derive(Debug)]
 pub enum Value {
-    Variable(Atom),
+    Variable(Name),
     Int(i64),
     String(String),
 }
 
 impl Value {
-    pub fn new(_err: &mut ErrorCollector, registry: &mut Registry, value: graphql_parser::query::Value<'_, String> ) -> Self {
+    pub fn new(_err: &mut ErrorCollector, registry: &mut NameRegistry, value: graphql_parser::query::Value<'_, String> ) -> Self {
         match value {
             graphql_parser::query::Value::Variable(name) => Value::Variable(registry.intern(name)),
             graphql_parser::query::Value::Int(number) => Value::Int(number.as_i64().unwrap()),
@@ -1163,12 +1163,12 @@ impl Display for Value {
 
 #[derive(Debug)]
 pub struct Argument {
-    pub name: Atom,
+    pub name: Name,
     pub value: Value,
 }
 
 impl Argument {
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry, name: String, value: graphql_parser::query::Value<'_, String> ) -> Rc<Self> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, name: String, value: graphql_parser::query::Value<'_, String> ) -> Rc<Self> {
         Rc::new(Argument {
             name: registry.intern(name),
             value: Value::new(err, registry, value),
@@ -1208,14 +1208,14 @@ impl Argument {
 
 #[derive(Debug)]
 pub struct FragmentDefinition {
-    pub name: Atom,
+    pub name: Name,
     pub position: Pos,
     pub selections: Rc<SelectionList>,
-    pub type_condition: Atom,
+    pub type_condition: Name,
 }
 
 impl FragmentDefinition{
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry, fragment_definition: graphql_parser::query::FragmentDefinition<'_, String>) -> Result<Rc<Self>, Error> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, fragment_definition: graphql_parser::query::FragmentDefinition<'_, String>) -> Result<Rc<Self>, Error> {
 
         let selections = build_selections(err, registry, fragment_definition.selection_set);
 
@@ -1251,12 +1251,12 @@ impl FragmentDefinition{
 
 #[derive(Debug)]
 pub struct FragmentSpread {
-    pub name: Atom,
+    pub name: Name,
     pub position: Pos,
 }
 
 impl FragmentSpread {
-    pub fn new(_err: &mut ErrorCollector, registry: &mut Registry, fragment: graphql_parser::query::FragmentSpread<'_, String>) -> Selection {
+    pub fn new(_err: &mut ErrorCollector, registry: &mut NameRegistry, fragment: graphql_parser::query::FragmentSpread<'_, String>) -> Selection {
         Selection::FragmentSpread(Rc::new(FragmentSpread {
             name: registry.intern(fragment.fragment_name),
             position: fragment.position,
@@ -1280,11 +1280,11 @@ impl FragmentSpread {
 pub struct InlineFragmentSpread {
     pub position: Pos,
     pub selections: Rc<SelectionList>,
-    pub type_condition: Option<Atom>,
+    pub type_condition: Option<Name>,
 }
 
 impl InlineFragmentSpread{
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry, fragment_definition: graphql_parser::query::InlineFragment<'_, String>) -> Result<Selection, BuildError> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, fragment_definition: graphql_parser::query::InlineFragment<'_, String>) -> Result<Selection, BuildError> {
 
         let selections = build_selections(err, registry, fragment_definition.selection_set);
 
@@ -1321,14 +1321,14 @@ impl InlineFragmentSpread{
 
 #[derive(Debug)]
 pub struct ExecutableDocument {
-    pub name: Atom,
-    pub fragments: IndexMap<Atom, Rc<FragmentDefinition>>,
+    pub name: Name,
+    pub fragments: IndexMap<Name, Rc<FragmentDefinition>>,
     pub queries: Vec<Rc<GenericOperation>>,
     pub mutations: Vec<Rc<GenericOperation>>
 }
 
 impl ExecutableDocument {
-    pub fn new(err: &mut ErrorCollector, registry: &mut Registry, definitions: Vec<graphql_parser::query::Definition<'_, String>>, model_name: &str) -> Rc<Self> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, definitions: Vec<graphql_parser::query::Definition<'_, String>>, model_name: &str) -> Rc<Self> {
 
         let name = to_snake_case(model_name);
         let mut fragments = IndexMap::new();

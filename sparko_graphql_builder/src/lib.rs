@@ -4,7 +4,6 @@ use indexmap::IndexMap;
 use inflections::case::to_snake_case;
 use validated_model::NameSpaceManager;
 use std::collections::{HashMap, HashSet};
-// use model::{ExecutableDocument, Schema};
 use std::fmt::Display;
 use std::fs::File;
 use std::io::BufWriter;
@@ -14,10 +13,8 @@ use std::{env, fs};
 use std::io::Write;
 
 mod utils;
-// mod model;
 mod parsed_model;
 mod validated_model;
-// mod error;
 
 const STARS: &str = "***************************************************************************************************************************************************";
 const TYPE_NAME: &str = "__typename";
@@ -31,7 +28,7 @@ pub trait Print {
 }
 
 pub struct BagOfNamed<T: Print> {
-    map: IndexMap<Atom, Vec<T>>,
+    map: IndexMap<Name, Vec<T>>,
 }
 
 impl<T: Print> BagOfNamed<T> {
@@ -41,7 +38,7 @@ impl<T: Print> BagOfNamed<T> {
         }
     }
     
-    pub fn insert(&mut self, name: &Atom, value: T) {
+    pub fn insert(&mut self, name: &Name, value: T) {
         let list = if let Some(existing) = self.map.get_mut(name) {
             existing
         }
@@ -73,21 +70,21 @@ impl<T: Print> BagOfNamed<T> {
     }
 }
 
-type Atom = Rc<String>;
+type Name = Rc<String>;
 
 #[derive(Debug)]
-pub struct Registry {
-    pub atoms: HashSet<Atom>,
+pub struct NameRegistry {
+    pub atoms: HashSet<Name>,
 }
 
-impl Registry {
-    pub fn new() -> Registry {
-        Registry {
+impl NameRegistry {
+    pub fn new() -> NameRegistry {
+        NameRegistry {
             atoms: HashSet::new(),
         }
     }
 
-    pub fn intern(&mut self, value: String) -> Atom {
+    pub fn intern(&mut self, value: String) -> Name {
         if let Some(atom) = self.atoms.get(&value) {
             atom.clone()
         }
@@ -98,11 +95,11 @@ impl Registry {
         }
     }
 
-    pub fn intern_str(&mut self, value: &str) -> Atom {
+    pub fn intern_str(&mut self, value: &str) -> Name {
         self.intern(String::from(value))
     }
 
-    pub fn intern_option(&mut self, value: Option<String>) -> Option<Atom> {
+    pub fn intern_option(&mut self, value: Option<String>) -> Option<Name> {
         match value {
             Some(value) => Some(self.intern(value)),
             None => None,
@@ -119,27 +116,6 @@ impl Registry {
         result
     }
 }
-
-// pub fn intern(value: String) -> Atom {
-//     Rc::new(value)
-// }
-
-// pub fn intern_option(value: Option<String>) -> Option<Atom> {
-//     match value {
-//         Some(value) => Some( Rc::new(value)),
-//         None => None,
-//     }
-// }
-
-// fn intern_vec(input: Vec<String>) -> Vec<Rc<String>> {
-//     let mut result = Vec::new();
-
-//     for value in input {
-//         result.push(intern(value));
-//     }
-
-//     result
-// }
 
 #[derive(Debug)]
 pub enum Error {
@@ -180,7 +156,7 @@ pub enum BuildError {
     MissingEnumError(Pos, String),
     MissingInputObjectError(Pos, String),
     MissingFieldError(Pos, String),
-    SelectionOnNonObjectError(Pos, Atom),
+    SelectionOnNonObjectError(Pos, Name),
     OptionalNonNullFieldError(Pos, String),
     MissingFragmentError(Pos, String),
     InvalidQueryError(Pos, String),
@@ -473,15 +449,6 @@ impl Write for BaseOutput {
     }
 }
 
-// impl From<File> for BaseOutput {
-//     fn from(value: File) -> Self {
-//         BaseOutput::File{
-//             err: BaseErrorCollector::new(),
-//             out: BufWriter::new(value),
-//         }
-//     }
-// }
-
 impl BaseOutput {
     pub fn from_file(file: File) -> BaseOutput {
         BaseOutput::File(BufWriter::new(file))
@@ -606,20 +573,13 @@ impl Builder {
             let mut base = BaseErrorCollector::new(schema_file_name.clone());
             let mut err = ErrorCollector::new(&mut base);
 
-            // let schema = self.do_build_schema(&mut err, &schema_string)?;
-
             let ast = match parse_schema::<'_, String>(&schema_string) {
                 Ok(ast) => ast,
                 Err(parse_error) => {
-                    // let msg = format!("Schema syntax error: {}", parse_error);
                     return err.fail(BuildError::SchemaSyntaxError(parse_error.to_string()));
-                    // return Err(Error::BuildFailed(msg))
                 },
             };
-            // let mut model = Schema::new(err, ast)?;
-            // model.validate(err);
-
-            let mut registry = Registry::new();
+            let mut registry = NameRegistry::new();
     
             let parsed_schema = match parsed_model::Schema::new(&mut err, &mut registry, ast) {
                 Ok(result) => result,
@@ -654,10 +614,6 @@ impl Builder {
             if self.print || self.generate {
                 base.report(out);
             }
-
-
-
-            // let mut dependencies: IndexMap<&str, (validated_model::ExecutableDocument, IndexMap<Atom, HashSet<Atom>>)> = IndexMap::new();
 
             let mut documents = Vec::new();
             let mut selection_manager = NameSpaceManager::new();
@@ -696,10 +652,6 @@ impl Builder {
                             writeln!(out, " * *********************************************************************************************/")?;
                         }
                 
-                        // let validated_executable = validated_model::ExecutableDocument::new(&mut err, &query_parsed_model, &validated_schema)?;
-                            
-                        // validated_executable.generate(out, &validated_schema)?;
-                
                         if let Ok(validated_executable) = validated_model::ExecutableDocument::new(&mut err, &mut registry, &mut selection_manager, &query_parsed_model, &validated_schema) {
                             
                             if self.print {
@@ -707,18 +659,11 @@ impl Builder {
                                 validated_executable.print(out)?;
                                 writeln!(out, " * *********************************************************************************************/")?;
                             }
-
-                            // if self.generate {
-                            //     let d = validated_executable.gather_dependencies(&validated_schema)?;
-                            //     dependencies.insert(query_model_name, (validated_executable, d));
-                            // }
                             documents.push(validated_executable);
                         }
                     },
                     Err(parse_error) => {
-                        // let msg = format!("Query syntax error: {}", parse_error);
                         err.error(BuildError::QuerySyntaxError(parse_error.to_string()));
-                        // return Err(Error::BuildFailed(msg))
                     },
                 };
     
@@ -770,59 +715,11 @@ use serde::{{Deserialize, Serialize}};
                         println!("Failed to find {}", *name);
                     }
                 }
-
-                // println!("selection_manager {:?}", &selection_manager);
-
-                // writeln!(out, "/* selection manager");
-                // selection_manager.print(out)?;
-
-                // selection_manager.set_document(Rc::new(String::from("luke")));
-                // selection_manager.set_operation(Rc::new(String::from("GetLuke")));
-                // let ctx = selection_manager.get_context();
-
-                // ctx.print(out);
-
-                // writeln!(out, " selection manager */");
-
+                
                 for document in &documents {
                     selection_manager.set_document(document.parsed.name.clone());
                     document.generate(out, &validated_schema, &mut selection_manager)?;
                 }
-
-
-                // // writeln!(out, "// Dependencies {:?}", dependencies)?;
-
-                // let mut all_dependencies: HashSet<Atom> = HashSet::new();
-
-                // for (_name, (_validated_executable, d1)) in &dependencies {
-                //     writeln!(out, "// Dependency name {:?}", _name)?;
-                //     for (_name, d2) in d1 {
-
-                //     writeln!(out, "//   d2 name {:?}", _name)?;
-                //         for d3 in d2 {
-                //             writeln!(out, "// d3 {:?}", d3)?;
-                //             all_dependencies.insert(d3.clone());
-                //         }
-                //     }
-                // }
-                // writeln!(out, "// All Dependencies {:?}", all_dependencies)?;
-
-                // for name in all_dependencies {
-                //     if let Some(defined_type) = validated_schema.defined_types.get(&name) {
-                //         defined_type.generate(out, &None)?;
-                //     }
-                // }
-
-                // writeln!(out, "// Executable docs")?;
-
-                // for (_name, (validated_executable, dependencies)) in &dependencies {
-                //     validated_executable.generate(out, &validated_schema, dependencies)?;
-                // }
-
-                for document in documents {
-
-                }
-
 
                 writeln!(out, 
                     r#"
@@ -842,33 +739,9 @@ use serde::{{Deserialize, Serialize}};
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // fn test_schema(schema: &str) -> BaseErrorCollector {
-
-    //     let mut base = BaseErrorCollector::new_test();
-    //     let mut err = ErrorCollector::new(&mut base);
-
-    //     let builder = builder("test");
-    //     let _ = builder.do_build_schema(&mut err, schema);
-        
-    //     base
-    // }
-
-    // fn get_schema(schema: &str) -> validated_model::Schema {
-
-    //     let mut base = BaseErrorCollector::new_test();
-    //     let mut err = ErrorCollector::new(&mut base);
-    //     let builder = builder("test");
-    //     let schema = builder.do_build_schema(&mut err, schema);
-        
-    //     schema.unwrap()
-    // }
-
     pub fn test_schema(schema_string: &str) -> BaseErrorCollector {
         let mut base = BaseErrorCollector::new_test();
         let mut err: ErrorCollector<'_> = ErrorCollector::new(&mut base);
-
-        // let x = do_test_query(schema_string, query, &mut err);
 
         match do_test_schema(schema_string, &mut err) {
             Ok(_) => (),
@@ -886,7 +759,7 @@ mod tests {
 
          match parse_schema::<'_, String>(&schema_string) {
             Ok(ast) => {
-                let mut registry = Registry::new();
+                let mut registry = NameRegistry::new();
                 let parsed_schema = parsed_model::Schema::new(&mut err, &mut registry, ast)?;
 
                 validated_model::Schema::new(&mut err, &parsed_schema, &mut registry, &types)?;
@@ -902,8 +775,6 @@ mod tests {
     pub fn test_query(schema_string: &str, query: &str) -> BaseErrorCollector {
         let mut base = BaseErrorCollector::new_test();
         let mut err: ErrorCollector<'_> = ErrorCollector::new(&mut base);
-
-        // let x = do_test_query(schema_string, query, &mut err);
 
         match do_test_query(schema_string, query, &mut err) {
             Ok(_) => (),
@@ -922,7 +793,7 @@ mod tests {
 
         match parse_schema::<'_, String>(&schema_string) {
             Ok(ast) => {
-                let mut registry = Registry::new();
+                let mut registry = NameRegistry::new();
                 let parsed_schema = parsed_model::Schema::new(&mut err, &mut registry, ast)?;
                 let validated_schema = validated_model::Schema::new(&mut err, &parsed_schema, &mut registry, &types)?;
                 let mut selection_manager = NameSpaceManager::new();
