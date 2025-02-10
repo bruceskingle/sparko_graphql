@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fmt::Display;
 use std::io::Write;
 use std::rc::Rc;
@@ -6,11 +5,7 @@ use graphql_parser::Pos;
 use indexmap::IndexMap;
 use inflections::case::to_snake_case;
 
-// use crate::intern;
-// use crate::intern_option;
-// use crate::intern_vec;
 use crate::Atom;
-// use crate::utils::to_pascal_case;
 use crate::BuildError;
 use crate::BuildWarning;
 use crate::Error;
@@ -413,7 +408,6 @@ pub struct Object {
     pub fields: FieldMap,
     pub implements: Vec<Atom>,
     pub is_input: bool,
-    // pub fully_implements: Vec<String>,
 }
 
 impl Object {
@@ -732,33 +726,14 @@ impl SchemaDefinition {
 pub struct Schema {
     pub named_types: IndexMap<Atom, TypeDefinition>,
     pub schema_definition: Option<SchemaDefinition>,
-    // pub registry: Registry,
     pub __typename: Rc<Field>,
 }
 
 impl Schema {
-
-    // fn name_defined(&mut self, err: &mut ErrorCollector, registry: &mut Registry, name: &String, position: Pos) {
-    //     if let Some(existing) = self.names.insert(name.clone(), position.clone()) {
-    //         out.error(BuildError>::DuplicateName(existing, position, name.clone()));
-    //     }
-    // }
-
-
-
-    // fn new_global(&mut self, err: &mut ErrorCollector, registry: &mut Registry, name: String, value: TypeDefinition) {
-    //     let position = value.position().clone();
-
-    //     if let Some(existing) = self.named_types.insert(name.clone(), value) {
-    //         err.error(BuildError::DuplicateName(existing.position().clone(), position, name));
-    //     }
-    // }
-
     pub fn new(err: &mut ErrorCollector, registry: &mut Registry, ast: graphql_parser::schema::Document<'_, String>) -> Result<Rc<Self>, Error> {
         let mut model = Schema {
             named_types: IndexMap::new(),
             schema_definition: None,
-            // registry: registry,
             __typename: Rc::new(Field {
                 position: Pos { line: 0, column: 0 },
                 name: registry.intern_str(TYPE_NAME),
@@ -785,7 +760,7 @@ impl Schema {
                         graphql_parser::schema::TypeDefinition::Enum(ast) => Enum::new(err, registry, ast),
                         graphql_parser::schema::TypeDefinition::InputObject(ast) => Object::from_input_object(err, registry, ast),
                     };
-                    let position = value.position().clone(); // TODO: Can we remove this?
+                    let position = value.position().clone();
 
                     if let Some(existing) = model.named_types.insert(value.name().clone(), value) {
                         err.error(BuildError::DuplicateName(existing.position().clone(), position, existing.name().to_string()));
@@ -808,22 +783,7 @@ impl Schema {
         }
 
         err.ok(Rc::new(model))
-        // Ok(model)
     }
-
-    // pub fn get<T>(&self, name: &Atom, defined_type_name: DefinedTypeName) -> Result<T, Error> {
-    //     if let Some(type_definition) = self.named_types.get(name) {
-    //         if type_definition.defined_type_name() == defined_type_name {
-    //             Ok(type_definition)
-    //         }
-    //         else {
-    //             Err(Error::BuildFailed(format!("Expected {} for \"{}\" but found {}", defined_type_name.name(), name, type_definition.type_name())))
-    //         }
-    //     }
-    //     else {
-    //         Err(Error::BuildFailed(format!("Failed to find {} \"{}\"", defined_type_name.name(), name)))
-    //     }
-    // }
 
     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
         writeln!(out, "parsed_model::Schema {{")?;
@@ -989,13 +949,6 @@ impl Selection{
             Selection::InlineFragment(inline_fragment_spread) => inline_fragment_spread.print(out),
         }
     }
-
-
-    // pub fn position(&self) -> Pos {
-    //     match self {
-    //         Selection::Field(selection_field) => selection_field.position,
-    //     }
-    // }
 }
 
 #[derive(Debug)]
@@ -1042,31 +995,6 @@ impl SelectionField {
         }
         writeln!(out, "}}")
     }
-
-        // pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
-        //     if let Some(alias) = &self.alias {
-        //         writeln!(out, "buf.push_str(\"{}: {}\\n\");", alias, &self.name)?;
-        //     }
-        //     else {
-        //         writeln!(out, "buf.push_str(\"{}\\n\");", &self.name)?;
-        //     }
-    
-        //     if ! self.arguments.is_empty() {
-        //         writeln!(out, "buf.push('(');")?;
-        //         {
-        //             let mut out = out.indent();
-    
-                
-        //             for argument in &self.arguments {
-        //                 argument.generate_query(&mut out, variables)?;
-        //             }
-        //         }
-        //         writeln!(out, "buf.push(')');")?;
-        //     }
-    
-        //     self.selections.generate_query(out, variables, fragments)?;
-        //     Ok(())
-        // }
 }
 
 #[derive(Debug)]
@@ -1089,14 +1017,6 @@ impl OperationType {
         match self {
             OperationType::Query => "query",
             OperationType::Mutation => "mutation",
-        }
-    }
-
-
-    pub fn to_upper_case(&self) -> &'static str {
-        match self {
-            OperationType::Query => "QUERY",
-            OperationType::Mutation => "MUTATION",
         }
     }
 }
@@ -1135,35 +1055,12 @@ impl GenericOperation {
             return err.fail(BuildError::InvalidQueryError(position.clone(), format!("Query {} has no selection set", name)));
         }
 
-        // for selection in selections {
-        //    let query_object = if let SelectionModel::Field(selection_field) = selection {
-
-        //         let query_object = if let Some(query_schema) = schema.query {
-        //             if let Some(query_schema_object) = schema.objects.get(&query_schema) {
-        //                 query_schema_object.fields.get(&selection_field.name)
-        //             } else {None}
-        //         } else {None};
-
-        //         if let Some(query_object) = query_object {
-        //             query_object
-        //         }
-        //         else {
-        //             return Err(BuildError>::MissingObjectError(selection.position(), format!("Query {} has mising selection \"{}\"", name, selection_field.name)));
-        //         }
-        //     }
-        //     else {
-        //         return Err(BuildError>::InvalidQueryError(selection.position(), format!("Query {} has invalid selection set, expected a field name", name)));
-        //     };
-        // }
-        
-
         Ok(Rc::new(GenericOperation {
             name: registry.intern(name),
             position,
             operation,
             selections,
             variables,
-            // query_object,
         }))
     }
 
@@ -1220,8 +1117,6 @@ fn build_selections(err: &mut ErrorCollector, registry: &mut Registry, selection
     })
 }
 
-
-
 fn build_arguments(err: &mut ErrorCollector, registry: &mut Registry, arguments: Vec<(String, graphql_parser::query::Value<'_, String>)>) -> Vec<Rc<Argument>> {
     let mut result = Vec::new();
 
@@ -1236,13 +1131,7 @@ fn build_arguments(err: &mut ErrorCollector, registry: &mut Registry, arguments:
 pub enum Value {
     Variable(Atom),
     Int(i64),
-    // Float(f64),
     String(String),
-    // Boolean(bool),
-    // Null,
-    // Enum,
-    // List,
-    // Object,
 }
 
 impl Value {
@@ -1266,13 +1155,7 @@ impl Display for Value {
         match self {
             Value::Variable(name) => write!(f, "${}", name),
             Value::Int(number) => write!(f, "{}", number),
-            // Value::Float(_) => todo!(),
             Value::String(string) => write!(f, "\\\"{}\\\"", string),
-            // Value::Boolean(_) => todo!(),
-            // Value::Null => todo!(),
-            // Value::Enum => todo!(),
-            // Value::List => todo!(),
-            // Value::Object => todo!(),
         }
     }
 }
@@ -1349,7 +1232,6 @@ impl FragmentDefinition{
             position: fragment_definition.position,
             selections,
             type_condition,
-            // query_object,
         }))
     }
 
@@ -1365,23 +1247,6 @@ impl FragmentDefinition{
         }
         writeln!(out, "}}")
     }
-
-    // pub fn generate_query(&self, out: &mut Output<'_>, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
-        
-    //     writeln!(out, "")?;
-    //     writeln!(out, "buf.push_str(\"fragment {} on {}\");", self.name, self.type_condition)?;
-    //     writeln!(out, "buf.push('{{');")?;
-    //     {
-    //         let mut out = out.indent();
-
-    //         for selection in &self.selections.selections {
-    //             selection.generate_query(&mut out, variables, fragments)?;
-    //         }
-    //     }
-    //     writeln!(out, "buf.push('}}');")?;
-        
-    //     Ok(())
-    // }
 }
 
 #[derive(Debug)]
@@ -1407,12 +1272,6 @@ impl FragmentSpread {
             writeln!(out, "position:  {}", self.position)?;
         }
         writeln!(out, "}}")
-    }
-
-    pub fn KILL_generate_query(&self, out: &mut Output, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
-        fragments.insert(self.name.clone());
-        writeln!(out, "buf.push_str(\"...{}\");", &self.name)?;
-        Ok(())
     }
 }
 
@@ -1458,25 +1317,6 @@ impl InlineFragmentSpread{
         }
         writeln!(out, "}}")
     }
-
-    // pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Atom>) -> Result<(), Error> {
-    //     if let Some(cond) = &self.type_condition {
-    //         writeln!(out, "buf.push_str(\"... on {} {{\");", cond)?;
-    //     }
-    //     else {
-    //         writeln!(out, "buf.push_str(\"... {{\");")?;
-    //     }
-    //     {
-    //         let mut out = out.indent();
-
-        
-    //         for selection in &self.selections.selections {
-    //             selection.generate_query(&mut out, variables, fragments)?;
-    //         }
-    //     }
-    //     writeln!(out, "buf.push('}}');")?;
-    //     Ok(())
-    // }
 }
 
 #[derive(Debug)]
@@ -1491,14 +1331,6 @@ impl ExecutableDocument {
     pub fn new(err: &mut ErrorCollector, registry: &mut Registry, definitions: Vec<graphql_parser::query::Definition<'_, String>>, model_name: &str) -> Rc<Self> {
 
         let name = to_snake_case(model_name);
-        //     if model_name.ends_with(".graphql") {
-        //     let end = model_name.len() - 8;
-        //     &model_name[..end]
-        // }
-        // else {
-        //     &model_name
-        // });
-
         let mut fragments = IndexMap::new();
         let mut queries = Vec::new();
         let mut mutations = Vec::new();
@@ -1600,261 +1432,3 @@ impl ExecutableDocument {
         writeln!(out, "}}")
     }
 }
-
-
-// Unordered --------------------------------------------------------------------------------------------------------------------------------------------
-
-
-// #[derive(Debug)]
-// pub struct DefinedType {
-//     pub name: String,
-//     pub nonnull: bool,
-//     pub multiple: bool,
-// }
-
-// impl DefinedType {
-
-//     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
-//         writeln!(out, "Field {{")?;
-//         {
-//             let mut out = out.indent();
-
-//             writeln!(out, "name:      {}", self.name)?;
-//             writeln!(out, "}}")?;
-//         }
-//         writeln!(out, "}}")
-
-        
-//     }
-// }
-
-// #[derive(Debug)]
-// pub struct BuiltinType {
-//     pub nonnull: bool,
-//     pub multiple: bool,
-// }
-
-// impl BuiltinType {
-
-//     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
-//         writeln!(out, "Field {{")?;
-//         {
-//             let mut out = out.indent();
-
-//             writeln!(out, "nonnull:   {}", self.nonnull)?;
-//             writeln!(out, "multiple:  {}", self.multiple)?;
-//             writeln!(out, "}}")?;
-//         }
-//         writeln!(out, "}}")
-
-        
-//     }
-// }
-
-
-
-
-
-
-
-
-// #[derive(Debug)]
-// struct ObjectReferenceList {
-//     schema: &'a Schema,
-//     names: Vec<String>,
-// }
-
-// impl IntoIterator for &'a ObjectReferenceList {
-//     type Item = &'a Object;
-//     type IntoIter = ObjectReferenceListItertor;
-    
-//     fn into_iter(self) -> Self::IntoIter {
-//         ObjectReferenceListItertor {
-//             list: &self,
-//             index: 0,
-//             // iter: self.names.iter(),
-//         }
-//     }
-// }
-
-// struct ObjectReferenceListItertor {
-//     list: &'a ObjectReferenceList,
-//     // iter: std::slice::Iter<'_, String>,
-//     index: usize,
-// }
-
-// impl Iterator for ObjectReferenceListItertor {
-//     type Item = &'a Object;
-
-//     fn next(&mut self) -> Option<Self::Item> {        
-//         match self.list.names.get(self.index) {
-//             Some(name) => {
-//                 self.index += 1;
-//                 match self.list.schema.named_types.get(name) {
-//                     Some(type_definition) => {
-//                         if let TypeDefinition::Object(object) = type_definition {
-//                             Some(object)
-//                         }
-//                         else {
-//                             panic!("Object iterator expected Object for \"{}\" but found {}", name, type_definition.type_name())
-//                         }
-//                     },
-//                     None => panic!("Object iterator failed to find \"{}\"", name),
-//                 }
-//             },
-//             None => None,
-//         }
-//     }
-// }
-
-
-// #[derive(Debug)]
-// pub struct InterfaceReferenceList {
-//     pub schema: Rc<Schema>,
-//     pub names: Vec<String>,
-// }
-
-// impl IntoIterator for &'a InterfaceReferenceList {
-//     type Item = &'a Interface;
-//     type IntoIter = InterfaceReferenceListItertor;
-    
-//     fn into_iter(self) -> Self::IntoIter {
-//         InterfaceReferenceListItertor {
-//             list: &self,
-//             index: 0,
-//             // iter: self.names.iter(),
-//         }
-//     }
-// }
-
-// pub struct InterfaceReferenceListItertor {
-//     list: &'a InterfaceReferenceList,
-//     // iter: std::slice::Iter<'_, String>,
-//     index: usize,
-// }
-
-// impl Iterator for InterfaceReferenceListItertor {
-//     type Item = &'a Interface;
-
-//     fn next(&mut self) -> Option<Self::Item> {        
-//         match self.list.names.get(self.index) {
-//             Some(name) => {
-//                 self.index += 1;
-//                 match self.list.schema.named_types.get(name) {
-//                     Some(type_definition) => {
-//                         if let TypeDefinition::Interface(object) = type_definition {
-//                             Some(object)
-//                         }
-//                         else {
-//                             panic!("Interface iterator expected Interface for \"{}\" but found {}", name, type_definition.type_name())
-//                         }
-//                     },
-//                     None => panic!("Interface iterator failed to find \"{}\"", name),
-//                 }
-//             },
-//             None => None,
-//         }
-//     }
-// }
-
-
-// fn visit_type(field_type: &graphql_parser::query::Type<'_, String>, non_null: bool) -> String {
-   
-//    match field_type {
-//         graphql_parser::query::Type::NamedType(v) => {
-//             let t = match v as &str {
-//                 "Boolean" => String::from("bool"),
-//                 "Date" => String::from("time::Date"),
-//                 "DateTime" => String::from("time::OffsetDateTime"),
-//                 "Float" => String::from("f64"),
-//                 "ID" => String::from("String"),
-//                 "Int" => String::from("i32"),
-//                 "String" => String::from("String"),
-
-//                 _ => to_pascal_case(v),
-//             };
-
-//             if non_null {
-//                 t
-//             }
-//             else {
-//                 format!("Option<{}>", t)
-//             }
-//         },
-//         graphql_parser::query::Type::ListType(t) => {
-//             format!("Vec<{}>", visit_type(&*t, non_null))
-//         },
-//         graphql_parser::query::Type::NonNullType(t) => {
-//             visit_type(&*t, true)
-//         },
-//     }
-// }
-
-
-// #[derive(Debug)]
-// pub struct VariableDefinition {
-//     pub position: Pos,
-//     pub name: String,
-//     pub ty: Type,
-//     pub optional: bool,
-//     pub multiple: bool,
-//     // pub rust_type: String,
-//     // pub var_type: Type<'a, T>,
-//     // pub default_value: Option<Value<'a, T>>,
-// }
-
-// impl VariableDefinition {
-
-//     fn do_new(position: Pos, name: String, field_type: graphql_parser::query::Type<'_, String>, optional: bool, multiple: bool) -> VariableDefinition {
-//         match field_type {
-//             graphql_parser::query::Type::NamedType(v) => {
-//                 let ty = match &v as &str {
-//                     "Boolean" => Type::Boolean,
-//                     "Float" => Type::Float,
-//                     "ID" => Type::ID,
-//                     "Int" => Type::Int,
-//                     "String" => Type::String,
-
-//                     _ => Type::DefinedType(v.clone()),
-//                 };
-
-//                 VariableDefinition {
-//                     position,
-//                     name,
-//                     ty,
-//                     optional,
-//                     multiple,
-//                 }
-//             },
-//             graphql_parser::query::Type::ListType(t) => {
-//                 Self::do_new(position, name, *t, optional, true)
-//             },
-//             graphql_parser::query::Type::NonNullType(t) => {
-//                 Self::do_new(position, name, *t, true, multiple)
-//             },
-//          }
-//      }
-
-
-//     pub fn new(err: &mut ErrorCollector, registry: &mut Registry, f: graphql_parser::query::VariableDefinition<'_, String> ) -> VariableDefinition {
-//         Self::do_new(f.position, f.name, f.field_type, false, false)
-        
-//     }
-
-//     pub fn print(&self, out: &mut Output) -> std::io::Result<()> {
-//         writeln!(out, "VariableDefinition {{")?;
-//         {
-//             let mut out = out.indent();
-
-//             writeln!(out, "position:  {}", &self.position)?;
-//             writeln!(out, "name:      {}", &self.name)?;
-//             writeln!(out, "type:      {}", &self.ty)?;
-//             writeln!(out, "optional:  {}", self.optional)?;
-//             writeln!(out, "multiple:  {}", self.multiple)?;
-//         }
-//         writeln!(out, "}}")
-//     }
-// }
-
-
-
