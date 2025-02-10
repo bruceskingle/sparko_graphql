@@ -42,6 +42,8 @@ fn build()  -> Result<(), Box<dyn Error>> {
         .with_type("DateTime", "sparko_graphql::types::DateTime")
         .with_schema("graphql/octopus/schema.graphql")
         .with_query("graphql/octopus/main.graphql", "main")
+        .with_query("../../marco-sparko/graphql/octopus/LatestBill.graphql", "latest_bill")
+        .with_query("../../marco-sparko/graphql/octopus/meters.graphql", "meters")
         .build()?;
 
     // panic!("Panic test!"); 

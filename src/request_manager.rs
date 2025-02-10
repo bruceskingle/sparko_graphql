@@ -31,6 +31,8 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{Error, GraphQLQueryParams, GraphQLResponse, GraphQLResponseStructure, GraphQLType, NewGraphQLQuery, NewGraphQLResponse};
 
+pub const DASHES: &str = "=======================================================================================================================";
+
 #[derive(Serialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
 struct Request<'a>
@@ -55,10 +57,11 @@ struct NewRequest<'a>
 pub struct RequestManager {
     reqwest_client: reqwest::Client,
     url: String,
+    verbose: bool,
 }
 
 impl RequestManager {
-    pub fn new(url: String) -> Result<RequestManager, Box<dyn std::error::Error>> {
+    pub fn new(url: String, verbose: bool) -> Result<RequestManager, Box<dyn std::error::Error>> {
         Ok(RequestManager {
             reqwest_client: reqwest::Client::builder()
                 .user_agent("sparko_graphql/0.0.1")
@@ -71,12 +74,13 @@ impl RequestManager {
                 )
                 .build()?,
             url,
+            verbose,
         })
     }
 
     fn report_error(message: &str) {
 
-        println!("\n\n\n{} =======================================================================================================================", message);
+        println!("\n\n\n{} {}", message, DASHES);
     }
 
     pub async fn query<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_name: &str, query_name: &str, params: P) 
@@ -205,6 +209,14 @@ impl RequestManager {
             variables: query.get_variables()?,
             operation_name: Q::get_request_name(),
         };
+
+        if self.verbose {
+            println!("\n{}\rQuery ", DASHES);
+            println!("{}", &payload.query);
+            println!("\n{}\rVariables ", DASHES);
+            println!("{}", &payload.variables);
+            println!("{}", DASHES);
+        }
         // let serialized = serde_json::to_string(&payload).unwrap();
 
         // println!("NEW payload {}", &serialized);
@@ -242,6 +254,12 @@ impl RequestManager {
         }
 
         let response_json: serde_json::Value = response.json().await?;
+
+        if self.verbose {
+            println!("\n{}\rResponse ", DASHES);
+            println!("{}", serde_json::to_string_pretty(&response_json)?);
+            println!("{}", DASHES);
+        }
 
         // println!("response_json {}", serde_json::to_string_pretty(&response_json)?);
 

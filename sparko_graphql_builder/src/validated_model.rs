@@ -174,6 +174,12 @@ impl Selection {
                     let mut out = out.indent();
                     
                     self.generate_fields(&mut out, selection_manager, schema)?;
+                    for variant_selection in &self.variants {
+                        writeln!(out, "// variant {:?}", variant_selection.names)?;
+                        for field in variant_selection.fields.values() {
+                            field.generate_field(&mut out, selection_manager, schema)?;
+                        }
+                    }
                 }
         
                 writeln!(out, "}}")?;
@@ -366,6 +372,7 @@ pub struct SelectionBuilder {
 
 impl SelectionBuilder {
     pub fn new(graphql_type_name: Name, interface: &Option<Rc<Interface>>) -> SelectionBuilder {
+        println!("SelectionBuilder new");
         SelectionBuilder {
             graphql_type_name,
             preferred_type_names: Vec::new(),
@@ -376,11 +383,13 @@ impl SelectionBuilder {
     }
 
     pub fn with_field(&mut self, variant_name: &Option<(Name, Name)>, field_name: &Name, field: SelectionField) -> &mut Self {
+        println!("SelectionBuilder field {}", field_name);
         if let Some((variant_name, variant_type_condition)) = variant_name {
             if let Some((_, variant)) = self.variants.get_mut(variant_name) {
                 variant.insert(field_name.clone(), field);
             }
             else {
+                println!("insert variant_name={}, tc={}", &variant_name, &variant_type_condition);
                 let mut fields = IndexMap::new();
                 fields.insert(field_name.clone(), field);
                 self.variants.insert(variant_name.clone(), (variant_type_condition.clone(), fields));
@@ -400,6 +409,18 @@ impl SelectionBuilder {
     }
 
     pub fn build(self, manager: &mut NameSpaceManager) -> Rc<Selection> {
+
+        println!("SelectionBuilder build");
+        for (name, field) in &self.fields {
+            println!("    {}", name);
+        }
+
+        for (name, (cond, variant)) in &self.variants {
+            println!("  variant {}", name);
+            for (name, field) in variant {
+                println!("    {}", name);
+            }
+        }
         manager.insert(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface)
     }
 }
@@ -882,7 +903,7 @@ impl Scalar {
     }
     
     fn new(registry: &mut NameRegistry, parsed: &Rc<parsed_model::Scalar>, types: &HashMap<String, String>) -> TypeDefinition {
-        println!("&*parsed.name={}", &*parsed.name);
+        //println!("&*parsed.name={}", &*parsed.name);
         let rust_name =  registry.intern(to_pascal_case(&parsed.name));
         let rust_type = if let Some(fqn) = types.get(&*parsed.name) {
             registry.intern_str(fqn)
@@ -1523,7 +1544,7 @@ pub struct SelectionQueryField {
 
 impl SelectionQueryField {
     pub fn new(selection_field: &Rc<parsed_model::SelectionField>, interface: &Option<&Rc<Interface>>, registry: &mut NameRegistry, schema: &Rc<Schema>, fields: &FieldMap) -> Result<SelectionQuery, Error> {
-println!("SelectionQueryField {}", selection_field.name);
+//println!("SelectionQueryField {}", selection_field.name);
 
         Ok(SelectionQuery::Field(Rc::new(SelectionQueryField {
             name: selection_field.name.clone(),
@@ -1626,7 +1647,7 @@ pub struct SelectionQueryInlineFragmentSpread {
 
 impl SelectionQueryInlineFragmentSpread{
     pub fn new(parsed: &parsed_model::InlineFragmentSpread, registry: &mut NameRegistry, schema: &Rc<Schema>, fields: &FieldMap) -> Result<SelectionQuery, Error> {
-        println!("SelectionQueryInlineFragmentSpread {:?}", parsed.type_condition);
+        //println!("SelectionQueryInlineFragmentSpread {:?}", parsed.type_condition);
         Ok(SelectionQuery::InlineFragment(Rc::new(SelectionQueryInlineFragmentSpread {
             position: parsed.position.clone(),
             selections: Rc::new(SelectionQueryList::new(&parsed.selections, &None, registry, schema, fields)?),
@@ -1722,12 +1743,12 @@ impl SelectionQueryList {
         for parsed_selection in &parsed.selections {
             match parsed_selection {
                 parsed_model::Selection::Field(selection_field) => {
-                    println!("field {}", selection_field.name);
+                    //println!("field {}", selection_field.name);
                     if *selection_field.name == TYPE_NAME {
                         has_typename = true;
                     }
                     let (new_interface, new_fields) = if let Some(field) = fields.get(&selection_field.name) {
-                        println!("field={:?}", field);
+                        //println!("field={:?}", field);
 
                         match field.ty.get_scalar() {
                             ScalarType::DefinedType(defined_type) => {
@@ -1759,7 +1780,7 @@ impl SelectionQueryList {
                         (None, fields)
                     };
                     if let Some(i) = &new_interface {
-                        println!("new_interface={:?}", i);
+                        //println!("new_interface={:?}", i);
                     }
                     selections.push(SelectionQueryField::new(selection_field, &new_interface, registry, schema, new_fields)?);
                 },
@@ -1771,7 +1792,7 @@ impl SelectionQueryList {
                 },
             }
         }
-        println!("has_typename {}", has_typename);
+        //println!("has_typename {}", has_typename);
         if interface.is_some() && ! has_typename {
             selections.push(SelectionQuery::Field(Rc::new(SelectionQueryField {
                 name: registry.intern_str(TYPE_NAME),
@@ -1785,11 +1806,11 @@ impl SelectionQueryList {
             })));
 
 
-            println!("Adding __typename");
-            for sq in &selections {
-                println!(" {:?}", sq)
-            }
-            println!("*******************************************");
+            // println!("Adding __typename");
+            // for sq in &selections {
+            //     println!(" {:?}", sq)
+            // }
+            // println!("*******************************************");
         }
         Ok(Self { selections})
     }
@@ -2062,6 +2083,9 @@ impl GenericOperation {
                 parsed_model::Selection::FragmentSpread(fragment_spread) => {
                     if let Some(fragment) = fragments.get(&fragment_spread.name) {
                         let object = schema.get_object(&fragment.type_condition)?;
+
+                        println!("\n\nSPREAD {}\n\n", &fragment_spread.name);
+
 
                         Self::new_gather_dependencies(err, registry, selection_manager, &fragment.selections, schema, fragments, Some((fragment_spread.name.clone(), fragment.type_condition.clone())), 
                             &object.fields, selection_builder)?;
@@ -2496,11 +2520,11 @@ impl NameSpaceManager {
     }
 
     pub fn allocate_names(&mut self) {
-        println!("Allocate Names");
+        //println!("Allocate Names");
         for (document, map) in self.contexts.iter_mut() {
-            println!("Document {}", document);
+            //println!("Document {}", document);
             for (operation, context) in map {
-                println!("operation {}", operation);
+                //println!("operation {}", operation);
                 for id in &context.imports {
                     if let Some(item) = self.items.get(*id) {
                         let selection_names = match item {
@@ -2517,9 +2541,9 @@ impl NameSpaceManager {
                                 break;
                             }
                         }
-                        println!("allocate_name({}) = {}", id, name);
+                        //println!("allocate_name({}) = {}", id, name);
                         context.names.insert(name.clone(), *id);
-                        println!("context.names = {:?}", &context.names);
+                        //println!("context.names = {:?}", &context.names);
                         self.names.insert(*id, name.clone());
                     }
                     else {
@@ -2587,7 +2611,7 @@ impl NameSpaceManager {
     fn insert(&mut self, graphql_type_name: Name, names: Vec<Rc<String>>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>) -> Rc<Selection> {
         
         
-        println!("insert {:?}", &names);
+        //println!("insert {:?}", &names);
 
         let mut variants: Vec<Rc<Variant>> = Vec::new();
         for (name, (type_condition, fields)) in p_variants {
@@ -2633,7 +2657,7 @@ impl NameSpaceManager {
     }
     
     fn get_name(&self, id: &usize) -> &Name {
-        println!("get_name({}) = {:?}", id, self.names.get(id));
+        //println!("get_name({}) = {:?}", id, self.names.get(id));
         self.names.get(id).unwrap()
     }
     

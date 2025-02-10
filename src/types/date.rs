@@ -55,7 +55,7 @@ static FORMAT: Lazy<Vec<format_description::FormatItem>> =
 
 
 /// A GraphQL Date value
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Date(time::Date);
 
 impl Date {
