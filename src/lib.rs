@@ -27,8 +27,7 @@ pub mod error;
 use std::collections::HashMap;
 
 use display_json::DisplayAsJsonPretty;
-use reqwest::StatusCode;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 pub use error::{Error, GraphQLJsonError};
 

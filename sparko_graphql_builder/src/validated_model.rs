@@ -411,13 +411,13 @@ impl SelectionBuilder {
     pub fn build(self, manager: &mut NameSpaceManager) -> Rc<Selection> {
 
         println!("SelectionBuilder build");
-        for (name, field) in &self.fields {
+        for name in self.fields.keys() {
             println!("    {}", name);
         }
 
-        for (name, (cond, variant)) in &self.variants {
+        for (name, (_cond, variant)) in &self.variants {
             println!("  variant {}", name);
-            for (name, field) in variant {
+            for name in variant.keys() {
                 println!("    {}", name);
             }
         }
@@ -1779,9 +1779,6 @@ impl SelectionQueryList {
                     else {
                         (None, fields)
                     };
-                    if let Some(i) = &new_interface {
-                        //println!("new_interface={:?}", i);
-                    }
                     selections.push(SelectionQueryField::new(selection_field, &new_interface, registry, schema, new_fields)?);
                 },
                 parsed_model::Selection::FragmentSpread(fragment_spread) => {
@@ -2521,9 +2518,9 @@ impl NameSpaceManager {
 
     pub fn allocate_names(&mut self) {
         //println!("Allocate Names");
-        for (document, map) in self.contexts.iter_mut() {
+        for (_document, map) in self.contexts.iter_mut() {
             //println!("Document {}", document);
-            for (operation, context) in map {
+            for (_operation, context) in map {
                 //println!("operation {}", operation);
                 for id in &context.imports {
                     if let Some(item) = self.items.get(*id) {
