@@ -163,11 +163,11 @@ pub trait TokenManager {
     = note: `#[warn(async_fn_in_trait)]` on by default
 help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
      */
-    // Returns a bearer token, which may be cached.
+    // Returns a bearer token, which may be cached if refresh is false, otherwise a new token will be obtained.
     // async fn get_authenticator(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
-    fn get_authenticator(&mut self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
+    fn get_authenticator(&self, refresh: bool) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
 
-    // Returns a fresh bearer token forcing a reauthentication
-    // async fn authenticate(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
-    fn authenticate(&mut self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
+    // // Returns a fresh bearer token forcing a reauthentication
+    // // async fn authenticate(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
+    // fn authenticate(&self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
 }

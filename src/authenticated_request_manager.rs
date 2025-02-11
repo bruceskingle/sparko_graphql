@@ -45,18 +45,18 @@ impl<M: TokenManager> AuthenticatedRequestManager<M> {
         })
     }
 
-    pub async fn call<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(&mut self, query: &Q) 
+    pub async fn call<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(&self, query: &Q) 
     -> Result<R, Box<dyn std::error::Error>> {
-        let token = &self.token_manager.get_authenticator().await?;
+        let token = &self.token_manager.get_authenticator(false).await?;
 
         self.request_manager.call(query, Some(token)).await
     }
 
-    pub async fn query<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&mut self, request_name: &str, query_name: &str, params: P) 
+    pub async fn query<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_name: &str, query_name: &str, params: P) 
     -> Result<T, Box<dyn std::error::Error>> {
         // let x = self.request_manager.call::<P,T>(request_name, query_name, params, Some(&self.token_manager.get_authenticator().await?)).await?;
 
-        let token = &self.token_manager.get_authenticator().await?;
+        let token = &self.token_manager.get_authenticator(false).await?;
 
         // eprintln!("AuthenticatedRequestManager token=<{}>", token);
 
@@ -76,11 +76,11 @@ impl<M: TokenManager> AuthenticatedRequestManager<M> {
         result
     }
 
-    pub async fn mutation<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&mut self, request_name: &str, query_name: &str, params: P) 
+    pub async fn mutation<P: GraphQLQueryParams, T: GraphQLType<P> + DeserializeOwned>(&self, request_name: &str, query_name: &str, params: P) 
     -> Result<T, Box<dyn std::error::Error>> {
         // let x = self.request_manager.call::<P,T>(request_name, query_name, params, Some(&self.token_manager.get_authenticator().await?)).await?;
 
-        let token = &self.token_manager.get_authenticator().await?;
+        let token = &self.token_manager.get_authenticator(false).await?;
 
         eprintln!("AuthenticatedRequestManager token=<{}>", token);
 
