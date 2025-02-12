@@ -53,20 +53,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
 
     if let Some(request_manager) = request_manager {
-        let query = swapi::pagination::get_fim_people::Query::new();
-        let response = request_manager.call(&query, None).await?;
-        println!("Result {}", serde_json::to_string_pretty(&response)?);
+        {
+            let query = swapi::pagination::get_fim_people::Query::new();
+            let response = request_manager.call(&query, None).await?;
+            println!("Result {}", serde_json::to_string_pretty(&response)?);
 
-        for edge in &response.all_films_.edges_ {
+            for edge in &response.all_films_.edges_ {
 
-            println!("{}", &edge.node.title_);
-            println!("{}", serde_json::to_string_pretty(&edge.node)?);
-            println!();
-
-            for edge in &edge.node.character_connection_.edges_ {
-                println!("{}", &edge.node.name_);
+                println!("{}", &edge.node.title_);
                 println!("{}", serde_json::to_string_pretty(&edge.node)?);
                 println!();
+
+                for edge in &edge.node.character_connection_.edges_ {
+                    println!("{}", &edge.node.name_);
+                    println!("{}", serde_json::to_string_pretty(&edge.node)?);
+                    println!();
+                }
+            }
+        }
+
+        {
+            let query = swapi::pagination::get_pagable_fim_people::Query::new();
+            let response = request_manager.call(&query, None).await?;
+            println!("Result {}", serde_json::to_string_pretty(&response)?);
+
+            for film in &response.all_films_ {
+
+                println!("{}", &film.title_);
+                println!("{}", serde_json::to_string_pretty(&film)?);
+                println!();
+
+                for person in &film.character_connection_ {
+                    println!("{}", &person.name_);
+                    println!("{}", serde_json::to_string_pretty(&person)?);
+                    println!();
+                }
             }
         }
     }

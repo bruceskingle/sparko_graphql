@@ -28,6 +28,8 @@ query getPagableFimPeople {
         pageInfo {
             endCursor
             hasNextPage
+            hasPreviousPage
+            startCursor
         }
         edges {
             node {
