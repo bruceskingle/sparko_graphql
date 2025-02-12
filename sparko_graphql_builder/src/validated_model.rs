@@ -408,9 +408,9 @@ impl SelectionBuilder {
         self
     }
 
-    pub fn build(self, manager: &mut NameSpaceManager) -> Rc<Selection> {
+    pub fn build(self, manager: &mut NameSpaceManager) -> SelectionFieldType {
 
-        println!("SelectionBuilder build");
+        println!("SelectionBuilder build {}", self.graphql_type_name);
         for name in self.fields.keys() {
             println!("    {}", name);
         }
@@ -421,7 +421,144 @@ impl SelectionBuilder {
                 println!("    {}", name);
             }
         }
-        manager.insert(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface)
+
+        if self.graphql_type_name.as_ref() == "PageInfo" {
+            println!("HERE");
+            println!("fields {:?}", self.fields);
+            println!("variants {:?}", self.variants);
+        }
+        // Recognise pagination
+
+        let mut cantbe_page_of = false;
+        let mut cantbe_edge_of = false;
+        let mut cantbe_page_info = false;
+        let mut page_info_fields = HashSet::new();
+        let mut page_info_type = None;
+        let mut edge_of_type = None;
+        let mut page_of_type = None;
+        
+        // let keys = if self.variants.is_empty() { self.fields.keys() } else {
+        //     let (a,b) = self.variants.values().next().unwrap();
+        //     b.keys()
+        // };
+
+        let mut meta_map = Vec::new();
+
+        meta_map.push(&self.fields);
+
+        for (n_, v) in self.variants.values() {
+            meta_map.push(v);
+        }
+
+        for map in meta_map {
+            for (name, field) in map {
+                let name = name.as_ref() as &str;
+
+                if name == TYPE_NAME {
+                    continue;
+                }
+
+                if name == "pageInfo" {
+                    page_info_type = Some(SelectionFieldType::remove_wrapper(&field.selection_type));
+                    cantbe_edge_of = true;
+                    cantbe_page_info=true;
+                }
+                else if name == "edges" {
+                    page_of_type = Some(SelectionFieldType::remove_wrapper(&field.selection_type));
+                    cantbe_edge_of = true;
+                    cantbe_page_info=true;
+                }
+                else if name == "cursor" {
+                    cantbe_page_of = true;
+                    cantbe_page_info=true;
+                }
+                else if name == "node" {
+                    edge_of_type = Some(SelectionFieldType::remove_wrapper(&field.selection_type));
+                    cantbe_page_of = true;
+                    cantbe_page_info=true;
+                }
+                else if name == "startCursor" || name == "endCursor" || name == "hasPreviousPage" || name == "hasNextPage" {
+                    page_info_fields.insert(name);
+                    cantbe_page_of = true;
+                    cantbe_edge_of=true;
+                }
+                else {
+                    cantbe_page_of = true;
+                    cantbe_edge_of = true;
+                    cantbe_page_info=true;
+                }
+            }
+        }
+
+        if cantbe_page_of==false && page_of_type.is_some() {
+            if let Some(page_type) =  page_of_type {
+                if let SelectionFieldType::EdgeOf(selection_field_type, selection_creation_params) = page_type.as_ref() {
+                    if let Some(page_info) = page_info_type {
+                        match page_info.as_ref() {
+                            SelectionFieldType::PageInfo(selection_creation_params) => {
+                                println!("!! Its PageOf<{:?}>", &selection_field_type);
+                                return SelectionFieldType::PageOf(selection_field_type.clone(), SelectionCreationParams::new(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface))
+                            },
+                            SelectionFieldType::ForwardPageInfo(selection_creation_params) => {
+                                println!("!! Its ForwardPageOf<{:?}>", &selection_field_type);
+                                return SelectionFieldType::ForwardPageOf(selection_field_type.clone(), SelectionCreationParams::new(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface))
+                            },
+                            SelectionFieldType::ReversePageInfo(selection_creation_params) => {
+                                println!("!! Its ReversePageOf<{:?}>", &selection_field_type);
+                                return SelectionFieldType::ReversePageOf(selection_field_type.clone(), SelectionCreationParams::new(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface))
+                            },
+                            _ => {}
+                        }
+                            
+                    }
+                }
+            }
+           
+        }
+
+        if cantbe_page_info==false && page_info_fields.len() > 1 {
+            let maybe_forward_page = page_info_fields.contains("hasNextPage") && page_info_fields.contains("endCursor");
+            let maybe_reverse_page = page_info_fields.contains("hasPreviousPage") && page_info_fields.contains("startCursor");
+
+            if maybe_forward_page && maybe_reverse_page {
+                println!("!! Its PageInfo");
+                return SelectionFieldType::PageInfo(SelectionCreationParams::new(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface));
+            }
+            else if maybe_forward_page {
+                println!("!! Its ForwardPageInfo");
+                return SelectionFieldType::ForwardPageInfo(SelectionCreationParams::new(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface));
+            }
+            else if maybe_reverse_page {
+                println!("!! Its ReversePageInfo");
+                return SelectionFieldType::ReversePageInfo(SelectionCreationParams::new(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface));
+            }
+        }
+
+        if cantbe_edge_of==false && edge_of_type.is_some() {
+            println!("!! ItsEdgeOf<{:?}>", edge_of_type.as_ref());
+            return SelectionFieldType::EdgeOf(edge_of_type.unwrap(), SelectionCreationParams::new(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface))
+        }
+
+        // check for unused pagination types:
+
+        for field in self.fields.values() {
+            if field.selection_type.is_pagination_internal() {
+                println!("\n\nUNUSED    {}", &field.name);
+            }
+           
+        }
+
+        for (_cond, variant) in self.variants.values() {
+            for field in variant.values() {
+                if field.selection_type.is_pagination_internal() {
+                    println!("\n\nUNUSED    {}", &field.name);
+                }
+            }
+        }
+
+        let selection = manager.insert(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface);
+
+        SelectionFieldType::Selection(selection.index)
     }
 }
 
@@ -431,8 +568,15 @@ pub enum SelectionFieldType {
     Scalar(Name),
     Enum(Name),
     Selection(usize),
-    Required(Box<SelectionFieldType>),
-    Array(Box<SelectionFieldType>),
+    Required(Rc<SelectionFieldType>),
+    Array(Rc<SelectionFieldType>),
+    EdgeOf(Rc<SelectionFieldType>, SelectionCreationParams),
+    PageInfo(SelectionCreationParams),
+    ForwardPageInfo(SelectionCreationParams),
+    ReversePageInfo(SelectionCreationParams),
+    PageOf(Rc<SelectionFieldType>, SelectionCreationParams),
+    ForwardPageOf(Rc<SelectionFieldType>, SelectionCreationParams),
+    ReversePageOf(Rc<SelectionFieldType>, SelectionCreationParams),
 }
 
 impl Display for SelectionFieldType {
@@ -444,6 +588,13 @@ impl Display for SelectionFieldType {
             SelectionFieldType::Selection(content) => content.fmt(f),
             SelectionFieldType::Required(wrapped) => write!(f, "{}!", wrapped),
             SelectionFieldType::Array(wrapped) => write!(f, "[{}]", wrapped),
+            SelectionFieldType::EdgeOf(wrapped, selection_creation_params) => write!(f, "EdgeOf<{}>", wrapped),
+            SelectionFieldType::PageInfo(selection_creation_params) => write!(f, "PageInfo"),
+            SelectionFieldType::ForwardPageInfo(selection_creation_params) => write!(f, "ForwardPageInfo"),
+            SelectionFieldType::ReversePageInfo(selection_creation_params) => write!(f, "ReversePageInfo"),
+            SelectionFieldType::PageOf(wrapped, selection_creation_params) => write!(f, "PageOf<{}>", wrapped),
+            SelectionFieldType::ForwardPageOf(wrapped, selection_creation_params) => write!(f, "ForwardPageOf<{}>", wrapped),
+            SelectionFieldType::ReversePageOf(wrapped, selection_creation_params) => write!(f, "ReversePageOf<{}>", wrapped),
         }
     }
 }
@@ -460,6 +611,13 @@ impl SelectionFieldType {
                 SelectionFieldType::Selection(id) => selection_manager.get_name(id).to_string(),
                 SelectionFieldType::Required(_) => unreachable!(),
                 SelectionFieldType::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
+                SelectionFieldType::EdgeOf(wrapped, selection_creation_params) => format!("sparko_graphql::types::EdgeOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
+                SelectionFieldType::PageInfo(selection_creation_params) => format!("sparko_graphql::types::PageInfo"),
+                SelectionFieldType::ForwardPageInfo(selection_creation_params) => format!("sparko_graphql::types::ForwardPageInfo"),
+                SelectionFieldType::ReversePageInfo(selection_creation_params) => format!("sparko_graphql::types::ReversePageInfo"),
+                SelectionFieldType::PageOf(wrapped, selection_creation_params) => format!("sparko_graphql::types::PageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
+                SelectionFieldType::ForwardPageOf(wrapped, selection_creation_params) => format!("sparko_graphql::types::ForwardPageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
+                SelectionFieldType::ReversePageOf(wrapped, selection_creation_params) => format!("sparko_graphql::types::ReversePageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
             }
         }
 
@@ -475,13 +633,51 @@ impl SelectionFieldType {
             }
         }
     }
+    
+    fn remove_wrapper(this: &Rc<SelectionFieldType>) -> Rc<SelectionFieldType> {
+        match this.as_ref() {
+            SelectionFieldType::Required(wrapped) => Self::remove_wrapper(wrapped),
+            SelectionFieldType::Array(wrapped) => Self::remove_wrapper(wrapped),
+            _ => this.clone()
+        }
+    }
+    
+    fn is_pagination_internal(&self) -> bool {
+        match self {
+            SelectionFieldType::EdgeOf(_,_) => true,
+            SelectionFieldType::PageInfo(_) => true,
+            SelectionFieldType::ForwardPageInfo(_) => true,
+            SelectionFieldType::ReversePageInfo(_) => true,
+            SelectionFieldType::BuiltinType(_) => false,
+            SelectionFieldType::Scalar(_) => false,
+            SelectionFieldType::Enum(_) => false,
+            SelectionFieldType::Selection(_) => false,
+            SelectionFieldType::Required(_) => false,
+            SelectionFieldType::Array(_) => false,
+            SelectionFieldType::PageOf(_,_) => false,
+            SelectionFieldType::ForwardPageOf(_,_) => false,
+            SelectionFieldType::ReversePageOf(_,_) => false,
+        }
+    }
+
+
+    // pub fn is_array(&self) -> bool {
+    //     match self {
+    //         SelectionFieldType::BuiltinType(_) => false,
+    //         SelectionFieldType::Scalar(_) => false,
+    //         SelectionFieldType::Enum(_) => false,
+    //         SelectionFieldType::Selection(_) => false,
+    //         SelectionFieldType::Required(selection_field_type) => selection_field_type.is_array(),
+    //         SelectionFieldType::Array(_) => true,
+    //     }
+    // }
 }
 
 
 #[derive(Debug)]
 pub struct SelectionField {
     pub name: Name,
-    pub selection_type: SelectionFieldType,
+    pub selection_type: Rc<SelectionFieldType>,
     pub optional: bool,
 }
 impl SelectionField {
@@ -490,6 +686,10 @@ impl SelectionField {
             let field_name = to_snake_case(&self.name);
 
             writeln!(out, "#[serde(rename = \"{}\")]", &self.name)?;
+
+            // if self.selection_type.is_array() {
+            //     writeln!(out, "#[serde(skip_serializing)]")?;
+            // }
             writeln!(out, "pub {}_: {}, // T1", field_name, self.selection_type.rust_type(selection_manager, schema, !self.optional))
         }
         else {
@@ -1832,7 +2032,7 @@ impl SelectionQueryList {
 pub struct GenericOperation {
     pub parsed: Rc<parsed_model::GenericOperation>,
     pub variables: FieldMap,
-    pub response: Rc<Selection>,
+    // pub response: Rc<Selection>,
     pub selection_query_list: SelectionQueryList,
 }
 
@@ -1859,10 +2059,16 @@ impl GenericOperation {
         let response = Self::create_selection(err, registry, selection_manager, schema, fragments, 
             vec!(name.clone()), name, &parsed.selections, fields, &None)?;
 
+        if response.is_pagination_internal() {
+            println!("\n\n UNUSED RESPONSE");
+
+            selection_manager.bruce(response);
+        }
+
         err.ok(GenericOperation {
                 parsed: parsed.clone(),
                 variables,
-                response,
+                // response,
                 selection_query_list: SelectionQueryList::new(&parsed.selections, &None, registry, schema, fields)?
             })
     }
@@ -1884,7 +2090,7 @@ impl GenericOperation {
     }
     
     fn create_selection(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
-        preferred_type_names: Vec<Name>, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap, interface: &Option<Rc<Interface>>) -> Result<Rc<Selection>, Error>
+        preferred_type_names: Vec<Name>, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap, interface: &Option<Rc<Interface>>) -> Result<SelectionFieldType, Error>
     {
         let mut selection_builder = SelectionBuilder::new(graphql_type_name, interface);
         
@@ -1898,11 +2104,11 @@ impl GenericOperation {
     fn create_selection_field(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
         field_name: Name, preferred_type_names: Vec<Name>, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, optional: bool, fields: &FieldMap, interface: &Option<Rc<Interface>>) -> Result<SelectionField, Error>
     {
-        let index = Self::create_selection(err, registry, selection_manager, schema, fragments, preferred_type_names, graphql_type_name, selections, fields, interface)?.index;
+        let selection_type = Rc::new(Self::create_selection(err, registry, selection_manager, schema, fragments, preferred_type_names, graphql_type_name, selections, fields, interface)?);
    
         Ok(SelectionField {
             name: field_name,
-            selection_type: SelectionFieldType::Selection(index),
+            selection_type,
             optional,
         })
     }
@@ -1958,10 +2164,10 @@ impl GenericOperation {
         }
     }
 
-    fn wrap_type2(ty: &Type, selection_type: SelectionFieldType) -> SelectionFieldType {
+    fn wrap_type2(ty: &Type, selection_type: Rc<SelectionFieldType>) -> Rc<SelectionFieldType> {
         match ty {
-            Type::Required(wrapped) => SelectionFieldType::Required(Box::new(Self::wrap_type2(wrapped, selection_type))),
-            Type::Array(wrapped) => SelectionFieldType::Array(Box::new(Self::wrap_type2(wrapped, selection_type))),
+            Type::Required(wrapped) => Rc::new(SelectionFieldType::Required(Self::wrap_type2(wrapped, selection_type))),
+            Type::Array(wrapped) => Rc::new(SelectionFieldType::Array(Self::wrap_type2(wrapped, selection_type))),
             Type::Scalar(_) => selection_type,
         }
         
@@ -1985,7 +2191,7 @@ impl GenericOperation {
 
                                             SelectionField {
                                                 name: field_name.clone(), 
-                                                selection_type: SelectionFieldType::Scalar(name.clone()),
+                                                selection_type: Rc::new(SelectionFieldType::Scalar(name.clone())),
                                                 optional: selection_field.optional,
                                             }
                                         },
@@ -2038,7 +2244,7 @@ impl GenericOperation {
 
                                             SelectionField {
                                                 name: field_name.clone(), 
-                                                selection_type: SelectionFieldType::Enum(name.clone()),
+                                                selection_type: Rc::new(SelectionFieldType::Enum(name.clone())),
                                                 optional: selection_field.optional,
                                             }
                                         },
@@ -2062,7 +2268,7 @@ impl GenericOperation {
 
                                     SelectionField {
                                         name: field_name.clone(), 
-                                        selection_type: SelectionFieldType::BuiltinType(builtin_type.clone()),
+                                        selection_type: Rc::new(SelectionFieldType::BuiltinType(builtin_type.clone())),
                                         optional: selection_field.optional,
                                     }
                                 }
@@ -2133,7 +2339,7 @@ impl GenericOperation {
 
             self.selection_query_list.print(&mut out)?;
 
-            self.response.print(&mut out)?;
+            // self.response.print(&mut out)?;
         }
         writeln!(out, "}}")
     }
@@ -2517,11 +2723,11 @@ impl NameSpaceManager {
     }
 
     pub fn allocate_names(&mut self) {
-        //println!("Allocate Names");
+        println!("Allocate Names");
         for (_document, map) in self.contexts.iter_mut() {
-            //println!("Document {}", document);
+            println!("Document {}", _document);
             for (_operation, context) in map {
-                //println!("operation {}", operation);
+                println!("operation {}", _operation);
                 for id in &context.imports {
                     if let Some(item) = self.items.get(*id) {
                         let selection_names = match item {
@@ -2538,7 +2744,7 @@ impl NameSpaceManager {
                                 break;
                             }
                         }
-                        //println!("allocate_name({}) = {}", id, name);
+                        println!("allocate_name({}) = {}", id, name);
                         context.names.insert(name.clone(), *id);
                         //println!("context.names = {:?}", &context.names);
                         self.names.insert(*id, name.clone());
@@ -2664,6 +2870,45 @@ impl NameSpaceManager {
         }
         else {
             panic!("Cant find selection {}", id);
+        }
+    }
+    
+    fn bruce(&mut self, response: SelectionFieldType) {
+        if response.is_pagination_internal() {
+            if let Some((wrapped, selection_creation_params)) = match response {
+                SelectionFieldType::EdgeOf(selection_field_type, selection_creation_params) => Some((selection_field_type, selection_creation_params)),
+                // SelectionFieldType::PageInfo => todo!(),
+                // SelectionFieldType::ForwardPageInfo => todo!(),
+                // SelectionFieldType::ReversePageInfo => todo!(),
+                _ => None,
+            } {
+                if let SelectionFieldType::Selection(index) = SelectionFieldType::remove_wrapper(&wrapped).as_ref() {
+                    println!("\n\n UNUSED RESPONSE insert {}", index);
+                    self.insert(selection_creation_params.graphql_type_name, selection_creation_params.names, selection_creation_params.fields, selection_creation_params.p_variants, selection_creation_params.interface);
+
+
+
+                    // self.items.push( NameSpaceItem::Selection(content));
+                    // self.get_context_mut().imports.insert(index.clone());
+                }
+            }
+            
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SelectionCreationParams {
+    graphql_type_name: Name, names: Vec<Rc<String>>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>,
+}
+
+impl SelectionCreationParams {
+    fn new(graphql_type_name: Name, names: Vec<Rc<String>>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>,) -> SelectionCreationParams {
+        SelectionCreationParams{
+            graphql_type_name,
+            names,
+            fields,p_variants,
+            interface
         }
     }
 }

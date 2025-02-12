@@ -34,6 +34,7 @@ fn build()  -> Result<(), Box<dyn Error>> {
         .with_query("graphql/swapi/get-luke.graphql", "luke")
         .with_query("graphql/swapi/get-person.graphql", "person")
         .with_query("graphql/swapi/get-luke-strikes-back.graphql", "strikes")
+        .with_query("graphql/swapi/pagination.graphql", "pagination")
         .with_query("graphql/swapi/fragment.graphql", "fragment")
         .build()?;
 
@@ -42,7 +43,7 @@ fn build()  -> Result<(), Box<dyn Error>> {
         .with_type("DateTime", "sparko_graphql::types::DateTime")
         .with_schema("graphql/octopus/schema.graphql")
         .with_query("graphql/octopus/main.graphql", "main")
-        .with_query("../../marco-sparko/graphql/octopus/LatestBill.graphql", "latest_bill")
+        .with_query("../../marco-sparko/graphql/octopus/bill.graphql", "bill")
         .with_query("../../marco-sparko/graphql/octopus/meters.graphql", "meters")
         .build()?;
 

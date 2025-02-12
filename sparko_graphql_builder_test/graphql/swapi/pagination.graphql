@@ -1,0 +1,54 @@
+
+query getFimPeople {
+  	allFilms(first: 5) {
+    	edges {
+        node {
+          title,
+          director,
+    			characterConnection(first: 5) {
+            edges {
+              node {
+                name
+                species {
+                  name
+                  classification
+                }
+              }
+            }
+          }
+        }
+      }
+  }
+}
+
+
+
+query getPagableFimPeople {
+    allFilms(first: 5) {
+        pageInfo {
+            endCursor
+            hasNextPage
+        }
+        edges {
+            node {
+                title,
+                director,
+                characterConnection(first: 5) {
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                    }
+                    edges {
+                        node {
+                            name
+                            species {
+                                name
+                                classification
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

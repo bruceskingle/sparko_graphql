@@ -28,13 +28,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
 pub struct ForwardPageInfo {
-    pub start_cursor: String,
+    pub end_cursor: String,
     pub has_next_page: bool
 }
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
 pub struct ReversePageInfo {
+    pub start_cursor: String,
+    pub has_previous_page: bool
+}
+
+#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+#[serde(rename_all = "camelCase")]
+pub struct PageInfo {
+    pub start_cursor: String,
+    pub has_next_page: bool,
     pub end_cursor: String,
     pub has_previous_page: bool
 }
@@ -69,10 +78,18 @@ pub struct ReversePageOf<T>
     pub edges: Vec<EdgeOf<T>>
 }
 
-pub enum PageOf<T> {
-  Forward(ForwardPageOf<T>),
-  Reverse(ReversePageOf<T>)
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PageOf<T> 
+{
+    pub page_info: PageInfo,
+    pub edges: Vec<EdgeOf<T>>
 }
+
+// pub enum PageOf<T> {
+//   Forward(ForwardPageOf<T>),
+//   Reverse(ReversePageOf<T>)
+// }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
