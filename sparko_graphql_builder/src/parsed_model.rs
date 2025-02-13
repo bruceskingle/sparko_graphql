@@ -966,7 +966,7 @@ impl SelectionField {
             alias: registry.intern_option(field.alias),
             position: field.position,
             optional,
-            arguments: build_arguments(err, registry, field.arguments),
+            arguments: build_arguments(err, registry, field.arguments, field.position),
             selections: build_selections(err, registry, field.selection_set),
         }))
     }
@@ -1115,11 +1115,11 @@ fn build_selections(err: &mut ErrorCollector, registry: &mut NameRegistry, selec
     })
 }
 
-fn build_arguments(err: &mut ErrorCollector, registry: &mut NameRegistry, arguments: Vec<(String, graphql_parser::query::Value<'_, String>)>) -> Vec<Rc<Argument>> {
+fn build_arguments(err: &mut ErrorCollector, registry: &mut NameRegistry, arguments: Vec<(String, graphql_parser::query::Value<'_, String>)>, position: Pos) -> Vec<Rc<Argument>> {
     let mut result = Vec::new();
 
     for (name, value) in arguments {
-        result.push(Argument::new(err, registry, name, value));
+        result.push(Argument::new(err, registry, name, value, position));
     }
 
     result
@@ -1165,13 +1165,15 @@ impl Display for Value {
 pub struct Argument {
     pub name: Name,
     pub value: Value,
+    pub position: Pos,
 }
 
 impl Argument {
-    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, name: String, value: graphql_parser::query::Value<'_, String> ) -> Rc<Self> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, name: String, value: graphql_parser::query::Value<'_, String>, position: Pos) -> Rc<Self> {
         Rc::new(Argument {
             name: registry.intern(name),
             value: Value::new(err, registry, value),
+            position,
         })
     }
 
@@ -1188,14 +1190,18 @@ impl Argument {
     
     pub fn generate_query(&self, out: &mut Output<'_>, variables: &crate::validated_model::FieldMap) -> Result<(), Error> {
         if let Value::Variable(name) = &self.value {
-            let field = variables.get(&name).unwrap();
-            if field.ty.is_optional() {
-                writeln!(out, "if self.variables.{}_.is_some() {{", to_snake_case(&field.parsed.name))?;
-                writeln!(out, "    buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
-                writeln!(out, "}}")?;
+            if let Some(field) = variables.get(&name) {
+                if field.ty.is_optional() {
+                    writeln!(out, "if self.variables.{}_.is_some() {{", to_snake_case(&field.parsed.name))?;
+                    writeln!(out, "    buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
+                    writeln!(out, "}}")?;
+                }
+                else {
+                    writeln!(out, "buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
+                }
             }
             else {
-                writeln!(out, "buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
+                return Err(Error::BuildFailed(BuildError::MissingVariableError(self.position, name.to_string()).to_string()))
             }
         }
         else {

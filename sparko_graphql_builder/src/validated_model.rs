@@ -4,7 +4,7 @@ use std::io::Write;
 use std::rc::Rc;
 
 use graphql_parser::Pos;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use inflections::case::to_snake_case;
 
 use crate::parsed_model::{BuiltinType, DefinedTypeName, OperationType};
@@ -105,7 +105,7 @@ pub struct Selection {
     pub index: usize,
     pub graphql_type_name: Name,
     // pub parsed: Rc<parsed_model::SelectionList>,
-    pub names: Vec<Name>,
+    pub names: IndexSet<Name>,
     pub fields: IndexMap<Name, SelectionField>,
     pub variants: Vec<Rc<Variant>>,
     pub interface: Option<Rc<Interface>>,
@@ -357,16 +357,16 @@ impl Selection {
 #[derive(Debug)]
 pub struct Variant {
     pub index: usize,
-    pub names: Vec<Name>,
+    pub names: IndexSet<Name>,
     pub fields: IndexMap<Name, SelectionField>,
     pub type_condition: Name,
 }
 
 pub struct SelectionBuilder {
     pub graphql_type_name: Name,
-    pub preferred_type_names: Vec<Name>,
+    pub preferred_type_names: IndexSet<Name>,
     pub fields: IndexMap<Name, SelectionField>,
-    pub variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>,
+    pub variants: IndexMap<Name, (IndexSet<Name>, IndexMap<Name, SelectionField>)>,
     interface: Option<Rc<Interface>>,
 }
 
@@ -375,7 +375,7 @@ impl SelectionBuilder {
         println!("SelectionBuilder new");
         SelectionBuilder {
             graphql_type_name,
-            preferred_type_names: Vec::new(),
+            preferred_type_names: IndexSet::new(),
             fields: IndexMap::new(),
             variants: IndexMap::new(),
             interface: interface.clone(),
@@ -385,14 +385,17 @@ impl SelectionBuilder {
     pub fn with_field(&mut self, variant_name: &Option<(Name, Name)>, field_name: &Name, field: SelectionField) -> &mut Self {
         println!("SelectionBuilder field {}", field_name);
         if let Some((variant_name, variant_type_condition)) = variant_name {
-            if let Some((_, variant)) = self.variants.get_mut(variant_name) {
+            if let Some((names, variant)) = self.variants.get_mut(variant_type_condition) {
                 variant.insert(field_name.clone(), field);
+                names.insert(variant_name.clone());
             }
             else {
                 println!("insert variant_name={}, tc={}", &variant_name, &variant_type_condition);
                 let mut fields = IndexMap::new();
                 fields.insert(field_name.clone(), field);
-                self.variants.insert(variant_name.clone(), (variant_type_condition.clone(), fields));
+                let mut names = IndexSet::new();
+                names.insert(variant_name.clone());
+                self.variants.insert(variant_type_condition.clone(), (names, fields));
             }
         }
         else {
@@ -403,7 +406,7 @@ impl SelectionBuilder {
 
     pub fn with_preferred_type_names(&mut self, preferred_type_names: Vec<Name>) -> &mut Self {
         for name in preferred_type_names {
-            self.preferred_type_names.push(name);
+            self.preferred_type_names.insert(name);
         }
         self
     }
@@ -1779,7 +1782,7 @@ impl SelectionQueryField {
         writeln!(out, "}}")
     }
 
-        pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
+        pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut IndexSet<Name>) -> Result<(), Error> {
             if let Some(alias) = &self.alias {
                 writeln!(out, "buf.push_str(\"{}: {}\\n\");", alias, &self.name)?;
             }
@@ -1830,7 +1833,7 @@ impl SelectionQueryFragmentSpread {
         writeln!(out, "}}")
     }
 
-    pub fn generate_query(&self, out: &mut Output, fragments: &mut HashSet<Name>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output, fragments: &mut IndexSet<Name>) -> Result<(), Error> {
         fragments.insert(self.name.clone());
         writeln!(out, "buf.push_str(\"...{}\\n\");", &self.name)?;
         Ok(())
@@ -1867,7 +1870,7 @@ impl SelectionQueryInlineFragmentSpread{
         writeln!(out, "}}")
     }
 
-    pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut IndexSet<Name>) -> Result<(), Error> {
         if let Some(cond) = &self.type_condition {
             writeln!(out, "buf.push_str(\"... on {} {{\\n\");", cond)?;
         }
@@ -1906,7 +1909,7 @@ impl Print for SelectionQuery {
 
 impl SelectionQuery {
     
-    pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output, variables: &crate::validated_model::FieldMap, fragments: &mut IndexSet<Name>) -> Result<(), Error> {
         match self {
             SelectionQuery::Field(selection_field) => selection_field.generate_query(out, variables, fragments),
             SelectionQuery::FragmentSpread(fragment_spread) => fragment_spread.generate_query(out, fragments),
@@ -2012,7 +2015,7 @@ impl SelectionQueryList {
         Ok(Self { selections})
     }
     
-    pub fn generate_query(&self, out: &mut Output<'_>, variables: &FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output<'_>, variables: &FieldMap, fragments: &mut IndexSet<Name>) -> Result<(), Error> {
         if ! &self.selections.is_empty() {
             writeln!(out, "buf.push('{{');")?;
             {
@@ -2566,8 +2569,8 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                         
                     }
 
-                    let mut done_fragments = HashSet::new();
-                    let mut fragments = HashSet::new();
+                    let mut done_fragments = IndexSet::new();
+                    let mut fragments = IndexSet::new();
                     self.selection_query_list.generate_query(&mut out, &self.variables, &mut fragments)?;
 
                     while ! fragments.is_empty() {
@@ -2597,8 +2600,8 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
         Ok(())
     }
     
-    fn generate_fragments(out: &mut Output<'_>, variables: &SharedMap<Field>, executable_document: &ExecutableDocument, fragments: &HashSet<Rc<String>>, done_fragments: &mut HashSet<Rc<String>>) -> Result<HashSet<Rc<String>>, Error> {
-        let mut new_fragments = HashSet::new();
+    fn generate_fragments(out: &mut Output<'_>, variables: &SharedMap<Field>, executable_document: &ExecutableDocument, fragments: &IndexSet<Name>, done_fragments: &mut IndexSet<Name>) -> Result<IndexSet<Name>, Error> {
+        let mut new_fragments = IndexSet::new();
         for fragment_name in fragments {
             if ! done_fragments.contains(fragment_name) {
                 let fragment = executable_document.fragments.get(fragment_name).unwrap();
@@ -2624,7 +2627,7 @@ fn get_field<'a>(schema: &'a Rc<Schema>, fields: &'a SharedMap<Field>, name: &St
 #[derive(Debug)]
 pub struct SelectionContext {
     pub imports: HashSet<usize>,
-    pub schema_imports: HashSet<Name>,
+    pub schema_imports: IndexSet<Name>,
     pub names: IndexMap<Name, usize>,
 }
 
@@ -2632,7 +2635,7 @@ impl SelectionContext {
     pub fn new() -> Self {
         SelectionContext {
             imports: HashSet::new(),
-            schema_imports: HashSet::new(),
+            schema_imports: IndexSet::new(),
             names: IndexMap::new(),
         }
     }
@@ -2664,7 +2667,7 @@ impl NameSpaceItem {
 #[derive(Debug)]
 pub struct NameSpaceManager {
     pub items: Vec<NameSpaceItem>,
-    pub all_schema_imports: HashSet<Name>,
+    pub all_schema_imports: IndexSet<Name>,
     pub contexts: IndexMap<Name, IndexMap<Name, SelectionContext>>,
     pub names: IndexMap<usize, Name>,
     pub document_name: Option<Name>,
@@ -2714,7 +2717,7 @@ impl NameSpaceManager {
     pub fn new() -> NameSpaceManager {
         NameSpaceManager {
             items: Vec::new(),
-            all_schema_imports: HashSet::new(),
+            all_schema_imports: IndexSet::new(),
             contexts: IndexMap::new(),
             names: IndexMap::new(),
             document_name: None,
@@ -2738,9 +2741,12 @@ impl NameSpaceManager {
 
                         let default_name = Rc::new(format!("Type{}", id));
                         let mut name = &default_name;
+                        print!("{} {:?} ", name, selection_names);
                         for posible_name in selection_names {
+                            print!("{} ", posible_name);
                             if ! context.names.contains_key(posible_name) {
                                 name = posible_name;
+                                println!("Thats it");
                                 break;
                             }
                         }
@@ -2811,18 +2817,18 @@ impl NameSpaceManager {
         self.all_schema_imports.insert(name);
     }
 
-    fn insert(&mut self, graphql_type_name: Name, names: Vec<Rc<String>>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>) -> Rc<Selection> {
+    fn insert(&mut self, graphql_type_name: Name, names: IndexSet<Name>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (IndexSet<Name>, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>) -> Rc<Selection> {
         
         
         //println!("insert {:?}", &names);
 
         let mut variants: Vec<Rc<Variant>> = Vec::new();
-        for (name, (type_condition, fields)) in p_variants {
+        for (type_condition, (names, fields)) in p_variants {
             let index = self.items.len();
 
             let variant = Rc::new(Variant{
                 index,
-                names: vec!(name.clone()),
+                names,
                 fields,
                 type_condition,
             });
@@ -2855,7 +2861,7 @@ impl NameSpaceManager {
         result
     }
     
-    fn get_schema_dependencies(&self) -> &HashSet<Name> {
+    fn get_schema_dependencies(&self) -> &IndexSet<Name> {
         &self.get_context().schema_imports
     }
     
@@ -2899,15 +2905,16 @@ impl NameSpaceManager {
 
 #[derive(Debug)]
 struct SelectionCreationParams {
-    graphql_type_name: Name, names: Vec<Rc<String>>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>,
+    graphql_type_name: Name, names: IndexSet<Name>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (IndexSet<Name>, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>,
 }
 
 impl SelectionCreationParams {
-    fn new(graphql_type_name: Name, names: Vec<Rc<String>>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>,) -> SelectionCreationParams {
+    fn new(graphql_type_name: Name, names: IndexSet<Name>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (IndexSet<Name>, IndexMap<Name, SelectionField>)>, interface: Option<Rc<Interface>>,) -> SelectionCreationParams {
         SelectionCreationParams{
             graphql_type_name,
             names,
-            fields,p_variants,
+            fields,
+            p_variants,
             interface
         }
     }
@@ -2942,7 +2949,7 @@ impl FragmentDefinition {
         })
     }
 
-    pub fn generate_query(&self, out: &mut Output<'_>, variables: &crate::validated_model::FieldMap, fragments: &mut HashSet<Name>) -> Result<(), Error> {
+    pub fn generate_query(&self, out: &mut Output<'_>, variables: &crate::validated_model::FieldMap, fragments: &mut IndexSet<Name>) -> Result<(), Error> {
         
         writeln!(out, "")?;
         writeln!(out, "buf.push_str(\"fragment {} on {}\\n\");", self.name, self.type_condition)?;

@@ -156,6 +156,7 @@ pub enum BuildError {
     MissingEnumError(Pos, String),
     MissingInputObjectError(Pos, String),
     MissingFieldError(Pos, String),
+    MissingVariableError(Pos, String),
     SelectionOnNonObjectError(Pos, Name),
     OptionalNonNullFieldError(Pos, String),
     MissingFragmentError(Pos, String),
