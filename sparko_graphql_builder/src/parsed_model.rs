@@ -1131,6 +1131,7 @@ pub enum Value {
     Int(i64),
     String(String),
     Bool(bool),
+    Enum(String),
 }
 
 impl Value {
@@ -1142,7 +1143,7 @@ impl Value {
             graphql_parser::query::Value::String(string) => Value::String(string),
             graphql_parser::query::Value::Boolean(boolean) => Value::Bool(boolean),
             graphql_parser::query::Value::Null => todo!(),
-            graphql_parser::query::Value::Enum(_) => todo!(),
+            graphql_parser::query::Value::Enum(value) => Value::Enum(value),
             graphql_parser::query::Value::List(_) => todo!(),
             graphql_parser::query::Value::Object(_) => todo!(),
         }
@@ -1156,6 +1157,7 @@ impl Display for Value {
             Value::Int(number) => write!(f, "{}", number),
             Value::String(string) => write!(f, "\\\"{}\\\"", string),
             Value::Bool(value) => write!(f, "{}", value),
+            Value::Enum(value) => write!(f, "{}", value),
         }
     }
 }

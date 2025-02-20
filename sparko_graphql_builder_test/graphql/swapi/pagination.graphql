@@ -2,11 +2,13 @@
 query getFimPeople {
   	allFilms(first: 5) {
     	edges {
+        cursor
         node {
           title,
           director,
     			characterConnection(first: 5) {
             edges {
+              cursor
               node {
                 name
                 species {
@@ -32,6 +34,7 @@ query getPagableFimPeople {
             startCursor
         }
         edges {
+          cursor
             node {
                 title,
                 director,
@@ -41,13 +44,14 @@ query getPagableFimPeople {
                         endCursor
                     }
                     edges {
-                        node {
-                            name
-                            species {
-                                name
-                                classification
-                            }
-                        }
+                      cursor
+                      node {
+                          name
+                          species {
+                              name
+                              classification
+                          }
+                      }
                     }
                 }
             }

@@ -28,23 +28,23 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
 pub struct ForwardPageInfo {
-    pub end_cursor: String,
+    pub end_cursor: Option<String>,
     pub has_next_page: bool
 }
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
 pub struct ReversePageInfo {
-    pub start_cursor: String,
+    pub start_cursor: Option<String>,
     pub has_previous_page: bool
 }
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
 pub struct PageInfo {
-    pub start_cursor: String,
+    pub start_cursor: Option<String>,
     pub has_next_page: bool,
-    pub end_cursor: String,
+    pub end_cursor: Option<String>,
     pub has_previous_page: bool
 }
 
@@ -70,7 +70,13 @@ pub struct ForwardPageOf<T>
     pub edges: Vec<EdgeOf<T>>
 }
 
-impl<T> IntoIterator for ForwardPageOf<T> {
+impl<T> ForwardPageOf<T> {
+  pub fn len(&self) -> usize {
+    self.edges.len()
+  }
+}
+
+  impl<T> IntoIterator for ForwardPageOf<T> {
     type Item = T;
 
     type IntoIter = ForwardPageOfIterator<T>;
@@ -125,6 +131,12 @@ pub struct ReversePageOf<T>
 {
     pub page_info: ReversePageInfo,
     pub edges: Vec<EdgeOf<T>>
+}
+
+impl<T> ReversePageOf<T> {
+  pub fn len(&self) -> usize {
+    self.edges.len()
+  }
 }
 
 impl<T> IntoIterator for ReversePageOf<T> {
@@ -184,6 +196,12 @@ pub struct PageOf<T>
     pub edges: Vec<EdgeOf<T>>
 }
 
+impl<T> PageOf<T> {
+  pub fn len(&self) -> usize {
+    self.edges.len()
+  }
+}
+
 impl<T> IntoIterator for PageOf<T> {
     type Item = T;
 
@@ -238,7 +256,7 @@ impl<'a, T> Iterator for RefPageOfIterator<'a, T> {
 pub struct  EdgeOf<T>
 {
   pub node: T,
-  // pub cursor: String
+  pub cursor: String
 }
 
 
@@ -251,12 +269,12 @@ mod tests {
     fn test_iter() {
         let page = PageOf {
           page_info: PageInfo {
-              start_cursor: String::from("back"),
+              start_cursor: Some(String::from("back")),
               has_next_page: false,
-              end_cursor: String::from("forward"),
+              end_cursor: Some(String::from("forward")),
               has_previous_page: false,
           },
-          edges: vec!(EdgeOf { node: 1}, EdgeOf { node: 2}, EdgeOf { node: 3})
+          edges: vec!(EdgeOf { node: 1, cursor: "1".to_string()}, EdgeOf { node: 2, cursor: "2".to_string()}, EdgeOf { node: 3, cursor: "3".to_string()})
         };
 
         for i in &page {

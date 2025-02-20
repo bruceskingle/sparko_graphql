@@ -247,7 +247,7 @@ impl Selection {
             
                     writeln!(out, "}}")?;
                     writeln!(out, "")?;
-        
+
                     if ! self.fields.is_empty() {
                         writeln!(out, "impl {} {{", base_type_name)?;
                 
@@ -333,18 +333,20 @@ impl Selection {
                         writeln!(out, "}}")?;
                         writeln!(out, "")?;
         
-                        writeln!(out, "impl {} {{", rust_variant_name)?;
-                
-                        {
-                            let mut out = out.indent();
-                            
-                            writeln!(out, "pub fn as_{}(&self) -> &{} {{", base_member_name, abstract_name)?;
-                            writeln!(out, "    &self.{}_", base_member_name)?;
+                        if ! self.fields.is_empty() {
+                            writeln!(out, "impl {} {{", rust_variant_name)?;
+                    
+                            {
+                                let mut out = out.indent();
+                                
+                                writeln!(out, "pub fn as_{}(&self) -> &{} {{", base_member_name, abstract_name)?;
+                                writeln!(out, "    &self.{}_", base_member_name)?;
+                                writeln!(out, "}}")?;
+                            }
+                    
                             writeln!(out, "}}")?;
+                            writeln!(out, "")?;
                         }
-                
-                        writeln!(out, "}}")?;
-                        writeln!(out, "")?;
                         
                     }
                 }
@@ -432,6 +434,7 @@ impl SelectionBuilder {
         }
         // Recognise pagination
 
+        let mut has_cursor = false;
         let mut cantbe_page_of = false;
         let mut cantbe_edge_of = false;
         let mut cantbe_page_info = false;
@@ -472,6 +475,7 @@ impl SelectionBuilder {
                     cantbe_page_info=true;
                 }
                 else if name == "cursor" {
+                    has_cursor = true;
                     cantbe_page_of = true;
                     cantbe_page_info=true;
                 }
@@ -537,7 +541,7 @@ impl SelectionBuilder {
             }
         }
 
-        if cantbe_edge_of==false && edge_of_type.is_some() {
+        if cantbe_edge_of==false && has_cursor && edge_of_type.is_some() {
             println!("!! ItsEdgeOf<{:?}>", edge_of_type.as_ref());
             return SelectionFieldType::EdgeOf(edge_of_type.unwrap(), SelectionCreationParams::new(self.graphql_type_name, self.preferred_type_names, self.fields, self.variants, self.interface))
         }
