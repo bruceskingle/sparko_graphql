@@ -66,6 +66,16 @@ impl Date {
     pub fn at_midnight(&self) -> DateTime {
       DateTime::from_date_time(self.0, time::Time::MIDNIGHT)
     }
+
+    pub fn at_next_midnight(&self) -> DateTime {
+      if let Some(date) = self.0.next_day() {
+        DateTime::from_date_time(date, time::Time::MIDNIGHT)
+      }
+      else {
+        // This is the corner case where the date is the last day of the rust universe, don't worry about the details, just enjoy the view.....
+        DateTime::from_date_time(self.0, time::Time::from_hms_nano(23, 59, 59, 999999999).unwrap())
+      }
+    }
 }
 
 impl Deref for Date {
