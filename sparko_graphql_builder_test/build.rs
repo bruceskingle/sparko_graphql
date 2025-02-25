@@ -44,7 +44,7 @@ fn build()  -> Result<(), Box<dyn Error>> {
         .with_schema("graphql/octopus/schema.graphql")
         .with_query("graphql/octopus/main.graphql", "main")
         .with_query("../../marco-sparko/graphql/octopus/bill.graphql", "bill")
-        .with_query("../../marco-sparko/graphql/octopus/meters.graphql", "meters")
+        .with_query("../../marco-sparko/graphql/octopus/meter.graphql", "meter")
         .build()?;
 
     // sparko_graphql_builder::builder("octopus")

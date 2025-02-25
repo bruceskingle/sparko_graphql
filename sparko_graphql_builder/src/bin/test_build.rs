@@ -30,7 +30,9 @@ fn main()  -> Result<(), Box<dyn Error>> {
         .with_schema("../../marco-sparko/graphql/octopus/octopus-schema.graphql")
         // .with_query("../sparko_graphql_builder_test/graphql/octopus/test.graphql", "yesy")
         // .with_query("../sparko_graphql_builder_test/graphql/octopus/main.graphql", "main")
-        .with_query("../../marco-sparko/graphql/octopus/bill.graphql", "bill")
+        // .with_query("../../marco-sparko/graphql/octopus/bill.graphql", "bill")
+
+        .with_query("../../marco-sparko/graphql/octopus/meter.graphql", "meter")
         // .with_query("../../marco-sparko/graphql/octopus/meters.graphql", "meters")
         .with_print(true)
         .build()?;
