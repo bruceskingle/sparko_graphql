@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{NewGraphQLQuery, NewGraphQLResponse, TokenManager};
+use crate::{GraphQLQuery, GraphQLResponse, TokenManager};
 
 use crate::RequestManager;
 
@@ -17,7 +17,7 @@ impl<M: TokenManager> AuthenticatedRequestManager<M> {
         })
     }
 
-    pub async fn call<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(&self, query: &Q) 
+    pub async fn call<Q: GraphQLQuery<R>, R: GraphQLResponse>(&self, query: &Q) 
     -> Result<R, Box<dyn std::error::Error>> {
         let token = &self.token_manager.get_authenticator(false).await?;
 

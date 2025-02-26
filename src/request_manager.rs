@@ -5,7 +5,7 @@ use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
 use serde::Serialize;
 
-use crate::{Error, GraphQLResponseStructure, NewGraphQLQuery, NewGraphQLResponse};
+use crate::{Error, GraphQLResponseStructure, GraphQLQuery, GraphQLResponse};
 
 pub const DASHES: &str = "=======================================================================================================================";
 
@@ -48,7 +48,7 @@ impl RequestManager {
         println!("\n\n\n{} {}", message, DASHES);
     }
 
-    pub async fn call<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>) 
+    pub async fn call<Q: GraphQLQuery<R>, R: GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>) 
     -> Result<R, Box<dyn std::error::Error>> {
 
         // println!("NEW query {}", &query);

@@ -1,10 +1,10 @@
 use std::error::Error;
-use sparko_graphql::{NewGraphQLQuery, NewGraphQLResponse, RequestManager};
+use sparko_graphql::{GraphQLQuery, GraphQLResponse, RequestManager};
 
 
 include!(concat!(env!("OUT_DIR"), "/swapi.rs"));
 
-async fn test<Q: NewGraphQLQuery<R>, R: NewGraphQLResponse>(query: &Q, request_manager: Option<&RequestManager>) -> Result<(), Box<dyn Error>> {
+async fn test<Q: GraphQLQuery<R>, R: GraphQLResponse>(query: &Q, request_manager: Option<&RequestManager>) -> Result<(), Box<dyn Error>> {
     {
         // println!(r#"query: {},
         //     variables: {},

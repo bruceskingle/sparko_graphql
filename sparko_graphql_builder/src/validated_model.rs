@@ -2367,7 +2367,7 @@ impl GenericOperation {
             writeln!(out, r#"
 use display_json::DisplayAsJsonPretty;
 use serde::{{Deserialize, Serialize}};
-use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
+use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
 "#
             )?;
 
@@ -2416,13 +2416,13 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                 {
                     let mut out = out.indent();
         
-                    writeln!(out, "pub fn builder() -> {}Builder {{", rust_name)?;
-                    writeln!(out, "    {}Builder {{", rust_name)?;
-                    for field in self.variables.values() {
-                        writeln!(out, "        {}_: None,", to_snake_case(&field.parsed.name))?;
-                    }
-                    writeln!(out, "    }}")?;
-                    writeln!(out, "}}")?;
+                    // writeln!(out, "pub fn builder() -> {}Builder {{", rust_name)?;
+                    // writeln!(out, "    {}Builder {{", rust_name)?;
+                    // for field in self.variables.values() {
+                    //     writeln!(out, "        {}_: None,", to_snake_case(&field.parsed.name))?;
+                    // }
+                    // writeln!(out, "    }}")?;
+                    // writeln!(out, "}}")?;
 
 
         
@@ -2444,61 +2444,61 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                 writeln!(out, "")?;
         
                 writeln!(out, "")?;
-                writeln!(out, "pub struct {}Builder {{", rust_name)?;
+                // writeln!(out, "pub struct {}Builder {{", rust_name)?;
         
-                for field in self.variables.values() {
-                    writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Optional))?;
-                }
+                // for field in self.variables.values() {
+                //     writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Optional))?;
+                // }
             
-                writeln!(out, "}}")?;
-                writeln!(out, "")?;
+                // writeln!(out, "}}")?;
+                // writeln!(out, "")?;
         
-                writeln!(out, "impl {}Builder {{", rust_name)?;
-                {
-                    let mut out = out.indent();
+                // writeln!(out, "impl {}Builder {{", rust_name)?;
+                // {
+                //     let mut out = out.indent();
         
-                    for field in self.variables.values() {
-                        writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Required))?;
-                        {
-                            let mut out = out.indent();
+                //     for field in self.variables.values() {
+                //         writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Required))?;
+                //         {
+                //             let mut out = out.indent();
         
-                            writeln!(out, "self.{}_ = Some(value);", to_snake_case(&field.parsed.name))?;
-                            writeln!(out, "self")?;
-                        }
-                        writeln!(out, "}}")?;
-                        writeln!(out, "")?;
-                    }
-                    writeln!(out, "pub fn build(self) -> Result<{}, sparko_graphql::error::Error> {{", rust_name)?;
-                    {
-                        let mut out = out.indent();
+                //             writeln!(out, "self.{}_ = Some(value);", to_snake_case(&field.parsed.name))?;
+                //             writeln!(out, "self")?;
+                //         }
+                //         writeln!(out, "}}")?;
+                //         writeln!(out, "")?;
+                //     }
+                //     writeln!(out, "pub fn build(self) -> Result<{}, sparko_graphql::error::Error> {{", rust_name)?;
+                //     {
+                //         let mut out = out.indent();
         
-                        for field in self.variables.values() {
-                            if let Type::Required(_) = field.ty {
-                                writeln!(out, "if let None = self.{}_ {{", to_snake_case(&field.parsed.name))?;
-                                writeln!(out, "    return Err(sparko_graphql::error::Error::MissingRequiredValueError(\"{}\"))", field.parsed.name)?;
-                                writeln!(out, "}}")?;
-                            }
-                        }
+                //         for field in self.variables.values() {
+                //             if let Type::Required(_) = field.ty {
+                //                 writeln!(out, "if let None = self.{}_ {{", to_snake_case(&field.parsed.name))?;
+                //                 writeln!(out, "    return Err(sparko_graphql::error::Error::MissingRequiredValueError(\"{}\"))", field.parsed.name)?;
+                //                 writeln!(out, "}}")?;
+                //             }
+                //         }
         
-                        writeln!(out, "Ok({} {{", rust_name)?;
-                        {
-                            let mut out = out.indent();
+                //         writeln!(out, "Ok({} {{", rust_name)?;
+                //         {
+                //             let mut out = out.indent();
         
-                            for field in self.variables.values() {
-                                if let Type::Required(_) = field.ty {
-                                    writeln!(out, "{}_: self.{}_.unwrap(),", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
-                                }
-                                else {
-                                    writeln!(out, "{}_: self.{}_,", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
-                                }
-                            }
-                            writeln!(out, "}})")?;
-                        }
-                    }
-                    writeln!(out, "}}")?;
-                }
-                writeln!(out, "}}")?;
-                writeln!(out, "")?;
+                //             for field in self.variables.values() {
+                //                 if let Type::Required(_) = field.ty {
+                //                     writeln!(out, "{}_: self.{}_.unwrap(),", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
+                //                 }
+                //                 else {
+                //                     writeln!(out, "{}_: self.{}_,", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
+                //                 }
+                //             }
+                //             writeln!(out, "}})")?;
+                //         }
+                //     }
+                //     writeln!(out, "}}")?;
+                // }
+                // writeln!(out, "}}")?;
+                // writeln!(out, "")?;
             }
 
             writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
@@ -2556,12 +2556,82 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
                         writeln!(out, "}}")?;
                     }
                     writeln!(out, "}}")?;
+
+                    writeln!(out, "pub fn builder() -> {}Builder {{", self.parsed.operation)?;
+                    writeln!(out, "    {}Builder {{", self.parsed.operation)?;
+                    for field in self.variables.values() {
+                        writeln!(out, "        {}_: None,", to_snake_case(&field.parsed.name))?;
+                    }
+                    writeln!(out, "    }}")?;
+                    writeln!(out, "}}")?;
                 }
             }
-            writeln!(out, "}}")?;
+            
+            writeln!(out, "}} // End of {}", self.parsed.operation)?;
             writeln!(out, "")?;
 
-            writeln!(out, "impl NewGraphQLQuery<Response> for {} {{", self.parsed.operation)?;
+            if !self.variables.is_empty() {
+
+        
+                writeln!(out, "")?;
+                writeln!(out, "pub struct {}Builder {{", self.parsed.operation)?;
+        
+                for field in self.variables.values() {
+                    writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Optional))?;
+                }
+            
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+        
+                writeln!(out, "impl {}Builder {{", self.parsed.operation)?;
+                {
+                    let mut out = out.indent();
+        
+                    for field in self.variables.values() {
+                        writeln!(out, "pub fn with_{}(mut self, value: {}) -> Self {{", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Required))?;
+                        {
+                            let mut out = out.indent();
+        
+                            writeln!(out, "self.{}_ = Some(value);", to_snake_case(&field.parsed.name))?;
+                            writeln!(out, "self")?;
+                        }
+                        writeln!(out, "}}")?;
+                        writeln!(out, "")?;
+                    }
+                    writeln!(out, "pub fn build(self) -> Result<{}, sparko_graphql::error::Error> {{", self.parsed.operation)?;
+                    {
+                        let mut out = out.indent();
+        
+                        for field in self.variables.values() {
+                            if let Type::Required(_) = field.ty {
+                                writeln!(out, "if let None = self.{}_ {{", to_snake_case(&field.parsed.name))?;
+                                writeln!(out, "    return Err(sparko_graphql::error::Error::MissingRequiredValueError(\"{}\"))", field.parsed.name)?;
+                                writeln!(out, "}}")?;
+                            }
+                        }
+        
+                        writeln!(out, "Ok({}::from(Variables {{", self.parsed.operation)?;
+                        {
+                            let mut out = out.indent();
+        
+                            for field in self.variables.values() {
+                                if let Type::Required(_) = field.ty {
+                                    writeln!(out, "{}_: self.{}_.unwrap(),", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
+                                }
+                                else {
+                                    writeln!(out, "{}_: self.{}_,", to_snake_case(&field.parsed.name), to_snake_case(&field.parsed.name))?;
+                                }
+                            }
+                            writeln!(out, "}}))")?;
+                        }
+                    }
+                    writeln!(out, "}}")?;
+                }
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+            }
+
+            writeln!(out, "impl GraphQLQuery<Response> for {} {{", self.parsed.operation)?;
             {
                 let mut out = out.indent();
 
@@ -2606,7 +2676,7 @@ use sparko_graphql::{{NewGraphQLResponse, NewGraphQLQuery}};
             writeln!(out, "}}")?;
             writeln!(out, "")?;
 
-            writeln!(out, "impl NewGraphQLResponse for Response {{")?;
+            writeln!(out, "impl GraphQLResponse for Response {{")?;
             writeln!(out, "}}")?;
         }
         writeln!(out, "}}")?;
