@@ -821,21 +821,21 @@ impl Schema {
     //     }
     // }
 
-    pub fn get_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Object>> {
-        if let Some(type_definition) = &self.named_types.get(name) {
-            if let TypeDefinition::Object(object) = type_definition {
-                Some(object)
-            }
-            else {
-                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Object for \"{}\" but found {}", name, type_definition.type_name())));
-                None
-            }
-        }
-        else {
-            err.error(BuildError::MissingObjectError(position.clone(), format!("Failed to find Object \"{}\"", name)));
-            None
-        }
-    }
+    // pub fn get_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Object>> {
+    //     if let Some(type_definition) = &self.named_types.get(name) {
+    //         if let TypeDefinition::Object(object) = type_definition {
+    //             Some(object)
+    //         }
+    //         else {
+    //             err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Object for \"{}\" but found {}", name, type_definition.type_name())));
+    //             None
+    //         }
+    //     }
+    //     else {
+    //         err.error(BuildError::MissingObjectError(position.clone(), format!("Failed to find Object \"{}\"", name)));
+    //         None
+    //     }
+    // }
 
     pub fn get_interface(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Interface>> {
         if let Some(type_definition) = &self.named_types.get(name) {
