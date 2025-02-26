@@ -12,5 +12,5 @@ query getFimSummaries {
 fragment FilmSummary on Film {
   id
   title
-  episodeID?
+  episodeID @ms_optional
 }

@@ -177,6 +177,7 @@ impl Display for BuildError {
 #[derive(Debug)]
 pub enum BuildWarning {
     UnsupportedFeature(Pos, &'static str),
+    UnsupportedDirective(Pos, String),
     NameCollision(Pos, Pos, String),
 }
 
@@ -914,8 +915,8 @@ r#"query GetPerson {
         let out = test_query(PERSON_SCHEMA, 
 r#"query GetPerson {
   xperson {
-    name?
-    dateOfBirth?
+    name
+    dateOfBirth
   }
 }"#);
         

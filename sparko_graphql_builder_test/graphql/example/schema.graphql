@@ -124,6 +124,8 @@ type OneOfEverything {
 
     # Array of Required Int
     arrayOfRequiredInt: [Int!],
+
+    child: [OneOfEverything]
 }
 
 

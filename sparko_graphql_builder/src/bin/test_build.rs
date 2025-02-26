@@ -8,10 +8,11 @@ fn main()  -> Result<(), Box<dyn Error>> {
 
     // sparko_graphql_builder::builder("example")
     //     .with_schema("../sparko_graphql_builder_test/graphql/example/schema.graphql")
-    //     .with_query("foo", "bar")
-    //     .with_query("../sparko_graphql_builder_test/graphql/example/get-luke.graphql", "get-luke")
-    //     .with_query("../sparko_graphql_builder_test/graphql/example/get-logged-in-user.graphql", "get-logged-in-user")
-    //     .with_query("../sparko_graphql_builder_test/graphql/example/get-meters.graphql", "meters")
+    // //     .with_query("foo", "bar")
+    //     .with_query("../sparko_graphql_builder_test/graphql/example/get-luke.graphql", "get-example")
+    // //     .with_query("../sparko_graphql_builder_test/graphql/example/get-logged-in-user.graphql", "get-logged-in-user")
+    // //     .with_query("../sparko_graphql_builder_test/graphql/example/get-meters.graphql", "meters")
+    //     .with_print(true)
     //     .build()?;
 
     // sparko_graphql_builder::builder("swapi")
@@ -30,10 +31,9 @@ fn main()  -> Result<(), Box<dyn Error>> {
         .with_schema("../../marco-sparko/graphql/octopus/octopus-schema.graphql")
         // .with_query("../sparko_graphql_builder_test/graphql/octopus/test.graphql", "yesy")
         // .with_query("../sparko_graphql_builder_test/graphql/octopus/main.graphql", "main")
-        // .with_query("../../marco-sparko/graphql/octopus/bill.graphql", "bill")
+        .with_query("../../marco-sparko/graphql/octopus/bill.graphql", "bill")
 
-        .with_query("../../marco-sparko/graphql/octopus/meter.graphql", "meter")
-        // .with_query("../../marco-sparko/graphql/octopus/meters.graphql", "meters")
+        // .with_query("../../marco-sparko/graphql/octopus/meter.graphql", "meter")
         .with_print(true)
         .build()?;
     Ok(())

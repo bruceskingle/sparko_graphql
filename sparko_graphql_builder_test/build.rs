@@ -23,7 +23,7 @@ fn build()  -> Result<(), Box<dyn Error>> {
 
     sparko_graphql_builder::builder("example")
         .with_schema("graphql/example/schema.graphql")
-        .with_query("graphql/example/get-luke.graphql", "get-luke")
+        .with_query("graphql/example/get-luke.graphql", "get-example")
         .with_query("graphql/example/get-logged-in-user.graphql", "get-logged-in-user")
         .with_query("../sparko_graphql_builder_test/graphql/example/get-meters.graphql", "meters")
         .build()?;
