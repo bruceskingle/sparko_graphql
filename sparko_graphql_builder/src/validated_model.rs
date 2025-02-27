@@ -2109,7 +2109,7 @@ impl GenericOperation {
         
         selection_builder.with_preferred_type_names(preferred_type_names);
 
-        Self::new_gather_dependencies(err, registry, selection_manager, selections, schema, fragments, None, fields, &mut selection_builder)?;
+        Self::gather_dependencies(err, registry, selection_manager, selections, schema, fragments, None, fields, &mut selection_builder)?;
 
         Ok(selection_builder.build(selection_manager))
     }
@@ -2186,7 +2186,7 @@ impl GenericOperation {
         
     }
     
-    fn new_gather_dependencies(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, selections: &Rc<parsed_model::SelectionList>, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
+    fn gather_dependencies(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, selections: &Rc<parsed_model::SelectionList>, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
         variant_name: Option<(Name, Name)>, fields: &FieldMap, selection_builder: &mut SelectionBuilder) -> Result<(), Error>
     {
         //println!("!!   gather dependencies variant {:?}", variant_name);
@@ -2306,7 +2306,7 @@ impl GenericOperation {
                         // println!("\n\nSPREAD {}\n\n", &fragment_spread.name);
 
 
-                        Self::new_gather_dependencies(err, registry, selection_manager, &fragment.selections, schema, fragments, Some((fragment_spread.name.clone(), fragment.type_condition.clone())), 
+                        Self::gather_dependencies(err, registry, selection_manager, &fragment.selections, schema, fragments, Some((fragment_spread.name.clone(), fragment.type_condition.clone())), 
                             &object.fields, selection_builder)?;
                     }
                     else {
@@ -2319,13 +2319,13 @@ impl GenericOperation {
                     if let Some(type_condition) = &inline_fragment_spread.type_condition {
                         let object = schema.get_object(type_condition)?;
 
-                        Self::new_gather_dependencies(err, registry, selection_manager, &inline_fragment_spread.selections, schema, fragments, Some((type_condition.clone(), type_condition.clone())),
+                        Self::gather_dependencies(err, registry, selection_manager, &inline_fragment_spread.selections, schema, fragments, Some((type_condition.clone(), type_condition.clone())),
                             &object.fields, selection_builder)?;
                     }
                     else {
                         // anonymous inline spread is essentially a no op nesting
 
-                        Self::new_gather_dependencies(err, registry, selection_manager, &inline_fragment_spread.selections, schema, fragments, None,
+                        Self::gather_dependencies(err, registry, selection_manager, &inline_fragment_spread.selections, schema, fragments, None,
                             fields, selection_builder)?;
                     }
                 },
@@ -2385,7 +2385,9 @@ use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
             writeln!(out, "// Start dependencies")?;
             for id in selection_manager.get_context().names.values() {
                 let selection = selection_manager.get(*id);
-
+                if selection.name().contains(&Rc::new("Mpan".to_string())) {
+                    println!("HERE {:?}", selection.name());
+                }
                 selection.generate(&mut out, selection_manager, schema)?;
             }
             writeln!(out, "// End dependencies")?;
@@ -2739,6 +2741,12 @@ pub enum NameSpaceItem {
 }
 
 impl NameSpaceItem {
+    fn name(&self) -> &IndexSet<Name> {
+        match self {
+            NameSpaceItem::Selection(selection) => &selection.names,
+            NameSpaceItem::Variant(variant) => &variant.names,
+        }
+    }
     fn generate(&self, out: &mut Output<'_>, selection_manager: &NameSpaceManager, schema: &Schema) -> Result<(), Error> {
         match self {
             NameSpaceItem::Selection(selection) => selection.generate(out, selection_manager, schema),
@@ -2902,7 +2910,9 @@ impl NameSpaceManager {
 
     fn insert(&mut self, graphql_type_name: Name, names: IndexSet<Name>, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (IndexSet<Name>, IndexMap<Name, SelectionField>)>, implemented_by: Option<Vec<Name>>) -> Rc<Selection> {
         
-        
+        if "Mpan" == graphql_type_name.as_str() {
+            println!("HERE {}", graphql_type_name);
+        }
         //println!("insert {:?}", &names);
 
         let mut variants: Vec<Rc<Variant>> = Vec::new();

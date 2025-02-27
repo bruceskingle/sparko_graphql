@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //     // None;
 
 
-    // let query = example::get_example::get_luke::Query::new();
+    let query = example::get_example::get_luke::Query::new();
 
     
 
