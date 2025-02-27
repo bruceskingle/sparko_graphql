@@ -2,6 +2,8 @@ use std::fmt::{self, Display};
 use std::ops::Deref;
 use std::str::FromStr;
 
+use time_tz::OffsetDateTimeExt;
+
 use serde::{Deserializer, Serialize, Serializer};
 use serde::de::{self, Visitor};
 use serde::ser::Error as SerError;
@@ -16,7 +18,7 @@ static FORMAT: format_description::well_known::Rfc3339 = format_description::wel
 
 /// A GraphQL OffsetDateTime value
 #[derive(Debug, Clone)]
-pub struct DateTime(time::OffsetDateTime);
+pub struct DateTime(pub(crate) time::OffsetDateTime);
 
 impl DateTime {
 
@@ -66,6 +68,12 @@ impl DateTime {
         date, 
         time
       )
+    )
+  }
+
+  pub fn to_timezone(&self, tz: &time_tz::Tz) -> DateTime {
+    DateTime(
+      self.0.to_timezone(tz)
     )
   }
 }

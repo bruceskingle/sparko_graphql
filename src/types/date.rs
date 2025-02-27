@@ -10,6 +10,7 @@ use once_cell::sync::Lazy;
 
 use crate::Error;
 
+use time_tz::OffsetDateTimeExt;
 use super::DateTime;
 
 static FORMAT: Lazy<Vec<format_description::FormatItem>> = 
@@ -25,13 +26,13 @@ impl Date {
         Ok(Date(time::Date::from_calendar_date(year, month, day)?))
     }
 
-    pub fn at_midnight(&self) -> DateTime {
-      DateTime::from_date_time(self.0, time::Time::MIDNIGHT)
+    pub fn at_midnight(&self, tz: &time_tz::Tz) -> DateTime {
+      DateTime(time::OffsetDateTime::new_utc(self.0, time::Time::MIDNIGHT).to_timezone(tz).replace_time(time::Time::MIDNIGHT))
     }
 
-    pub fn at_next_midnight(&self) -> DateTime {
+    pub fn at_next_midnight(&self, tz: &time_tz::Tz) -> DateTime {
       if let Some(date) = self.0.next_day() {
-        DateTime::from_date_time(date, time::Time::MIDNIGHT)
+        DateTime(time::OffsetDateTime::new_utc(date, time::Time::MIDNIGHT).to_timezone(tz).replace_time(time::Time::MIDNIGHT))
       }
       else {
         // This is the corner case where the date is the last day of the rust universe, don't worry about the details, just enjoy the view.....
@@ -175,6 +176,17 @@ impl Display for Date {
         if let Ok(_) = result {
           panic!("Expecting error for {}", s);
         }
+      }
+  
+      #[test]
+      fn test_at_midnight() {
+        let london = time_tz::timezones::get_by_name("Europe/London").unwrap();
+        let date = Date::from_calendar_date(2024, time::Month::July, 14).unwrap();
+        let datetime = date.at_midnight(london);
+
+        println!("datetime={}", datetime);
+
+        assert_eq!("2024-07-14T00:00:00+01:00", format!("{}", datetime));
       }
   
       #[test]
