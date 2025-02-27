@@ -1,27 +1,3 @@
-/*****************************************************************************
-MIT License
-
-Copyright (c) 2024 Bruce Skingle
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-******************************************************************************/
-
 use std::sync::Arc;
 
 use display_json::DisplayAsJsonPretty;
@@ -163,11 +139,11 @@ pub trait TokenManager {
     = note: `#[warn(async_fn_in_trait)]` on by default
 help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
      */
-    // Returns a bearer token, which may be cached.
+    // Returns a bearer token, which may be cached if refresh is false, otherwise a new token will be obtained.
     // async fn get_authenticator(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
-    fn get_authenticator(&mut self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
+    fn get_authenticator(&self, refresh: bool) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
 
-    // Returns a fresh bearer token forcing a reauthentication
-    // async fn authenticate(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
-    fn authenticate(&mut self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
+    // // Returns a fresh bearer token forcing a reauthentication
+    // // async fn authenticate(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
+    // fn authenticate(&self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
 }

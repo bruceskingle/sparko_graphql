@@ -1,28 +1,3 @@
-/*****************************************************************************
-MIT License
-
-Copyright (c) 2024 Bruce Skingle
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-******************************************************************************/
-
-
 use std::fmt::{self, Display};
 use std::ops::Deref;
 use std::str::FromStr;
@@ -35,20 +10,8 @@ use once_cell::sync::Lazy;
 
 use crate::Error;
 
+use time_tz::OffsetDateTimeExt;
 use super::DateTime;
-
-
-// use std::{sync::Mutex, collections::HashMap};
-
-// static GLOBAL_DATA: Lazy<Mutex<HashMap<i32, String>>> = Lazy::new(|| {
-//     let mut m = HashMap::new();
-//     m.insert(13, "Spica".to_string());
-//     m.insert(74, "Hoyten".to_string());
-//     Mutex::new(m)
-// });
-
-// let x: Vec<format_description::FormatItem> = format_description::parse("[year]-[month]-[day]").unwrap();
-
 
 static FORMAT: Lazy<Vec<format_description::FormatItem>> = 
   Lazy::new(|| {format_description::parse("[year]-[month]-[day]").unwrap()});
@@ -63,8 +26,18 @@ impl Date {
         Ok(Date(time::Date::from_calendar_date(year, month, day)?))
     }
 
-    pub fn at_midnight(&self) -> DateTime {
-      DateTime::from_date_time(self.0, time::Time::MIDNIGHT)
+    pub fn at_midnight(&self, tz: &time_tz::Tz) -> DateTime {
+      DateTime(time::OffsetDateTime::new_utc(self.0, time::Time::MIDNIGHT).to_timezone(tz).replace_time(time::Time::MIDNIGHT))
+    }
+
+    pub fn at_next_midnight(&self, tz: &time_tz::Tz) -> DateTime {
+      if let Some(date) = self.0.next_day() {
+        DateTime(time::OffsetDateTime::new_utc(date, time::Time::MIDNIGHT).to_timezone(tz).replace_time(time::Time::MIDNIGHT))
+      }
+      else {
+        // This is the corner case where the date is the last day of the rust universe, don't worry about the details, just enjoy the view.....
+        DateTime::from_date_time(self.0, time::Time::from_hms_nano(23, 59, 59, 999999999).unwrap())
+      }
     }
 }
 
@@ -203,6 +176,17 @@ impl Display for Date {
         if let Ok(_) = result {
           panic!("Expecting error for {}", s);
         }
+      }
+  
+      #[test]
+      fn test_at_midnight() {
+        let london = time_tz::timezones::get_by_name("Europe/London").unwrap();
+        let date = Date::from_calendar_date(2024, time::Month::July, 14).unwrap();
+        let datetime = date.at_midnight(london);
+
+        println!("datetime={}", datetime);
+
+        assert_eq!("2024-07-14T00:00:00+01:00", format!("{}", datetime));
       }
   
       #[test]

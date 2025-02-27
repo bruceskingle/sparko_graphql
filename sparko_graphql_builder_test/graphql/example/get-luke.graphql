@@ -1,7 +1,7 @@
 query GetLuke {
   oneOfEverything(id: "cGVvcGxlOjE=") {
   	string
-    optionalAmount?
+    optionalAmount @ms_optional
     optionalString
   }
 }

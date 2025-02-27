@@ -1,41 +1,26 @@
-/*****************************************************************************
-MIT License
-
-Copyright (c) 2024 Bruce Skingle
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-******************************************************************************/
-
 use display_json::DisplayAsJsonPretty;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
 pub struct ForwardPageInfo {
-    pub start_cursor: String,
+    pub end_cursor: Option<String>,
     pub has_next_page: bool
 }
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
 pub struct ReversePageInfo {
-    pub end_cursor: String,
+    pub start_cursor: Option<String>,
+    pub has_previous_page: bool
+}
+
+#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+#[serde(rename_all = "camelCase")]
+pub struct PageInfo {
+    pub start_cursor: Option<String>,
+    pub has_next_page: bool,
+    pub end_cursor: Option<String>,
     pub has_previous_page: bool
 }
 
@@ -61,6 +46,61 @@ pub struct ForwardPageOf<T>
     pub edges: Vec<EdgeOf<T>>
 }
 
+impl<T> ForwardPageOf<T> {
+  pub fn len(&self) -> usize {
+    self.edges.len()
+  }
+}
+
+  impl<T> IntoIterator for ForwardPageOf<T> {
+    type Item = T;
+
+    type IntoIter = ForwardPageOfIterator<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        ForwardPageOfIterator {
+          iter: self.edges.into_iter(),
+        }
+    }
+}
+
+pub struct ForwardPageOfIterator<T> {
+  iter: std::vec::IntoIter<EdgeOf<T>>
+}
+
+impl<T> Iterator for ForwardPageOfIterator<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|e| e.node)
+    }
+}
+
+impl<'a, T> IntoIterator for &'a ForwardPageOf<T> {
+  type Item = &'a T;
+
+  type IntoIter = RefForwardPageOfIterator<'a, T>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    // let iter: std::slice::Iter<'a, EdgeOf<T>> = self.edges.iter();
+      RefForwardPageOfIterator {
+        iter: self.edges.iter(),
+      }
+  }
+}
+
+pub struct RefForwardPageOfIterator<'a, T> {
+  iter: std::slice::Iter<'a, EdgeOf<T>>
+}
+
+impl<'a, T> Iterator for RefForwardPageOfIterator<'a, T> {
+  type Item = &'a T;
+
+  fn next(&mut self) -> Option<Self::Item> {
+      self.iter.next().map(|e| &e.node)
+  }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ReversePageOf<T> 
@@ -69,9 +109,122 @@ pub struct ReversePageOf<T>
     pub edges: Vec<EdgeOf<T>>
 }
 
-pub enum PageOf<T> {
-  Forward(ForwardPageOf<T>),
-  Reverse(ReversePageOf<T>)
+impl<T> ReversePageOf<T> {
+  pub fn len(&self) -> usize {
+    self.edges.len()
+  }
+}
+
+impl<T> IntoIterator for ReversePageOf<T> {
+    type Item = T;
+
+    type IntoIter = ReversePageOfIterator<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        ReversePageOfIterator {
+          iter: self.edges.into_iter(),
+        }
+    }
+}
+
+pub struct ReversePageOfIterator<T> {
+  iter: std::vec::IntoIter<EdgeOf<T>>
+}
+
+impl<T> Iterator for ReversePageOfIterator<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|e| e.node)
+    }
+}
+
+impl<'a, T> IntoIterator for &'a ReversePageOf<T> {
+  type Item = &'a T;
+
+  type IntoIter = RefReversePageOfIterator<'a, T>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    // let iter: std::slice::Iter<'a, EdgeOf<T>> = self.edges.iter();
+      RefReversePageOfIterator {
+        iter: self.edges.iter(),
+      }
+  }
+}
+
+pub struct RefReversePageOfIterator<'a, T> {
+  iter: std::slice::Iter<'a, EdgeOf<T>>
+}
+
+impl<'a, T> Iterator for RefReversePageOfIterator<'a, T> {
+  type Item = &'a T;
+
+  fn next(&mut self) -> Option<Self::Item> {
+      self.iter.next().map(|e| &e.node)
+  }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PageOf<T> 
+{
+    pub page_info: PageInfo,
+    pub edges: Vec<EdgeOf<T>>
+}
+
+impl<T> PageOf<T> {
+  pub fn len(&self) -> usize {
+    self.edges.len()
+  }
+}
+
+impl<T> IntoIterator for PageOf<T> {
+    type Item = T;
+
+    type IntoIter = PageOfIterator<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        PageOfIterator {
+          iter: self.edges.into_iter(),
+        }
+    }
+}
+
+pub struct PageOfIterator<T> {
+  iter: std::vec::IntoIter<EdgeOf<T>>
+}
+
+impl<T> Iterator for PageOfIterator<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|e| e.node)
+    }
+}
+
+impl<'a, T> IntoIterator for &'a PageOf<T> {
+  type Item = &'a T;
+
+  type IntoIter = RefPageOfIterator<'a, T>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    // let iter: std::slice::Iter<'a, EdgeOf<T>> = self.edges.iter();
+      RefPageOfIterator {
+        iter: self.edges.iter(),
+      }
+  }
+}
+
+pub struct RefPageOfIterator<'a, T> {
+  iter: std::slice::Iter<'a, EdgeOf<T>>
+}
+
+impl<'a, T> Iterator for RefPageOfIterator<'a, T> {
+  type Item = &'a T;
+
+  fn next(&mut self) -> Option<Self::Item> {
+      self.iter.next().map(|e| &e.node)
+  }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -79,34 +232,9 @@ pub enum PageOf<T> {
 pub struct  EdgeOf<T>
 {
   pub node: T,
-  // pub cursor: String
+  pub cursor: String
 }
 
-// #[derive(GraphQLVariables)]
-// pub struct NodeIdSelector {
-//   pub id: ID,
-// }
-
-
-
-// pub enum PageSelector {
-//   Forward(ForwardPageSelector),
-//   Reverse(ReversePageSelector)
-// }
-
-
-// #[derive(GraphQLVariables)]
-// pub struct ForwardPageSelector {
-//   pub after: Option<String>,
-//   pub first: Int,
-// }
-
-
-// #[derive(GraphQLVariables)]
-// pub struct ReversePageSelector {
-//   pub before: Option<String>,
-//   pub last: Int,
-// }
 
 
 #[cfg(test)]
@@ -114,18 +242,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_forward() {
-        let json = r#"
-{
-  "startCursor": "YXJyYXljb25uZWN0aW9uOjA=",
-  "hasNextPage": true
-}
-        "#;
+    fn test_iter() {
+        let page = PageOf {
+          page_info: PageInfo {
+              start_cursor: Some(String::from("back")),
+              has_next_page: false,
+              end_cursor: Some(String::from("forward")),
+              has_previous_page: false,
+          },
+          edges: vec!(EdgeOf { node: 1, cursor: "1".to_string()}, EdgeOf { node: 2, cursor: "2".to_string()}, EdgeOf { node: 3, cursor: "3".to_string()})
+        };
 
-        let value = serde_json::from_str(json).unwrap();
-        let forward_page_info = ForwardPageInfo::from(value);
+        for i in &page {
+          println!("i={}", i);
+        }
 
-        assert_eq!(forward_page_info.start_cursor, "YXJyYXljb25uZWN0aW9uOjA=");
-        assert_eq!(forward_page_info.has_next_page, true);
+        for i in page {
+          println!("i2={}", i);
+        }
+
+        // panic!("test")
     }
 }

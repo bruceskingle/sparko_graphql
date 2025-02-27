@@ -15,6 +15,9 @@ use crate::Output;
 use crate::NameRegistry;
 use crate::TYPE_NAME;
 
+const MS_OPTIONAL: &str = "ms_optional";
+const MS_REQUIRED: &str = "ms_required";
+const MS_REQUIRED_BY_DEFAULT: &str = "ms_required_by_default";
 
 pub type FieldMap = IndexMap<Name, Rc<Field>>;
 
@@ -818,21 +821,21 @@ impl Schema {
     //     }
     // }
 
-    pub fn get_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Object>> {
-        if let Some(type_definition) = &self.named_types.get(name) {
-            if let TypeDefinition::Object(object) = type_definition {
-                Some(object)
-            }
-            else {
-                err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Object for \"{}\" but found {}", name, type_definition.type_name())));
-                None
-            }
-        }
-        else {
-            err.error(BuildError::MissingObjectError(position.clone(), format!("Failed to find Object \"{}\"", name)));
-            None
-        }
-    }
+    // pub fn get_object(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Object>> {
+    //     if let Some(type_definition) = &self.named_types.get(name) {
+    //         if let TypeDefinition::Object(object) = type_definition {
+    //             Some(object)
+    //         }
+    //         else {
+    //             err.error(BuildError::TypeMismatchError(position.clone(), format!("Expected Object for \"{}\" but found {}", name, type_definition.type_name())));
+    //             None
+    //         }
+    //     }
+    //     else {
+    //         err.error(BuildError::MissingObjectError(position.clone(), format!("Failed to find Object \"{}\"", name)));
+    //         None
+    //     }
+    // }
 
     pub fn get_interface(&self, err: &mut ErrorCollector, position: &Pos, name: &Name) -> Option<&Rc<Interface>> {
         if let Some(type_definition) = &self.named_types.get(name) {
@@ -930,11 +933,11 @@ pub enum Selection {
 } 
 
 impl Selection{
-    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, selection: graphql_parser::query::Selection<'_, String> ) -> Result<Selection, BuildError> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, selection: graphql_parser::query::Selection<'_, String>, required_by_default: bool) -> Result<Selection, BuildError> {
         Ok(match selection {
-            graphql_parser::query::Selection::OptionalField(field) => 
-                SelectionField::new(err, registry, *field, true),
-            graphql_parser::query::Selection::Field(field) => SelectionField::new(err, registry, field, false),
+            // graphql_parser::query::Selection::OptionalField(field) => 
+            //     SelectionField::new(err, registry, *field, required_by_default),
+            graphql_parser::query::Selection::Field(field) => SelectionField::new(err, registry, field, required_by_default),
             graphql_parser::query::Selection::FragmentSpread(fragment) => FragmentSpread::new(err, registry, fragment),
             graphql_parser::query::Selection::InlineFragment(inline_fragment) => InlineFragmentSpread::new(err, registry, inline_fragment)?,
         })
@@ -954,20 +957,48 @@ pub struct SelectionField {
     pub name: Name,
     pub alias: Option<Name>,
     pub position: Pos,
-    pub optional: bool,
+    pub force_nonnull: bool,
     pub arguments: Vec<Rc<Argument>>,
     pub selections: Rc<SelectionList>,
 }
 
 impl SelectionField {
-    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, field: graphql_parser::query::Field<'_, String>, optional: bool) -> Selection {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, field: graphql_parser::query::Field<'_, String>, required_by_default: bool) -> Selection {
+        
+        // println!("!! SelectionField {} required_by_default={} {:?}", field.name, required_by_default, field);
+
+        let mut force_nonnull = required_by_default;
+        let mut new_required_by_default = required_by_default;
+        // println!("!! check {} directives", field.directives.len());
+        for directive in field.directives {
+            // println!("!! directive name = '{}' test '{}'", directive.name, MS_OPTIONAL);
+            match directive.name.as_str() {
+                MS_OPTIONAL => {
+                    // println!("!! ITS OPTIONAL");
+                    force_nonnull = false;
+                },
+                MS_REQUIRED => {
+                    // println!("!! ITS MS_REQUIRED");
+                    force_nonnull = true;
+                },
+                MS_REQUIRED_BY_DEFAULT => {
+                    // println!("!! ITS MS_REQUIRED_BY_DEFAULT");
+                    new_required_by_default = true;
+                },
+                _ => {
+                    err.warning(BuildWarning::UnsupportedDirective(directive.position, directive.name));
+                }
+            }
+        }
+        
+        
         Selection::Field(Rc::new(SelectionField {
             name: registry.intern(field.name),
             alias: registry.intern_option(field.alias),
             position: field.position,
-            optional,
-            arguments: build_arguments(err, registry, field.arguments),
-            selections: build_selections(err, registry, field.selection_set),
+            force_nonnull,
+            arguments: build_arguments(err, registry, field.arguments, field.position),
+            selections: build_selections(err, registry, field.selection_set, new_required_by_default),
         }))
     }
 
@@ -978,7 +1009,7 @@ impl SelectionField {
 
             writeln!(out, "name:      {}", self.name)?;
             writeln!(out, "position:  {}", self.position)?;
-            writeln!(out, "optional:  {}", self.optional)?;
+            writeln!(out, "optional:  {}", self.force_nonnull)?;
             writeln!(out, "arguments {{")?;
             {
                 let mut out = out.indent();
@@ -1030,15 +1061,16 @@ pub struct GenericOperation {
 
 impl GenericOperation {
     pub fn from_query(err: &mut ErrorCollector, registry: &mut NameRegistry, query: graphql_parser::query::Query<'_, String>) -> Result<Rc<GenericOperation>, Error> {
-        Self::new(err, registry, OperationType::Query, query.name, query.position, query.selection_set, query.variable_definitions)
+        Self::new(err, registry, OperationType::Query, query.name, query.position, query.selection_set, query.variable_definitions, query.directives)
     }
 
     pub fn from_mutation(err: &mut ErrorCollector, registry: &mut NameRegistry, query: graphql_parser::query::Mutation<'_, String>) -> Result<Rc<GenericOperation>, Error> {
-        Self::new(err, registry, OperationType::Mutation, query.name, query.position, query.selection_set, query.variable_definitions)
+        Self::new(err, registry, OperationType::Mutation, query.name, query.position, query.selection_set, query.variable_definitions, query.directives)
     }
 
-    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, operation: OperationType, name: Option<String>, position: Pos, selection_set: graphql_parser::query::SelectionSet<'_, String>, 
-        variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>) -> Result<Rc<GenericOperation>, Error> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, operation: OperationType, name: Option<String>, position: Pos, 
+        selection_set: graphql_parser::query::SelectionSet<'_, String>, 
+        variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>, directives: Vec<graphql_parser::query::Directive<'_, String>>) -> Result<Rc<GenericOperation>, Error> {
         let name = match name {
             Some(name) => name,
             None => {
@@ -1046,7 +1078,8 @@ impl GenericOperation {
             },
         };
 
-        let selections = build_selections(err, registry, selection_set);
+        let required_by_default = get_required_by_default(err, directives);
+        let selections = build_selections(err, registry, selection_set, required_by_default);
         let variables = build_variables(err, registry, variable_definitions);
 
         if selections.is_empty() {
@@ -1085,6 +1118,26 @@ impl GenericOperation {
     }
 }
 
+fn get_required_by_default(err: &mut ErrorCollector, directives: Vec<graphql_parser::query::Directive<'_, String>>) -> bool {
+
+    let mut required_by_default = false;
+    // println!("!!! check directives");
+    for directive in directives {
+        // println!("!!! directive name = '{}' test '{}'", directive.name, MS_REQUIRED_BY_DEFAULT);
+        match directive.name.as_str() {
+            MS_REQUIRED_BY_DEFAULT => {
+                // println!("!! ITS MS_REQUIRED_BY_DEFAULT");
+                required_by_default = true;
+            },
+            _ => {
+                err.warning(BuildWarning::UnsupportedDirective(directive.position, directive.name));
+            }
+        }
+    }
+
+    required_by_default
+}
+
 
 
 fn build_variables(_err: &mut ErrorCollector, registry: &mut NameRegistry, variable_definitions: Vec<graphql_parser::query::VariableDefinition<'_, String>>) -> FieldMap {
@@ -1098,12 +1151,12 @@ fn build_variables(_err: &mut ErrorCollector, registry: &mut NameRegistry, varia
     variables
 }
 
-fn build_selections(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_set: graphql_parser::query::SelectionSet<'_, String>) -> Rc<SelectionList> {
+fn build_selections(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_set: graphql_parser::query::SelectionSet<'_, String>, required_by_default: bool) -> Rc<SelectionList> {
 
     let mut selections = Vec::new();
 
     for selection in selection_set.items {
-        match Selection::new(err, registry, selection) {
+        match Selection::new(err, registry, selection, required_by_default) {
             Ok(selection) => selections.push(selection),
             Err(error) => err.error(error),
         }
@@ -1115,11 +1168,11 @@ fn build_selections(err: &mut ErrorCollector, registry: &mut NameRegistry, selec
     })
 }
 
-fn build_arguments(err: &mut ErrorCollector, registry: &mut NameRegistry, arguments: Vec<(String, graphql_parser::query::Value<'_, String>)>) -> Vec<Rc<Argument>> {
+fn build_arguments(err: &mut ErrorCollector, registry: &mut NameRegistry, arguments: Vec<(String, graphql_parser::query::Value<'_, String>)>, position: Pos) -> Vec<Rc<Argument>> {
     let mut result = Vec::new();
 
     for (name, value) in arguments {
-        result.push(Argument::new(err, registry, name, value));
+        result.push(Argument::new(err, registry, name, value, position));
     }
 
     result
@@ -1131,6 +1184,7 @@ pub enum Value {
     Int(i64),
     String(String),
     Bool(bool),
+    Enum(String),
 }
 
 impl Value {
@@ -1142,7 +1196,7 @@ impl Value {
             graphql_parser::query::Value::String(string) => Value::String(string),
             graphql_parser::query::Value::Boolean(boolean) => Value::Bool(boolean),
             graphql_parser::query::Value::Null => todo!(),
-            graphql_parser::query::Value::Enum(_) => todo!(),
+            graphql_parser::query::Value::Enum(value) => Value::Enum(value),
             graphql_parser::query::Value::List(_) => todo!(),
             graphql_parser::query::Value::Object(_) => todo!(),
         }
@@ -1156,6 +1210,7 @@ impl Display for Value {
             Value::Int(number) => write!(f, "{}", number),
             Value::String(string) => write!(f, "\\\"{}\\\"", string),
             Value::Bool(value) => write!(f, "{}", value),
+            Value::Enum(value) => write!(f, "{}", value),
         }
     }
 }
@@ -1165,13 +1220,15 @@ impl Display for Value {
 pub struct Argument {
     pub name: Name,
     pub value: Value,
+    pub position: Pos,
 }
 
 impl Argument {
-    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, name: String, value: graphql_parser::query::Value<'_, String> ) -> Rc<Self> {
+    pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, name: String, value: graphql_parser::query::Value<'_, String>, position: Pos) -> Rc<Self> {
         Rc::new(Argument {
             name: registry.intern(name),
             value: Value::new(err, registry, value),
+            position,
         })
     }
 
@@ -1188,14 +1245,18 @@ impl Argument {
     
     pub fn generate_query(&self, out: &mut Output<'_>, variables: &crate::validated_model::FieldMap) -> Result<(), Error> {
         if let Value::Variable(name) = &self.value {
-            let field = variables.get(&name).unwrap();
-            if field.ty.is_optional() {
-                writeln!(out, "if self.variables.{}_.is_some() {{", to_snake_case(&field.parsed.name))?;
-                writeln!(out, "    buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
-                writeln!(out, "}}")?;
+            if let Some(field) = variables.get(&name) {
+                if field.ty.is_optional() {
+                    writeln!(out, "if self.variables.{}_.is_some() {{", to_snake_case(&field.parsed.name))?;
+                    writeln!(out, "    buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
+                    writeln!(out, "}}")?;
+                }
+                else {
+                    writeln!(out, "buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
+                }
             }
             else {
-                writeln!(out, "buf.push_str(\"{}: {},\\n\");", self.name, self.value)?;
+                return Err(Error::BuildFailed(BuildError::MissingVariableError(self.position, name.to_string()).to_string()))
             }
         }
         else {
@@ -1216,8 +1277,8 @@ pub struct FragmentDefinition {
 
 impl FragmentDefinition{
     pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, fragment_definition: graphql_parser::query::FragmentDefinition<'_, String>) -> Result<Rc<Self>, Error> {
-
-        let selections = build_selections(err, registry, fragment_definition.selection_set);
+        let required_by_default = get_required_by_default(err, fragment_definition.directives);
+        let selections = build_selections(err, registry, fragment_definition.selection_set, required_by_default);
 
         if selections.is_empty() {
             return err.fail(BuildError::InvalidQueryError(fragment_definition.position, format!("FragmentDefinition {} has no selection set", &fragment_definition.name)));
@@ -1285,8 +1346,8 @@ pub struct InlineFragmentSpread {
 
 impl InlineFragmentSpread{
     pub fn new(err: &mut ErrorCollector, registry: &mut NameRegistry, fragment_definition: graphql_parser::query::InlineFragment<'_, String>) -> Result<Selection, BuildError> {
-
-        let selections = build_selections(err, registry, fragment_definition.selection_set);
+        let required_by_default = get_required_by_default(err, fragment_definition.directives);
+        let selections = build_selections(err, registry, fragment_definition.selection_set, required_by_default);
 
         if selections.is_empty() {
             return Err(BuildError::InvalidQueryError(fragment_definition.position, format!("InlineFragmentDefinition has no selection set")));
@@ -1343,9 +1404,9 @@ impl ExecutableDocument {
                             for item in &selection_set.items {
                                 match item {
 
-                                    graphql_parser::query::Selection::OptionalField(_field) => {
-                                        unimplemented!()
-                                    },
+                                    // graphql_parser::query::Selection::OptionalField(_field) => {
+                                    //     unimplemented!()
+                                    // },
 
                                     graphql_parser::query::Selection::Field(_field) => {
                                         unimplemented!()

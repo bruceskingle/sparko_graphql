@@ -1,0 +1,60 @@
+
+query getFimPeople @ms_required_by_default {
+  	allFilms(first: 5) {
+    	edges {
+        cursor
+        node {
+          title,
+          director,
+    			characterConnection(first: 5) {
+            edges {
+              cursor
+              node {
+                name
+                species {
+                  name
+                  classification
+                }
+              }
+            }
+          }
+        }
+      }
+  }
+}
+
+
+
+query getPagableFimPeople @ms_required_by_default {
+    allFilms(first: 5) {
+        pageInfo {
+            endCursor
+            hasNextPage
+            hasPreviousPage
+            startCursor
+        }
+        edges {
+          cursor
+            node {
+                title,
+                director,
+                characterConnection(first: 5) {
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                    }
+                    edges {
+                      cursor
+                      node {
+                          name
+                          species {
+                              name
+                              classification
+                          }
+                      }
+                    }
+                }
+            }
+        }
+    }
+}

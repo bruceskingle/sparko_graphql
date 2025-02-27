@@ -2,12 +2,12 @@ use std::error::Error;
 
 use display_json::DisplayAsJsonPretty;
 use serde::{Deserialize, Serialize};
-use sparko_graphql::NewGraphQLResponse;
+use sparko_graphql::GraphQLResponse;
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 struct Foo {}
 
-impl NewGraphQLResponse for Foo {
+impl GraphQLResponse for Foo {
 }
 
 mod example {
