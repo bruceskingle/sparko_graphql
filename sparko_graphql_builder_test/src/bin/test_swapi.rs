@@ -3,6 +3,7 @@ use sparko_graphql::{GraphQLQuery, GraphQLResponse, RequestManager};
 
 
 include!(concat!(env!("OUT_DIR"), "/swapi.rs"));
+include!(concat!(env!("OUT_DIR"), "/crate_info.rs"));
 
 async fn test<Q: GraphQLQuery<R>, R: GraphQLResponse>(query: &Q, request_manager: Option<&RequestManager>) -> Result<(), Box<dyn Error>> {
     {
@@ -27,7 +28,7 @@ async fn test<Q: GraphQLQuery<R>, R: GraphQLResponse>(query: &Q, request_manager
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world");
 
-    let the_request_manager: RequestManager = RequestManager::new("https://swapi-graphql.eskerda.vercel.app/".to_string(), true)?;
+    let the_request_manager: RequestManager = RequestManager::new("https://swapi-graphql.eskerda.vercel.app/".to_string(), true, CrateInfo::USER_AGENT)?;
     let request_manager: Option<&RequestManager> = 
         Some(&the_request_manager);
         // None;

@@ -34,10 +34,10 @@ impl RequestManager {
         }
     }
 
-    pub fn new(url: String, verbose: bool) -> Result<RequestManager, Error> {
+    pub fn new(url: String, verbose: bool, user_agent: &str) -> Result<RequestManager, Error> {
         Ok(RequestManager {
             reqwest_client: reqwest::Client::builder()
-                .user_agent("sparko_graphql/0.0.1")
+                .user_agent(user_agent)
                 .default_headers(
                     std::iter::once((
                         reqwest::header::CONTENT_TYPE,
@@ -135,7 +135,7 @@ impl RequestManager {
                 Self::report_error("GraphQL Errors");
                 println!("{:?}", serde_json::to_string_pretty(&errors)?);
             }
-            
+
             return Err(Error::GraphQLError(errors));
         }
         // println!("query_name {}", &query_name);
