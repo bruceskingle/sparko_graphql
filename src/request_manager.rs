@@ -26,14 +26,22 @@ pub struct RequestManager {
 }
 
 impl RequestManager {
-    pub fn new(url: String, verbose: bool) -> Result<RequestManager, Box<dyn std::error::Error>> {
+
+    fn header(src: &str) -> Result<reqwest::header::HeaderValue, Error> {
+        match reqwest::header::HeaderValue::from_str(src) {
+            Ok(header) => Ok(header),
+            Err(_) => Err(Error::InternalError(format!("Invalid Header '{}'", src))),
+        }
+    }
+
+    pub fn new(url: String, verbose: bool) -> Result<RequestManager, Error> {
         Ok(RequestManager {
             reqwest_client: reqwest::Client::builder()
                 .user_agent("sparko_graphql/0.0.1")
                 .default_headers(
                     std::iter::once((
                         reqwest::header::CONTENT_TYPE,
-                        reqwest::header::HeaderValue::from_str("application/json")?
+                        Self::header("application/json")?
                     ))
                     .collect(),
                 )
@@ -49,7 +57,7 @@ impl RequestManager {
     }
 
     pub async fn call<Q: GraphQLQuery<R>, R: GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>) 
-    -> Result<R, Box<dyn std::error::Error>> {
+    -> Result<R, Error> {
 
         // println!("NEW query {}", &query);
 
@@ -76,7 +84,7 @@ impl RequestManager {
         let mut request = self.reqwest_client.post(&self.url.clone());
 
         if let Some(token) = token {
-            request = request.header(reqwest::header::AUTHORIZATION, reqwest::header::HeaderValue::from_str(token)?);
+            request = request.header(reqwest::header::AUTHORIZATION, Self::header(token)?);
         }
 
         let response = request
@@ -85,21 +93,24 @@ impl RequestManager {
 
         if &response.status() != &StatusCode::OK {
             let status = response.status();
-            Self::report_error("ERROR Request Failed");
-            println!("HTTP status {}", status);
-            
-            Self::report_error("Query");
-            println!("{}", &query.get_query());
-            
-            Self::report_error("Variables");
-            println!("{}", query.get_variables()?);
-            
-            Self::report_error("Payload");
-            println!("{}",  &serde_json::to_string(&payload).unwrap());
 
-            let text = &(response).text().await;
-            println!("ERROR {}", text.as_ref().expect("No Response Body"));
-            return Err(Box::new(Error::HttpError(status)));
+            if self.verbose {
+                Self::report_error("ERROR Request Failed");
+                println!("HTTP status {}", status);
+                
+                Self::report_error("Query");
+                println!("{}", &query.get_query());
+                
+                Self::report_error("Variables");
+                println!("{}", query.get_variables()?);
+                
+                Self::report_error("Payload");
+                println!("{}",  &serde_json::to_string(&payload).unwrap());
+
+                let text = &(response).text().await;
+                println!("ERROR {}", text.as_ref().expect("No Response Body"));
+            }
+            return Err(Error::HttpError(status));
         }
 
         let response_json: serde_json::Value = response.json().await?;
@@ -120,10 +131,12 @@ impl RequestManager {
 
         if let Some(errors) = graphql_response.errors {
             
-            Self::report_error("GraphQL Errors");
-            println!("{:?}", serde_json::to_string_pretty(&errors)?);
-
-            return Err(Box::new(Error::GraphQLError(errors)));
+            if self.verbose {
+                Self::report_error("GraphQL Errors");
+                println!("{:?}", serde_json::to_string_pretty(&errors)?);
+            }
+            
+            return Err(Error::GraphQLError(errors));
         }
         // println!("query_name {}", &query_name);
         // if let Some(response) = graphql_response.data {
@@ -136,7 +149,7 @@ impl RequestManager {
                 Err(error) => {
                     // println!("Deserialization error {}", error);
                     // println!("response_json {}", serde_json::to_string_pretty(&json)?);
-                    return Err(Box::new(Error::InvalidResponseError{json, error}))
+                    return Err(Error::InvalidResponseError{json, error})
                 },
             };
             Ok(object)

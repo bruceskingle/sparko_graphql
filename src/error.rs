@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::fmt::{self, Display};
 use std::num::{ParseFloatError, ParseIntError};
@@ -115,15 +116,15 @@ pub struct ValidationError {
        pub input_path: Vec<String>
 }
 
-#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
-#[serde(rename_all = "camelCase")]
-pub struct Extensions {
-    pub error_type: Option<String>,
-    pub error_code: Option<String>,
-    pub error_description: Option<String>,
-    pub error_class: Option<String>,
-    pub validation_errors: Option<Vec<ValidationError>>
-}
+// #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+// #[serde(rename_all = "camelCase")]
+// pub struct Extensions {
+//     pub error_type: Option<String>,
+//     pub error_code: Option<String>,
+//     pub error_description: Option<String>,
+//     pub error_class: Option<String>,
+//     pub validation_errors: Option<Vec<ValidationError>>
+// }
 
 #[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
 #[serde(rename_all = "camelCase")]
@@ -131,5 +132,5 @@ pub struct GraphQLJsonError {
     pub message: Option<String>,
     pub locations: Vec<Location>,
     pub path: Vec<String>,
-    pub extensions: Extensions,
+    pub extensions: HashMap<String, serde_json::Value>,
 }

@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use display_json::DisplayAsJsonPretty;
 use serde::{Deserialize, Serialize};
-use serde_json::Error;
 
 pub struct ParamBuffer {
     buf: String
@@ -72,7 +71,7 @@ impl GraphQL {
 pub trait GraphQLQueryParams {
     fn get_formal_part(&self, params: &mut ParamBuffer, prefix: &str);
     fn get_actual_part(&self, params: &mut ParamBuffer, prefix: &str);
-    fn get_variables_part(&self, variables: &mut serde_json::Map<String, serde_json::Value>, prefix: &str) -> Result<(), Error>;
+    fn get_variables_part(&self, variables: &mut serde_json::Map<String, serde_json::Value>, prefix: &str) -> Result<(), serde_json::Error>;
 
 
     fn get_formal(&self) -> String {
@@ -89,11 +88,11 @@ pub trait GraphQLQueryParams {
         params.consume()
     }
 
-    fn get_variables(&self) -> Result<String, Error> {
+    fn get_variables(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(&self.get_variable_map()?)
     }
 
-    fn get_variable_map(&self) -> Result<serde_json::Map<String, serde_json::Value>, Error>  {
+    fn get_variable_map(&self) -> Result<serde_json::Map<String, serde_json::Value>, serde_json::Error>  {
         let mut variables: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
         self.get_variables_part(&mut variables, "")?;
 
@@ -112,7 +111,7 @@ impl GraphQLQueryParams for NoParams {
     fn get_actual_part(&self, _params: &mut ParamBuffer, _prefix: &str) {
     }
 
-    fn get_variables_part(&self, _variables: &mut serde_json::Map<String, serde_json::Value>, _prefix: &str) -> Result<(), Error> {
+    fn get_variables_part(&self, _variables: &mut serde_json::Map<String, serde_json::Value>, _prefix: &str) -> Result<(), serde_json::Error> {
         Ok(())
     }
 }
@@ -141,9 +140,9 @@ help: you can alternatively desugar to a normal `fn` that returns `impl Future` 
      */
     // Returns a bearer token, which may be cached if refresh is false, otherwise a new token will be obtained.
     // async fn get_authenticator(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
-    fn get_authenticator(&self, refresh: bool) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
+    fn get_authenticator(&self, refresh: bool) -> impl std::future::Future<Output = Result<Arc<String>, crate::Error>> + Send;
 
     // // Returns a fresh bearer token forcing a reauthentication
     // // async fn authenticate(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
-    // fn authenticate(&self) -> impl std::future::Future<Output = Result<Arc<String>, Box<dyn std::error::Error>>> + Send;
+    // fn authenticate(&self) -> impl std::future::Future<Output = Result<Arc<String>, Error>> + Send;
 }
