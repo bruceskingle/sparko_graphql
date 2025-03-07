@@ -21,6 +21,9 @@ static FORMAT: format_description::well_known::Rfc3339 = format_description::wel
 pub struct DateTime(pub(crate) time::OffsetDateTime);
 
 impl DateTime {
+  pub fn now_utc() -> DateTime {
+    DateTime (time::OffsetDateTime::now_utc())
+  }
 
   pub fn to_date(&self) -> Date {
     let (year, month, day) = self.0.to_calendar_date();
