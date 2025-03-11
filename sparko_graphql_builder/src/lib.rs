@@ -656,14 +656,21 @@ impl Builder {
                             writeln!(out, " * *********************************************************************************************/")?;
                         }
                 
-                        if let Ok(validated_executable) = validated_model::ExecutableDocument::new(&mut err, &mut registry, &mut selection_manager, &query_parsed_model, &validated_schema) {
+                        match validated_model::ExecutableDocument::new(&mut err, &mut registry, &mut selection_manager, &query_parsed_model, &validated_schema) {
+                            Ok(validated_executable) => {
                             
-                            if self.print {
-                                writeln!(out, "/* Validated ExecutableDocument *********************************************************************************************")?;
-                                validated_executable.print(out)?;
-                                writeln!(out, " * *********************************************************************************************/")?;
-                            }
-                            documents.push(validated_executable);
+                                if self.print {
+                                    writeln!(out, "/* Validated ExecutableDocument *********************************************************************************************")?;
+                                    validated_executable.print(out)?;
+                                    writeln!(out, " * *********************************************************************************************/")?;
+                                }
+                                documents.push(validated_executable);
+                            },
+                            Err(error) => {
+                                // println!("VALIDTION ERROR {:?}", error);
+                                // writeln!(out, "VALIDTION ERROR {:?}", error)?;
+                                err.error(BuildError::QuerySyntaxError(error.to_string()));
+                            },
                         }
                     },
                     Err(parse_error) => {
@@ -682,7 +689,7 @@ impl Builder {
 
             if self.generate {
 
-                selection_manager.allocate_names();
+                selection_manager.allocate_names(&mut registry);
                 // //propogate dependencies
 
                 // let mut schema_types = HashSet::new();
