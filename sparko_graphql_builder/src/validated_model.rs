@@ -222,8 +222,6 @@ impl Selection {
                     writeln!(out, "#[serde(tag = \"{}\")]", TYPE_NAME)?;
                     writeln!(out, "pub enum {} {{", base_type_name)?;
 
-                    
-                       
 
                     let mut variant_map = HashMap::new();
                     writeln!(out, "/* variants")?;
@@ -386,12 +384,12 @@ impl SelectionBuilder {
         }
     }
 
-    pub fn with_field(&mut self, variant_name: &Option<VariantID>, field_name: &Name, field: SelectionField) -> &mut Self {
+    pub fn with_field(&mut self, optional_type_conditions: &Option<Vec<Name>>, field_name: &Name, field: SelectionField) -> &mut Self {
         println!("SelectionBuilder field {}", field_name);
-        if let Some(variant_id) = variant_name {
-            for variant_type_condition in &variant_id.type_conditions {
+        if let Some(type_conditions) = optional_type_conditions {
+            for variant_type_condition in type_conditions {
                 println!("variant_type_condition={}", &variant_type_condition);
-                if let Some((names, variant)) = self.variants.get_mut(variant_type_condition) {
+                if let Some((_, variant)) = self.variants.get_mut(variant_type_condition) {
                     variant.insert(field_name.clone(), field.clone());
                     // names.insert(variant_name.clone());
                 }
@@ -2205,16 +2203,16 @@ impl GenericOperation {
     }
     
     fn gather_dependencies(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, selections: &Rc<parsed_model::SelectionList>, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
-        variant_id: Option<VariantID>, fields: &FieldMap, selection_builder: &mut SelectionBuilder) -> Result<(), Error>
+        optional_type_conditions: Option<Vec<Name>>, fields: &FieldMap, selection_builder: &mut SelectionBuilder) -> Result<(), Error>
     {
-        println!("!!   gather dependencies variant {:?}", variant_id);
+        println!("!!   gather dependencies variant {:?}", optional_type_conditions);
         for selection in &selections.selections {
             match selection {
                 parsed_model::Selection::Field(selection_field) => {
                     let field_name  = if let Some(alias) = &selection_field.alias { alias } else {&selection_field.name};
                     println!("!!     field {:?}", field_name);
                     if let Some(field) = get_field(schema, fields, &selection_field.name) {
-                        selection_builder.with_field(&variant_id,  &field_name, 
+                        selection_builder.with_field(&optional_type_conditions,  &field_name, 
                             Self::wrap_type(&field.ty, 
                                 match field.ty.get_scalar() {
                                 ScalarType::DefinedType(defined_type) => {
@@ -2331,7 +2329,7 @@ impl GenericOperation {
 
                         Self::gather_dependencies(err, registry, selection_manager, &fragment.selections, schema, fragments, 
                             // Some((fragment_spread.name.clone(), fragment.type_condition.clone())), 
-                            Some(Self::get_variant_id(&fragment_spread.name, &fragment.type_condition, &selection_builder.implemented_by, schema)?), 
+                            Some(Self::get_type_conditions(&fragment_spread.name, &fragment.type_condition, &selection_builder.implemented_by, schema)?), 
                             fields, selection_builder)?;
                     }
                     else {
@@ -2346,7 +2344,7 @@ impl GenericOperation {
 
                         Self::gather_dependencies(err, registry, selection_manager, &inline_fragment_spread.selections, schema, fragments, 
                             // Some((type_condition.clone(), type_condition.clone())),
-                            Some(Self::get_variant_id(type_condition, type_condition, &selection_builder.implemented_by, schema)?), 
+                            Some(Self::get_type_conditions(type_condition, type_condition, &selection_builder.implemented_by, schema)?), 
                             &object.fields, selection_builder)?;
                     }
                     else {
@@ -2723,17 +2721,14 @@ use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
         Ok(new_fragments)
     }
     
-    fn get_variant_id(name: &Name, type_condition: &Name, implemented_by: &Option<Vec<Name>>, schema: &Rc<Schema>) -> Result<VariantID, Error> {
+    fn get_type_conditions(name: &Name, type_condition: &Name, implemented_by: &Option<Vec<Name>>, schema: &Rc<Schema>) -> Result<Vec<Name>, Error> {
         if name.as_str() == "meterFields" {
             println!("HERE");
         }
         if let Some(condition_type) = schema.defined_types.get(type_condition) {
             match condition_type {
-                TypeDefinition::Object(object) => {
-                    Ok(VariantID {
-                        fragment_name: name.clone(),
-                        type_conditions: vec!(type_condition.clone())
-                    })
+                TypeDefinition::Object(_) => {
+                    Ok(vec!(type_condition.clone()))
                 },
                 TypeDefinition::Interface(interface) => {
                     let mut type_conditions = Vec::new();
@@ -2752,10 +2747,7 @@ use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
                         }
 
                         println!("!! VariantID name={} type_conditions={:?}", name, type_conditions);
-                        Ok(VariantID {
-                            fragment_name: name.clone(),
-                            type_conditions
-                        })
+                        Ok(type_conditions)
                     }
                     else {
                         Err(Error::BuildFailed(format!("Type condition '{}' is an interface but container is not", type_condition)))
@@ -2770,12 +2762,21 @@ use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
     }
 }
 
-
-#[derive(Debug)]
-pub struct VariantID {
-    pub fragment_name: Name,
-    pub type_conditions: Vec<Name>,
-}
+// /// Describes a variant during model construction. Variants occur as a result of fragment spreads, the presence
+// /// of a fragment spread on a selection means that the returned data may be one of several different variants.
+// /// If the fragment's type condition refers to a Type (object) then the type_conditions Vec will contain just the
+// /// name of that Type. If on the other hand, it refers to an Interface, then the type_condistions will list all
+// /// of the Types which implement that Interface ince that is the set of possible types which might be returned
+// /// by the query.
+// /// 
+// /// In the case where there are multiple fragment spreads then there will be multiple variants, if one or more
+// /// of those fragments has an Interface type condition then the fragments will accumulate into their respective
+// /// object type conditions.
+// #[derive(Debug)]
+// pub struct VariantID {
+//     pub fragment_name: Name,
+//     pub type_conditions: Vec<Name>,
+// }
 
 fn get_field<'a>(schema: &'a Rc<Schema>, fields: &'a SharedMap<Field>, name: &String) -> Option<&'a Rc<Field>> {
     if name == TYPE_NAME {
