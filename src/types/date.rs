@@ -90,6 +90,12 @@ impl Display for Date {
       )?))
       }
   }
+
+  impl From<time::Date> for Date {
+    fn from(value: time::Date) -> Self {
+        Self(value)
+    }
+  }
   
   
   struct DateVisitor;

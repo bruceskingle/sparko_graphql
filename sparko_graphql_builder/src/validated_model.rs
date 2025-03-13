@@ -566,9 +566,9 @@ impl SelectionBuilder {
             }
         }
 
-        let selection = manager.insert(self.graphql_type_name, self.preferred_type_name, self.fields, self.variants, self.implemented_by);
+        let index = manager.insert(self.graphql_type_name, self.preferred_type_name, self.fields, self.variants, self.implemented_by);
 
-        SelectionFieldType::Selection(selection.index)
+        SelectionFieldType::Selection(index)
     }
 }
 
@@ -587,6 +587,117 @@ pub enum SelectionFieldType {
     PageOf(Rc<SelectionFieldType>),
     ForwardPageOf(Rc<SelectionFieldType>),
     ReversePageOf(Rc<SelectionFieldType>),
+}
+
+impl Isomorphic for SelectionFieldType {
+    fn is_isomorphic(&self, other: &Self) -> bool {
+        match self {
+            SelectionFieldType::BuiltinType(builtin_type) => {
+                if let SelectionFieldType::BuiltinType(other_type) = other {
+                    builtin_type == other_type
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::Scalar(name) => {
+                if let SelectionFieldType::Scalar(other_name) = other {
+                    name == other_name
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::Enum(name) => {
+                if let SelectionFieldType::Enum(other_name) = other {
+                    name == other_name
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::Selection(index) => {
+                if let SelectionFieldType::Selection(other_index) = other {
+                    index == other_index
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::Required(selection_field_type) => {
+                if let SelectionFieldType::Required(other_field_type) = other {
+                    selection_field_type.is_isomorphic(other_field_type)
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::Array(selection_field_type) => {
+                if let SelectionFieldType::Array(other_field_type) = other {
+                    selection_field_type.is_isomorphic(other_field_type)
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::EdgeOf(selection_field_type, selection_creation_params) => {
+                if let SelectionFieldType::EdgeOf(other_field_type, other_creation_params) = other {
+                    selection_field_type.is_isomorphic(other_field_type)
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::PageInfo => {
+                if let SelectionFieldType::PageInfo = other {
+                    true
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::ForwardPageInfo => {
+                if let SelectionFieldType::ForwardPageInfo = other {
+                    true
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::ReversePageInfo =>{
+                if let SelectionFieldType::ReversePageInfo = other {
+                    true
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::PageOf(selection_field_type) => {
+                if let SelectionFieldType::PageOf(other_field_type) = other {
+                    selection_field_type.is_isomorphic(other_field_type)
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::ForwardPageOf(selection_field_type) => {
+                if let SelectionFieldType::ForwardPageOf(other_field_type) = other {
+                    selection_field_type.is_isomorphic(other_field_type)
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::ReversePageOf(selection_field_type) => {
+                if let SelectionFieldType::ReversePageOf(other_field_type) = other {
+                    selection_field_type.is_isomorphic(other_field_type)
+                }
+                else {
+                    false
+                }
+            },
+        }
+    }
 }
 
 impl Display for SelectionFieldType {
@@ -618,7 +729,11 @@ impl SelectionFieldType {
                 SelectionFieldType::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
                 SelectionFieldType::Scalar(name) => schema.defined_types.get(name).unwrap().rust_name().to_string(),
                 SelectionFieldType::Enum(name) => schema.defined_types.get(name).unwrap().rust_name().to_string(),
-                SelectionFieldType::Selection(id) => selection_manager.get_name(id).to_string(),
+                SelectionFieldType::Selection(id) => {
+                    let name = selection_manager.get_name(id).to_string();
+                    println!("rust_type({}) = {}", id, &name);
+                    name
+                },
                 SelectionFieldType::Required(_) => unreachable!(),
                 SelectionFieldType::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
                 SelectionFieldType::EdgeOf(wrapped, _) => format!("sparko_graphql::types::EdgeOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
@@ -2122,7 +2237,7 @@ impl GenericOperation {
     fn create_selection(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
         preferred_type_name: Name, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap, implemented_by: &Option<Vec<Name>>) -> Result<SelectionFieldType, Error>
     {
-        println!("!! GenericOperation {} gather dependencies", &graphql_type_name);
+        println!("!! create_selection {} gather dependencies", &graphql_type_name);
         let mut selection_builder = SelectionBuilder::new(graphql_type_name, preferred_type_name, implemented_by);
 
         Self::gather_dependencies(err, registry, selection_manager, selections, schema, fragments, None, fields, &mut selection_builder)?;
@@ -2408,8 +2523,9 @@ use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
 
 
             writeln!(out, "// Start dependencies")?;
-            for id in selection_manager.get_context().names.values() {
+            for (name, id) in &selection_manager.get_context().names {
                 let selection = selection_manager.get(*id);
+                writeln!(out, "// generate name={} id={}, selection.name={}", name, id, selection.name())?;
                 selection.generate(&mut out, selection_manager, schema)?;
             }
             writeln!(out, "// End dependencies")?;
@@ -2818,6 +2934,37 @@ pub enum NameSpaceItem {
     Variant(Rc<Variant>),
 }
 
+impl Isomorphic for NameSpaceItem {
+    fn is_isomorphic(&self, other: &Self) -> bool {
+        let other_fields = match other {
+            NameSpaceItem::Selection(selection) => &selection.fields,
+            NameSpaceItem::Variant(variant) => &variant.fields,
+        };
+
+        let self_fields = match self {
+            NameSpaceItem::Selection(selection) => &selection.fields,
+            NameSpaceItem::Variant(variant) => &variant.fields,
+        };
+
+        if other_fields.len() != self_fields.len() {
+            return false;
+        }
+
+        for (name, field) in self_fields {
+            if let Some(other_field) = other_fields.get(name) {
+                if ! field.selection_type.is_isomorphic(&other_field.selection_type) {
+                    return false;
+                }
+            }
+            else {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
 impl NameSpaceItem {
     fn name(&self) -> &Name {
         match self {
@@ -2826,11 +2973,50 @@ impl NameSpaceItem {
         }
     }
 
+    fn fields(&self) -> &IndexMap<Name, SelectionField> {
+        match self {
+            NameSpaceItem::Selection(selection) => &selection.fields,
+            NameSpaceItem::Variant(variant) => &variant.fields,
+        }
+    }
+
+
+    fn index(&self) -> usize {
+        match self {
+            NameSpaceItem::Selection(selection) => selection.index,
+            NameSpaceItem::Variant(variant) => variant.index,
+        }
+    }
+
     fn generate(&self, out: &mut Output<'_>, selection_manager: &NameSpaceManager, schema: &Schema) -> Result<(), Error> {
         match self {
             NameSpaceItem::Selection(selection) => selection.generate(out, selection_manager, schema),
             NameSpaceItem::Variant(_) => Ok(()),
         }
+    }
+
+    fn is_field_isomorphic(&self, other_fields: &IndexMap<Rc<String>, SelectionField>) -> bool {
+        let self_fields = match self {
+            NameSpaceItem::Selection(selection) => &selection.fields,
+            NameSpaceItem::Variant(variant) => &variant.fields,
+        };
+
+        if other_fields.len() != self_fields.len() {
+            return false;
+        }
+
+        for (name, field) in self_fields {
+            if let Some(other_field) = other_fields.get(name) {
+                if ! field.selection_type.is_isomorphic(&other_field.selection_type) {
+                    return false;
+                }
+            }
+            else {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
 
@@ -3006,7 +3192,7 @@ impl NameSpaceManager {
         self.all_schema_imports.insert(name);
     }
 
-    fn insert(&mut self, graphql_type_name: Name, name: Name, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, implemented_by: Option<Vec<Name>>) -> Rc<Selection> {
+    fn insert(&mut self, graphql_type_name: Name, name: Name, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, implemented_by: Option<Vec<Name>>) -> usize {
         
         if "Node" == graphql_type_name.as_str() {
             println!("HERE {}", graphql_type_name);
@@ -3019,7 +3205,7 @@ impl NameSpaceManager {
         for (type_condition, (name, fields)) in p_variants {
             let index = self.items.len();
 
-            println!("insert push {} {:?}", self.items.len(), &name);
+            println!("insert push variant {} {:?}", self.items.len(), &name);
             let variant: Rc<Variant> = Rc::new(Variant{
                 index,
                 name,
@@ -3039,7 +3225,7 @@ impl NameSpaceManager {
         let selection_index = self.items.len();
 
 
-        println!("insert push {} {:?}", self.items.len(), &name);
+        println!("insert push main {} {:?}", self.items.len(), &name);
 
         let content = Rc::new(Selection {
             index: selection_index,
@@ -3050,13 +3236,46 @@ impl NameSpaceManager {
             implemented_by,
         });
 
-        let result = content.clone();
+        if let Some(index) = self.get_isomorph(&content) {
+            println!("Returning isomorph {} for {}", index, &content.graphql_type_name);
+
+            self.get_context_mut().imports.insert(index);
+            return index;
+        }
+
+        // let result = content.clone();
 
         self.items.push( NameSpaceItem::Selection(content));
         self.get_context_mut().imports.insert(selection_index);
         
 
-        result
+        selection_index
+    }
+    
+    fn get_isomorph(&self, content: &Selection) -> Option<usize> {
+        if content.variants.is_empty() {
+            for item in &self.items {
+                match item {
+                    NameSpaceItem::Selection(selection) => {
+                        if selection.variants.is_empty() && item.is_field_isomorphic(&content.fields) {
+
+                            println!("is_field_isomorphic {} {}", content.graphql_type_name, item.name());
+                            for (name, field) in &content.fields {
+                                println!(" content {} {:?}", name, field);
+                            }
+                            for (name, field) in item.fields() {
+                                println!(" item {} {:?}", name, field);
+                            }
+                            return Some(item.index())
+                        }
+                    },
+                    NameSpaceItem::Variant(variant) => {},
+                }
+                
+            }
+        }
+        
+        None
     }
     
     fn get_schema_dependencies(&self) -> &IndexSet<Name> {

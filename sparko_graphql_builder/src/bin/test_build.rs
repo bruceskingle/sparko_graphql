@@ -35,7 +35,7 @@ fn main()  -> Result<(), Box<dyn Error>> {
         .with_query("../../marco-sparko/graphql/octopus/meter.graphql", "meter")
 
         // .with_query("../../marco-sparko/graphql/octopus/meter.graphql", "meter")
-        // .with_print(true)
+        .with_print(true)
         .build()?;
     Ok(())
 }
