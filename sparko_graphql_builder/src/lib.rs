@@ -353,7 +353,7 @@ pub struct Output<'a> {
 }
 
 impl Output<'_> {
-    pub fn indent(&mut self) -> Output {
+    pub fn indent(&mut self) -> Output<'_> {
         Output {
             base: self.base,
             indent: self.indent + 1,
@@ -462,7 +462,7 @@ impl BaseOutput {
         BaseOutput::Stdout
     }
 
-    pub fn indent(&mut self) -> Output {
+    pub fn indent(&mut self) -> Output<'_> {
         Output {
             base: self,
             indent: 0,

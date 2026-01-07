@@ -640,8 +640,8 @@ impl Isomorphic for SelectionFieldType {
                     false
                 }
             },
-            SelectionFieldType::EdgeOf(selection_field_type, selection_creation_params) => {
-                if let SelectionFieldType::EdgeOf(other_field_type, other_creation_params) = other {
+            SelectionFieldType::EdgeOf(selection_field_type, _selection_creation_params) => {
+                if let SelectionFieldType::EdgeOf(other_field_type, _other_creation_params) = other {
                     selection_field_type.is_isomorphic(other_field_type)
                 }
                 else {
@@ -3270,7 +3270,7 @@ impl NameSpaceManager {
                             return Some(item.index())
                         }
                     },
-                    NameSpaceItem::Variant(variant) => {},
+                    NameSpaceItem::Variant(_variant) => {},
                 }
                 
             }
