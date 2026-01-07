@@ -2,18 +2,19 @@ use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::fmt::{self, Display};
 use std::num::{ParseFloatError, ParseIntError};
+use std::sync::Arc;
 use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Error {
-    GraphQLError(Vec<GraphQLJsonError>),
-    IOError(reqwest::Error),
-    JsonError(serde_json::Error),
+    GraphQLError(Arc<Vec<GraphQLJsonError>>),
+    IOError(Arc<reqwest::Error>),
+    JsonError(Arc<serde_json::Error>),
     HttpError(StatusCode),
-    InvalidInputError(Box<dyn StdError>),
-    InvalidResponseError{json: serde_json::Value, error: serde_json::Error},
+    InvalidInputError(Arc<Box<dyn StdError + Sync + Send>>),
+    InvalidResponseError{json: serde_json::Value, error: Arc<serde_json::Error>},
     InternalError(String),
     MissingRequiredValueError(&'static str),
 }
@@ -26,12 +27,12 @@ impl Display for Error {
                 
                 f.write_str("GraphQLError[\n")?;
 
-                match serde_json::to_string_pretty(&err_list) {
+                match serde_json::to_string_pretty(&err_list.as_ref()) {
                     Ok(json) => {
                         f.write_str(&json)?;
                     },
                     Err(_) => {
-                        for err in err_list {
+                        for err in err_list.as_ref() {
                             f.write_fmt(format_args!(" [{}]\n", err))?;
                         }
                     },
@@ -61,43 +62,43 @@ impl StdError for Error {}
 
 impl From<std::str::ParseBoolError> for Error {
     fn from(err: std::str::ParseBoolError) -> Error {
-        Error::InvalidInputError(Box::new(err))
+        Error::InvalidInputError(Arc::new(Box::new(err)))
     }
 }
 
 impl From<ParseIntError> for Error {
     fn from(err: ParseIntError) -> Error {
-        Error::InvalidInputError(Box::new(err))
+        Error::InvalidInputError(Arc::new(Box::new(err)))
     }
 }
 
 impl From<ParseFloatError> for Error {
     fn from(err: ParseFloatError) -> Error {
-        Error::InvalidInputError(Box::new(err))
+        Error::InvalidInputError(Arc::new(Box::new(err)))
     }
 }
 
 impl From<time::error::ComponentRange> for Error {
     fn from(err: time::error::ComponentRange) -> Error {
-        Error::InvalidInputError(Box::new(err))
+        Error::InvalidInputError(Arc::new(Box::new(err)))
     }
 }
 
 impl From<time::error::Parse> for Error {
     fn from(err: time::error::Parse) -> Error {
-        Error::InvalidInputError(Box::new(err))
+        Error::InvalidInputError(Arc::new(Box::new(err)))
     }
 }
 
 impl From<reqwest::Error> for Error {
     fn from(err: reqwest::Error) -> Error {
-        Error::IOError(err)
+        Error::IOError(Arc::new(err))
     }
 }
 
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Error {
-        Error::JsonError(err)
+        Error::JsonError(Arc::new(err))
     }
 }
 

@@ -2516,6 +2516,7 @@ use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
                     writeln!(out, "use super::super::{};", object.rust_name())?;
                 }
                 else {
+                    println!("cargo:rustc-cfg=graphql_generation_error");
                     writeln!(out, "compile_error!(\"Failed to find type {}\");", name)?;
                 }
             }
