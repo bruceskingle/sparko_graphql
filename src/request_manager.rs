@@ -136,7 +136,7 @@ impl RequestManager {
                 println!("{:?}", serde_json::to_string_pretty(&errors)?);
             }
 
-            return Err(Error::GraphQLError(errors));
+            return Err(Error::GraphQLError(Arc::new(errors)));
         }
         // println!("query_name {}", &query_name);
         // if let Some(response) = graphql_response.data {
@@ -149,6 +149,7 @@ impl RequestManager {
                 Err(error) => {
                     // println!("Deserialization error {}", error);
                     // println!("response_json {}", serde_json::to_string_pretty(&json)?);
+                    let error = Arc::new(error);
                     return Err(Error::InvalidResponseError{json, error})
                 },
             };

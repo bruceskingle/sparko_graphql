@@ -28,7 +28,7 @@ async fn test<Q: GraphQLQuery<R>, R: GraphQLResponse>(query: &Q, request_manager
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world");
 
-    let the_request_manager: RequestManager = RequestManager::new("https://swapi-graphql.eskerda.vercel.app/".to_string(), true, CrateInfo::USER_AGENT)?;
+    let the_request_manager: RequestManager = RequestManager::new("https://swapi-graphql.eskerda.vercel.app/".to_string(), true, create_info::USER_AGENT)?;
     let request_manager: Option<&RequestManager> = 
         Some(&the_request_manager);
         // None;

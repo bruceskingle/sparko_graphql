@@ -25,6 +25,9 @@ SOFTWARE.
 pub mod date;
 pub use date::Date;
 
+pub mod date_range;
+pub use date_range::DateRange;
+
 pub mod datetime;
 pub use datetime::DateTime;
 

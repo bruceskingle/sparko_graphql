@@ -221,7 +221,7 @@ impl BaseErrorCollector {
         Self::new(String::from("Test"))
     }
 
-    pub fn new_error_collector(&mut self) -> ErrorCollector {
+    pub fn new_error_collector(&mut self) -> ErrorCollector<'_>  {
         ErrorCollector::new(self)
     }
 
@@ -264,6 +264,7 @@ impl BaseErrorCollector {
         }
         else {
             // writeln!(f, "compile_warning!(\"{} built with Errors\");", self.file_name)?;
+            println!("cargo:rustc-cfg=graphql_generation_error");
             writeln!(f, "compile_error!(\"{} built with Errors\");", self.file_name)?;
             writeln!(f, "/{}", STARS)?;
             for item in &self.errors {
@@ -352,7 +353,7 @@ pub struct Output<'a> {
 }
 
 impl Output<'_> {
-    pub fn indent(&mut self) -> Output {
+    pub fn indent(&mut self) -> Output<'_> {
         Output {
             base: self.base,
             indent: self.indent + 1,
@@ -461,7 +462,7 @@ impl BaseOutput {
         BaseOutput::Stdout
     }
 
-    pub fn indent(&mut self) -> Output {
+    pub fn indent(&mut self) -> Output<'_> {
         Output {
             base: self,
             indent: 0,
@@ -533,6 +534,7 @@ impl Builder {
     }
     
     pub fn build(&mut self) -> Result<String, Error> {
+        println!("cargo:rustc-check-cfg=cfg(graphql_generation_error)");
         let out_dir = if let Some(dir) = env::var_os("OUT_DIR") {
             dir
         }
@@ -553,8 +555,11 @@ impl Builder {
         let mut out = base_out.indent();
 
         if let Err(error) = self.do_build(&mut out) {
-            writeln!(out, "compile_warning!(\"Fatal build error {:?}\");", error)?;
+            writeln!(out, "compile_error!(\"Fatal build error {}\");", error.to_string().replace("\"", "'"))?;
+            println!("cargo-warning: {:?}", error);
             println!("cargo-error: {:?}", error);
+            // panic!("Build failed {}", error);
+            println!("cargo:rustc-cfg=graphql_generation_error");
         }
 
 
@@ -624,15 +629,15 @@ impl Builder {
 
             for (query_file_name, query_model_name) in &self.query_file_names 
             {
+                // Tell Cargo that if the given file changes, to rerun this build script.
+                println!("cargo::rerun-if-changed={}", query_file_name);
+
                 let query_string = match fs::read_to_string(query_file_name) {
                     Ok(str) => Ok(str),
                     Err(err) => {
                         Err(Error::FileReadError { file_name: query_file_name.clone(), reason: err })
                     },
                 }?;
-                        
-                // Tell Cargo that if the given file changes, to rerun this build script.
-                println!("cargo::rerun-if-changed={}", query_file_name);
                 
                 selection_manager.create_document(registry.intern(to_snake_case(query_model_name)));
                 let mut base = BaseErrorCollector::new(query_file_name.clone());
@@ -656,14 +661,21 @@ impl Builder {
                             writeln!(out, " * *********************************************************************************************/")?;
                         }
                 
-                        if let Ok(validated_executable) = validated_model::ExecutableDocument::new(&mut err, &mut registry, &mut selection_manager, &query_parsed_model, &validated_schema) {
+                        match validated_model::ExecutableDocument::new(&mut err, &mut registry, &mut selection_manager, &query_parsed_model, &validated_schema) {
+                            Ok(validated_executable) => {
                             
-                            if self.print {
-                                writeln!(out, "/* Validated ExecutableDocument *********************************************************************************************")?;
-                                validated_executable.print(out)?;
-                                writeln!(out, " * *********************************************************************************************/")?;
-                            }
-                            documents.push(validated_executable);
+                                if self.print {
+                                    writeln!(out, "/* Validated ExecutableDocument *********************************************************************************************")?;
+                                    validated_executable.print(out)?;
+                                    writeln!(out, " * *********************************************************************************************/")?;
+                                }
+                                documents.push(validated_executable);
+                            },
+                            Err(error) => {
+                                // println!("VALIDTION ERROR {:?}", error);
+                                // writeln!(out, "VALIDTION ERROR {:?}", error)?;
+                                err.error(BuildError::QuerySyntaxError(error.to_string()));
+                            },
                         }
                     },
                     Err(parse_error) => {
@@ -682,7 +694,7 @@ impl Builder {
 
             if self.generate {
 
-                selection_manager.allocate_names();
+                selection_manager.allocate_names(&mut registry);
                 // //propogate dependencies
 
                 // let mut schema_types = HashSet::new();
