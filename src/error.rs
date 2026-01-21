@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::fmt::{self, Display};
 use std::num::{ParseFloatError, ParseIntError};
@@ -6,6 +5,7 @@ use std::sync::Arc;
 use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use indexmap::{IndexMap, IndexSet};
 
 #[derive(Debug, Clone)]
 pub enum Error {
@@ -133,5 +133,5 @@ pub struct GraphQLJsonError {
     pub message: Option<String>,
     pub locations: Vec<Location>,
     pub path: Vec<String>,
-    pub extensions: HashMap<String, serde_json::Value>,
+    pub extensions: IndexMap<String, serde_json::Value>,
 }

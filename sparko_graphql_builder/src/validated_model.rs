@@ -1,4 +1,3 @@
-use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::io::Write;
 use std::rc::Rc;
@@ -223,7 +222,7 @@ impl Selection {
                     writeln!(out, "pub enum {} {{", base_type_name)?;
 
 
-                    let mut variant_map = HashMap::new();
+                    let mut variant_map = IndexMap::new();
                     writeln!(out, "/* variants")?;
                     for variant in &self.variants {
 
@@ -441,7 +440,7 @@ impl SelectionBuilder {
         let mut cantbe_page_of = false;
         let mut cantbe_edge_of = false;
         let mut cantbe_page_info = false;
-        let mut page_info_fields = HashSet::new();
+        let mut page_info_fields = IndexSet::new();
         let mut page_info_type = None;
         let mut edge_of_type = None;
         let mut page_of_type = None;
@@ -1227,7 +1226,7 @@ impl Scalar {
         writeln!(out, "}}")
     }
     
-    fn new(registry: &mut NameRegistry, parsed: &Rc<parsed_model::Scalar>, types: &HashMap<String, String>) -> TypeDefinition {
+    fn new(registry: &mut NameRegistry, parsed: &Rc<parsed_model::Scalar>, types: &IndexMap<String, String>) -> TypeDefinition {
         println!("&*parsed.name={}", &*parsed.name);
         let rust_name =  registry.intern(to_pascal_case(&parsed.name));
         let rust_type = if let Some(fqn) = types.get(&*parsed.name) {
@@ -1823,7 +1822,7 @@ impl Schema {
         }
     }
 
-    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Schema>, registry: &mut NameRegistry, types: &HashMap<String, String>) -> Result<Rc<Self>, Error> {
+    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Schema>, registry: &mut NameRegistry, types: &IndexMap<String, String>) -> Result<Rc<Self>, Error> {
 
         let mut defined_types: IndexMap<Name, TypeDefinition> = IndexMap::new();
 
@@ -2906,7 +2905,7 @@ fn get_field<'a>(schema: &'a Rc<Schema>, fields: &'a SharedMap<Field>, name: &St
 
 #[derive(Debug)]
 pub struct SelectionContext {
-    pub imports: HashSet<usize>,
+    pub imports: IndexSet<usize>,
     pub schema_imports: IndexSet<Name>,
     pub names: IndexMap<Name, usize>,
 }
@@ -2914,7 +2913,7 @@ pub struct SelectionContext {
 impl SelectionContext {
     pub fn new() -> Self {
         SelectionContext {
-            imports: HashSet::new(),
+            imports: IndexSet::new(),
             schema_imports: IndexSet::new(),
             names: IndexMap::new(),
         }
@@ -3201,7 +3200,7 @@ impl NameSpaceManager {
         println!("insert {} {:?}", self.items.len(), &name);
 
         let mut variants: Vec<Rc<Variant>> = Vec::new();
-        // let mut other_interfce_map = HashMap::new();
+        // let mut other_interfce_map = IndexMap::new();
 
         for (type_condition, (name, fields)) in p_variants {
             let index = self.items.len();
