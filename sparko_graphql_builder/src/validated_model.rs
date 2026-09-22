@@ -721,9 +721,19 @@ impl Display for SelectionFieldType {
 
 impl SelectionFieldType {
     // if nonnull then the type is coerced to be nonnull at all levels
-    pub fn rust_type(&self, selection_manager: &NameSpaceManager, schema: &Schema, nonnull: bool) -> String {
+    pub fn rust_type(&self, selection_manager: &NameSpaceManager, schema: &Schema, nonnull: bool, mut nonnull_once: bool) -> String {
+        println!("rust_type({:?} {}, nonnull={}, nonnull_once={})", self, self, nonnull, nonnull_once);
+        if let SelectionFieldType::Selection(content) = self {
+            println!(" which is selection({}) = {}", content, selection_manager.get_name(content));
+        }
+        if !nonnull && nonnull_once {
+            println!("!nonnull && nonnull_once");
+        }
+
         // Will never be called with Required variant.
         fn do_rust_type(input: &SelectionFieldType, selection_manager: &NameSpaceManager, schema: &Schema, nonnull: bool) -> String {
+
+            println!("do_rust_type({:?}, nonnull={}", input, nonnull);
             match input {
                 SelectionFieldType::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
                 SelectionFieldType::Scalar(name) => schema.defined_types.get(name).unwrap().rust_name().to_string(),
@@ -734,22 +744,27 @@ impl SelectionFieldType {
                     name
                 },
                 SelectionFieldType::Required(_) => unreachable!(),
-                SelectionFieldType::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
-                SelectionFieldType::EdgeOf(wrapped, _) => format!("sparko_graphql::types::EdgeOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
+                SelectionFieldType::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(selection_manager, schema, nonnull, true)), // Force nonnull so we dobt generate Vec<Option<foo>>
+                SelectionFieldType::EdgeOf(wrapped, _) => format!("sparko_graphql::types::EdgeOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
                 SelectionFieldType::PageInfo => format!("sparko_graphql::types::PageInfo"),
                 SelectionFieldType::ForwardPageInfo => format!("sparko_graphql::types::ForwardPageInfo"),
                 SelectionFieldType::ReversePageInfo => format!("sparko_graphql::types::ReversePageInfo"),
-                SelectionFieldType::PageOf(wrapped) => format!("sparko_graphql::types::PageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
-                SelectionFieldType::ForwardPageOf(wrapped) => format!("sparko_graphql::types::ForwardPageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
-                SelectionFieldType::ReversePageOf(wrapped) => format!("sparko_graphql::types::ReversePageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
+                SelectionFieldType::PageOf(wrapped) => format!("sparko_graphql::types::PageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
+                SelectionFieldType::ForwardPageOf(wrapped) => format!("sparko_graphql::types::ForwardPageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
+                SelectionFieldType::ReversePageOf(wrapped) => format!("sparko_graphql::types::ReversePageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
             }
+        }
+
+        if let SelectionFieldType::Array(wrapped) = self {
+            println!("rust_type Array({:?}, nonnull={}, nonnull_once={})", wrapped, nonnull, nonnull_once);
+            nonnull_once = true; // Force nonnull so we don't generate Option<Vec<foo>>
         }
 
         if let SelectionFieldType::Required(wrapped) = self {
             do_rust_type(wrapped, selection_manager, schema, nonnull)
         }
         else {
-            if nonnull {
+            if nonnull || nonnull_once{
                 do_rust_type(self, selection_manager, schema, nonnull)
             }
             else {
@@ -814,7 +829,7 @@ impl SelectionField {
             // if self.selection_type.is_array() {
             //     writeln!(out, "#[serde(skip_serializing)]")?;
             // }
-            writeln!(out, "pub {}_: {}, // T1", field_name, self.selection_type.rust_type(selection_manager, schema, self.force_nonnull))
+            writeln!(out, "pub {}_: {}, // T1", field_name, self.selection_type.rust_type(selection_manager, schema, self.force_nonnull, false))
         }
         else {
             Ok(())
