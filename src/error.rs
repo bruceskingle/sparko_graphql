@@ -5,7 +5,7 @@ use std::sync::Arc;
 use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 
 #[derive(Debug, Clone)]
 pub enum Error {
