@@ -1,9 +1,8 @@
 use graphql_parser::{parse_query, Pos};
 use graphql_parser::schema::parse_schema;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use inflections::case::to_snake_case;
 use validated_model::NameSpaceManager;
-use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::fs::File;
 use std::io::BufWriter;
@@ -74,13 +73,13 @@ type Name = Rc<String>;
 
 #[derive(Debug)]
 pub struct NameRegistry {
-    pub atoms: HashSet<Name>,
+    pub atoms: IndexSet<Name>,
 }
 
 impl NameRegistry {
     pub fn new() -> NameRegistry {
         NameRegistry {
-            atoms: HashSet::new(),
+            atoms: IndexSet::new(),
         }
     }
 
@@ -483,7 +482,7 @@ pub struct Builder {
     model_name: String,
     schema_file_name: Option<String>,
     query_file_names: Vec<(String, String)>,
-    types: HashMap<String, String>,
+    types: IndexMap<String, String>,
     print: bool,
     generate: bool,
 }
@@ -493,7 +492,7 @@ pub fn builder(model_name: impl Into<String>) -> Builder {
         model_name: model_name.into(),
         schema_file_name: None,
         query_file_names: Vec::new(),
-        types: HashMap::new(),
+        types: IndexMap::new(),
         print: false,
         generate: true,
     }
@@ -697,7 +696,7 @@ impl Builder {
                 selection_manager.allocate_names(&mut registry);
                 // //propogate dependencies
 
-                // let mut schema_types = HashSet::new();
+                // let mut schema_types = IndexSet::new();
 
                 // for document in &documents {
                 //     println!("Document {}", document.parsed.name);
@@ -773,7 +772,7 @@ mod tests {
     }
 
     fn do_test_schema(schema_string: &str, mut err:  &mut ErrorCollector<'_>) -> Result<(), Error> {
-        let types = HashMap::new();
+        let types = IndexMap::new();
 
          match parse_schema::<'_, String>(&schema_string) {
             Ok(ast) => {
@@ -806,7 +805,7 @@ mod tests {
     }
 
     fn do_test_query(schema_string: &str, query: &str, mut err:  &mut ErrorCollector<'_>) -> Result<(), Error> {
-        let types = HashMap::new();
+        let types = IndexMap::new();
         
 
         match parse_schema::<'_, String>(&schema_string) {

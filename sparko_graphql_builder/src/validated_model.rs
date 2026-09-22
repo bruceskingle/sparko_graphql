@@ -1,4 +1,3 @@
-use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::io::Write;
 use std::rc::Rc;
@@ -223,7 +222,7 @@ impl Selection {
                     writeln!(out, "pub enum {} {{", base_type_name)?;
 
 
-                    let mut variant_map = HashMap::new();
+                    let mut variant_map = IndexMap::new();
                     writeln!(out, "/* variants")?;
                     for variant in &self.variants {
 
@@ -441,7 +440,7 @@ impl SelectionBuilder {
         let mut cantbe_page_of = false;
         let mut cantbe_edge_of = false;
         let mut cantbe_page_info = false;
-        let mut page_info_fields = HashSet::new();
+        let mut page_info_fields = IndexSet::new();
         let mut page_info_type = None;
         let mut edge_of_type = None;
         let mut page_of_type = None;
@@ -722,9 +721,19 @@ impl Display for SelectionFieldType {
 
 impl SelectionFieldType {
     // if nonnull then the type is coerced to be nonnull at all levels
-    pub fn rust_type(&self, selection_manager: &NameSpaceManager, schema: &Schema, nonnull: bool) -> String {
+    pub fn rust_type(&self, selection_manager: &NameSpaceManager, schema: &Schema, nonnull: bool, mut nonnull_once: bool) -> String {
+        println!("rust_type({:?} {}, nonnull={}, nonnull_once={})", self, self, nonnull, nonnull_once);
+        if let SelectionFieldType::Selection(content) = self {
+            println!(" which is selection({}) = {}", content, selection_manager.get_name(content));
+        }
+        if !nonnull && nonnull_once {
+            println!("!nonnull && nonnull_once");
+        }
+
         // Will never be called with Required variant.
         fn do_rust_type(input: &SelectionFieldType, selection_manager: &NameSpaceManager, schema: &Schema, nonnull: bool) -> String {
+
+            println!("do_rust_type({:?}, nonnull={}", input, nonnull);
             match input {
                 SelectionFieldType::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
                 SelectionFieldType::Scalar(name) => schema.defined_types.get(name).unwrap().rust_name().to_string(),
@@ -735,22 +744,27 @@ impl SelectionFieldType {
                     name
                 },
                 SelectionFieldType::Required(_) => unreachable!(),
-                SelectionFieldType::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
-                SelectionFieldType::EdgeOf(wrapped, _) => format!("sparko_graphql::types::EdgeOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
+                SelectionFieldType::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(selection_manager, schema, nonnull, true)), // Force nonnull so we dobt generate Vec<Option<foo>>
+                SelectionFieldType::EdgeOf(wrapped, _) => format!("sparko_graphql::types::EdgeOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
                 SelectionFieldType::PageInfo => format!("sparko_graphql::types::PageInfo"),
                 SelectionFieldType::ForwardPageInfo => format!("sparko_graphql::types::ForwardPageInfo"),
                 SelectionFieldType::ReversePageInfo => format!("sparko_graphql::types::ReversePageInfo"),
-                SelectionFieldType::PageOf(wrapped) => format!("sparko_graphql::types::PageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
-                SelectionFieldType::ForwardPageOf(wrapped) => format!("sparko_graphql::types::ForwardPageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
-                SelectionFieldType::ReversePageOf(wrapped) => format!("sparko_graphql::types::ReversePageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull)),
+                SelectionFieldType::PageOf(wrapped) => format!("sparko_graphql::types::PageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
+                SelectionFieldType::ForwardPageOf(wrapped) => format!("sparko_graphql::types::ForwardPageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
+                SelectionFieldType::ReversePageOf(wrapped) => format!("sparko_graphql::types::ReversePageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
             }
+        }
+
+        if let SelectionFieldType::Array(wrapped) = self {
+            println!("rust_type Array({:?}, nonnull={}, nonnull_once={})", wrapped, nonnull, nonnull_once);
+            nonnull_once = true; // Force nonnull so we don't generate Option<Vec<foo>>
         }
 
         if let SelectionFieldType::Required(wrapped) = self {
             do_rust_type(wrapped, selection_manager, schema, nonnull)
         }
         else {
-            if nonnull {
+            if nonnull || nonnull_once{
                 do_rust_type(self, selection_manager, schema, nonnull)
             }
             else {
@@ -815,7 +829,7 @@ impl SelectionField {
             // if self.selection_type.is_array() {
             //     writeln!(out, "#[serde(skip_serializing)]")?;
             // }
-            writeln!(out, "pub {}_: {}, // T1", field_name, self.selection_type.rust_type(selection_manager, schema, self.force_nonnull))
+            writeln!(out, "pub {}_: {}, // T1", field_name, self.selection_type.rust_type(selection_manager, schema, self.force_nonnull, false))
         }
         else {
             Ok(())
@@ -1227,7 +1241,7 @@ impl Scalar {
         writeln!(out, "}}")
     }
     
-    fn new(registry: &mut NameRegistry, parsed: &Rc<parsed_model::Scalar>, types: &HashMap<String, String>) -> TypeDefinition {
+    fn new(registry: &mut NameRegistry, parsed: &Rc<parsed_model::Scalar>, types: &IndexMap<String, String>) -> TypeDefinition {
         println!("&*parsed.name={}", &*parsed.name);
         let rust_name =  registry.intern(to_pascal_case(&parsed.name));
         let rust_type = if let Some(fqn) = types.get(&*parsed.name) {
@@ -1823,7 +1837,7 @@ impl Schema {
         }
     }
 
-    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Schema>, registry: &mut NameRegistry, types: &HashMap<String, String>) -> Result<Rc<Self>, Error> {
+    pub fn new(err: &mut ErrorCollector, parsed: &Rc<parsed_model::Schema>, registry: &mut NameRegistry, types: &IndexMap<String, String>) -> Result<Rc<Self>, Error> {
 
         let mut defined_types: IndexMap<Name, TypeDefinition> = IndexMap::new();
 
@@ -2906,7 +2920,7 @@ fn get_field<'a>(schema: &'a Rc<Schema>, fields: &'a SharedMap<Field>, name: &St
 
 #[derive(Debug)]
 pub struct SelectionContext {
-    pub imports: HashSet<usize>,
+    pub imports: IndexSet<usize>,
     pub schema_imports: IndexSet<Name>,
     pub names: IndexMap<Name, usize>,
 }
@@ -2914,7 +2928,7 @@ pub struct SelectionContext {
 impl SelectionContext {
     pub fn new() -> Self {
         SelectionContext {
-            imports: HashSet::new(),
+            imports: IndexSet::new(),
             schema_imports: IndexSet::new(),
             names: IndexMap::new(),
         }
@@ -3201,7 +3215,7 @@ impl NameSpaceManager {
         println!("insert {} {:?}", self.items.len(), &name);
 
         let mut variants: Vec<Rc<Variant>> = Vec::new();
-        // let mut other_interfce_map = HashMap::new();
+        // let mut other_interfce_map = IndexMap::new();
 
         for (type_condition, (name, fields)) in p_variants {
             let index = self.items.len();

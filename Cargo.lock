@@ -532,6 +532,7 @@ checksum = "62f822373a4fe84d4bb149bf54e584a7f4abec90e072ed49cda0edea5b95471f"
 dependencies = [
  "equivalent",
  "hashbrown",
+ "serde",
 ]
 
 [[package]]
@@ -1239,9 +1240,10 @@ dependencies = [
 
 [[package]]
 name = "sparko_graphql"
-version = "0.4.0"
+version = "0.4.2"
 dependencies = [
  "display_json",
+ "indexmap",
  "once_cell",
  "reqwest 0.12.7",
  "serde",
