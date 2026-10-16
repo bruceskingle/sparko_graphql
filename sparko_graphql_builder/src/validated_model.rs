@@ -164,7 +164,7 @@ impl Selection {
             None => {
                 writeln!(out, "/* No variants */")?;
                 
-                writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
                 if *name != self.graphql_type_name {
                     writeln!(out, "#[serde(rename = \"{}\")]", self.graphql_type_name)?;
                 }
@@ -189,7 +189,7 @@ impl Selection {
                 if self.variants.len() < 2 && implemented_by.len() < 2 {
                     writeln!(out, "/* <2 variant */")?;
                     
-                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
                     if *name != self.graphql_type_name {
                         writeln!(out, "#[serde(rename = \"{}\")]", self.graphql_type_name)?;
                     }
@@ -217,7 +217,7 @@ impl Selection {
                     let abstract_name = Rc::new(format!("Abstract{}", name));
                     let base_type_name = to_pascal_case(name);
                     let base_member_name = to_snake_case(name);
-                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
                     writeln!(out, "#[serde(tag = \"{}\")]", TYPE_NAME)?;
                     writeln!(out, "pub enum {} {{", base_type_name)?;
 
@@ -280,7 +280,7 @@ impl Selection {
                         writeln!(out, "")?;
                     }
         
-                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
                     writeln!(out, "pub struct {} {{", abstract_name)?;
             
                     {
@@ -312,7 +312,7 @@ impl Selection {
                         let rust_variant_name = to_pascal_case(&variant_name);
         
                         writeln!(out, "// Variant names {:?}", variant.name)?;
-                        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
                         writeln!(out, "#[serde(rename = \"{}\")]", variant_name)?;
                         writeln!(out, "pub struct {} {{", rust_variant_name)?;
                 
@@ -1352,11 +1352,11 @@ impl Object {
 fn generate_struct(out: &mut Output<'_>, name: &Name, rust_name: &Name, context: &dyn Context, is_input: bool) -> Result<(), Error> {
    
 
-    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
     if name != rust_name {
         writeln!(out, "#[serde(rename = \"{}\")]", name)?;
     }
-    writeln!(out, "/* BRUCE */ pub struct {} {{", rust_name)?;
+    writeln!(out, "pub struct {} {{", rust_name)?;
 
     for field in context.fields().values() {
         writeln!(out, "    #[serde(rename = \"{}\")]", &field.parsed.name)?;
@@ -1604,7 +1604,7 @@ impl Enum {
     }
     
     fn generate(&self, out: &mut Output<'_>) -> Result<(), Error> {
-        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Eq, PartialEq, Clone)]")?;
         if self.parsed.name != self.rust_name {
             writeln!(out, "#[serde(rename = \"{}\")]", self.parsed.name)?;
         }
@@ -2521,7 +2521,7 @@ impl GenericOperation {
             writeln!(out, r#"
 use display_json::DisplayAsJsonPretty;
 use serde::{{Deserialize, Serialize}};
-use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
+use sparko_graphql::{{GraphQLResponse, GraphQLQuery, GraphQLQueryBuilder}};
 "#
             )?;
 
@@ -2753,7 +2753,21 @@ use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
                         writeln!(out, "}}")?;
                         writeln!(out, "")?;
                     }
-                    writeln!(out, "pub fn build(self) -> Result<{}, sparko_graphql::error::Error> {{", self.parsed.operation)?;
+                }
+
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+
+                writeln!(out, "//Site 1")?;
+                writeln!(out, "impl GraphQLQueryBuilder<{}, Response> for {}Builder {{", self.parsed.operation, self.parsed.operation)?;
+
+
+                {
+                    let mut out = out.indent();
+
+
+
+                    writeln!(out, "fn build(self) -> Result<{}, sparko_graphql::error::Error> {{", self.parsed.operation)?;
                     {
                         let mut out = out.indent();
         

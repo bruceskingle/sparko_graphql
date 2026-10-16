@@ -1,21 +1,21 @@
 use display_json::DisplayAsJsonPretty;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ForwardPageInfo {
     pub end_cursor: Option<String>,
     pub has_next_page: bool
 }
 
-#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ReversePageInfo {
     pub start_cursor: Option<String>,
     pub has_previous_page: bool
 }
 
-#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]
+#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PageInfo {
     pub start_cursor: Option<String>,
@@ -38,7 +38,7 @@ pub struct PageInfo {
 //     pub first: Int
 // }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ForwardPageOf<T> 
 {
@@ -101,7 +101,7 @@ impl<'a, T> Iterator for RefForwardPageOfIterator<'a, T> {
   }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ReversePageOf<T> 
 {
@@ -164,7 +164,7 @@ impl<'a, T> Iterator for RefReversePageOfIterator<'a, T> {
   }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PageOf<T> 
 {
@@ -227,7 +227,7 @@ impl<'a, T> Iterator for RefPageOfIterator<'a, T> {
   }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct  EdgeOf<T>
 {

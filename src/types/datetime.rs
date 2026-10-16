@@ -17,7 +17,7 @@ static FORMAT: format_description::well_known::Rfc3339 = format_description::wel
 
 
 /// A GraphQL OffsetDateTime value
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct DateTime(pub(crate) time::OffsetDateTime);
 
 impl DateTime {
