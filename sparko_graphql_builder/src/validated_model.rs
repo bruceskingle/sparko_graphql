@@ -2469,12 +2469,13 @@ impl GenericOperation {
                 parsed_model::Selection::InlineFragment(inline_fragment_spread) => {
 
                     if let Some(type_condition) = &inline_fragment_spread.type_condition {
-                        let object = schema.get_object(type_condition)?;
+                        // let object = schema.get_object(type_condition)?;
+                        let fields = schema.get_object_or_interface_fields(type_condition)?;
 
                         Self::gather_dependencies(err, registry, selection_manager, &inline_fragment_spread.selections, schema, fragments, 
                             // Some((type_condition.clone(), type_condition.clone())),
                             Some(Self::get_type_conditions(type_condition, type_condition, &selection_builder.implemented_by, schema)?), 
-                            &object.fields, selection_builder)?;
+                            &fields, selection_builder)?;
                     }
                     else {
                         // anonymous inline spread is essentially a no op nesting
