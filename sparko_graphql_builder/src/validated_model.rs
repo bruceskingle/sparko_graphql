@@ -2255,7 +2255,7 @@ impl GenericOperation {
         if response.is_pagination_internal() {
             println!("\n\n UNUSED RESPONSE");
 
-            selection_manager.bruce(response);
+            selection_manager.materialize_unused_pagination_response(response);
         }
 
         err.ok(GenericOperation {
@@ -3370,26 +3370,20 @@ impl NameSpaceManager {
         }
     }
     
-    fn bruce(&mut self, response: SelectionFieldType) {
-        if response.is_pagination_internal() {
-            if let Some((wrapped, selection_creation_params)) = match response {
-                SelectionFieldType::EdgeOf(selection_field_type, selection_creation_params) => Some((selection_field_type, selection_creation_params)),
-                // SelectionFieldType::PageInfo => todo!(),
-                // SelectionFieldType::ForwardPageInfo => todo!(),
-                // SelectionFieldType::ReversePageInfo => todo!(),
-                _ => None,
-            } {
-                if let SelectionFieldType::Selection(index) = SelectionFieldType::remove_wrapper(&wrapped).as_ref() {
-                    println!("\n\n UNUSED RESPONSE insert {}", index);
-                    self.insert(selection_creation_params.graphql_type_name, selection_creation_params.name, selection_creation_params.fields, selection_creation_params.p_variants, selection_creation_params.implemented_by);
-
-
-
-                    // self.items.push( NameSpaceItem::Selection(content));
-                    // self.get_context_mut().imports.insert(index.clone());
-                }
+    // A top level Response which was detected as a pagination type will never be absorbed by an enclosing
+    // PageOf, so insert it as a regular selection using the saved creation params.
+    fn materialize_unused_pagination_response(&mut self, response: SelectionFieldType) {
+        if let Some((wrapped, selection_creation_params)) = match response {
+            SelectionFieldType::EdgeOf(selection_field_type, selection_creation_params) => Some((selection_field_type, selection_creation_params)),
+            // SelectionFieldType::PageInfo => todo!(),
+            // SelectionFieldType::ForwardPageInfo => todo!(),
+            // SelectionFieldType::ReversePageInfo => todo!(),
+            _ => None,
+        } {
+            if let SelectionFieldType::Selection(index) = SelectionFieldType::remove_wrapper(&wrapped).as_ref() {
+                println!("\n\n UNUSED RESPONSE insert {}", index);
+                self.insert(selection_creation_params.graphql_type_name, selection_creation_params.name, selection_creation_params.fields, selection_creation_params.p_variants, selection_creation_params.implemented_by);
             }
-            
         }
     }
 }
