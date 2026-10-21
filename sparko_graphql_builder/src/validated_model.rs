@@ -788,7 +788,7 @@ impl SelectionFieldType {
         //     println!("rust_type EdgeOf({:?}, nonnull={}, nonnull_once={})", wrapped, nonnull, nonnull_once);
         //     nonnull_once = true; // Force nonnull so we don't generate Option<Vec<foo>>
         // }
-        if let SelectionFieldType::PageOf(wrapped) = self {
+        if let SelectionFieldType::PageOf(wrapped) | SelectionFieldType::ForwardPageOf(wrapped) | SelectionFieldType::ReversePageOf(wrapped) = self {
             println!("rust_type PageOf({:?}, nonnull={}, nonnull_once={})", wrapped, nonnull, nonnull_once);
             nonnull_once = true; // Force nonnull so we don't generate Option<Vec<foo>>
         }
