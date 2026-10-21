@@ -146,3 +146,20 @@ help: you can alternatively desugar to a normal `fn` that returns `impl Future` 
     // // async fn authenticate(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
     // fn authenticate(&self) -> impl std::future::Future<Output = Result<Arc<String>, Error>> + Send;
 }
+
+/// Something which can execute a GraphQL query, so that code which makes queries does not depend on how requests are
+/// made or authenticated, and can be given a fake in tests.
+///
+/// The returned futures are not required to be Send, because that would require every query type to be Sync.
+pub trait GraphQLCaller {
+    /// Execute a query with an optional bearer token. A caller which provides its own token, such as
+    /// AuthenticatedRequestManager, uses that in place of None.
+    fn call2<Q: crate::GraphQLQuery<R>, R: crate::GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>)
+        -> impl std::future::Future<Output = Result<R, crate::Error>>;
+
+    /// Execute a query, with whatever authentication this caller provides.
+    fn call<Q: crate::GraphQLQuery<R>, R: crate::GraphQLResponse>(&self, query: &Q)
+        -> impl std::future::Future<Output = Result<R, crate::Error>> {
+        self.call2(query, None)
+    }
+}

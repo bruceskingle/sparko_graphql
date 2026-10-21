@@ -5,7 +5,7 @@ use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
 use serde::Serialize;
 
-use crate::{Error, GraphQLResponseStructure, GraphQLQuery, GraphQLResponse};
+use crate::{Error, GraphQLCaller, GraphQLResponseStructure, GraphQLQuery, GraphQLResponse};
 
 pub const DASHES: &str = "=======================================================================================================================";
 
@@ -56,7 +56,7 @@ impl RequestManager {
         println!("\n\n\n{} {}", message, DASHES);
     }
 
-    pub async fn call<Q: GraphQLQuery<R>, R: GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>) 
+    pub async fn call2<Q: GraphQLQuery<R>, R: GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>)
     -> Result<R, Error> {
 
         // println!("NEW query {}", &query);
@@ -160,5 +160,13 @@ impl RequestManager {
         // }
 
 
+    }
+}
+
+/// call is unauthenticated, wrap the RequestManager in an AuthenticatedRequestManager for authenticated calls.
+impl GraphQLCaller for RequestManager {
+    fn call2<Q: GraphQLQuery<R>, R: GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>)
+        -> impl std::future::Future<Output = Result<R, Error>> {
+        RequestManager::call2(self, query, token)
     }
 }
