@@ -41,7 +41,7 @@ impl Date {
       }
       else {
         // This is the corner case where the date is the last day of the rust universe, don't worry about the details, just enjoy the view.....
-        DateTime::from_date_time(self.0, time::Time::from_hms_nano(23, 59, 59, 999999999).unwrap())
+        DateTime::from_date_and_time(self.0, time::Time::from_hms_nano(23, 59, 59, 999999999).unwrap())
       }
     }
 

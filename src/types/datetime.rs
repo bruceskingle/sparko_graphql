@@ -2,7 +2,7 @@ use std::fmt::{self, Display};
 use std::ops::Deref;
 use std::str::FromStr;
 
-use time_tz::OffsetDateTimeExt;
+use time_tz::{OffsetDateTimeExt, Tz};
 
 use serde::{Deserializer, Serialize, Serializer};
 use serde::de::{self, Visitor};
@@ -23,6 +23,10 @@ pub struct DateTime(pub(crate) time::OffsetDateTime);
 impl DateTime {
   pub fn now_utc() -> DateTime {
     DateTime (time::OffsetDateTime::now_utc())
+  }
+
+  pub fn now(tz: &Tz) -> DateTime {
+    DateTime (time::OffsetDateTime::now_utc().to_timezone(tz))
   }
 
   pub fn to_date(&self) -> Date {
@@ -65,13 +69,17 @@ impl DateTime {
     ))
   }
 
-  pub fn from_date_time(date: time::Date, time: time::Time) -> DateTime {
+  pub fn from_date_and_time(date: time::Date, time: time::Time) -> DateTime {
     DateTime(
       time::OffsetDateTime::new_utc(
         date, 
         time
       )
     )
+  }
+
+  pub fn from_offset_date_time(date_time: time::OffsetDateTime) -> DateTime {
+    DateTime(date_time)
   }
 
   pub fn to_timezone(&self, tz: &time_tz::Tz) -> DateTime {

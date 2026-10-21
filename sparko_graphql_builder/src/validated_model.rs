@@ -26,11 +26,19 @@ impl Optionality {
         }
     }
 
-
     pub fn optional_by_default(&self) -> Optionality {
         match self {
             Optionality::Optional => Optionality::Optional,
             Optionality::Default => Optionality::Optional,
+            Optionality::Required => Optionality::Required,
+        }
+    }
+
+    // called for array types when resolvingthe wrapped type
+    pub fn nested(&self) -> Optionality {
+        match self {
+            Optionality::Optional => Optionality::Default,
+            Optionality::Default => Optionality::Default,
             Optionality::Required => Optionality::Required,
         }
     }
@@ -450,6 +458,12 @@ impl SelectionBuilder {
         //     b.keys()
         // };
 
+        println!("BRUCE1: {}", self.graphql_type_name);
+
+        if &*self.graphql_type_name == "MeasurementEdge" {
+            println!("BRUCE2");
+        }
+
         let mut meta_map = Vec::new();
 
         meta_map.push(&self.fields);
@@ -749,14 +763,22 @@ impl SelectionFieldType {
                 SelectionFieldType::PageInfo => format!("sparko_graphql::types::PageInfo"),
                 SelectionFieldType::ForwardPageInfo => format!("sparko_graphql::types::ForwardPageInfo"),
                 SelectionFieldType::ReversePageInfo => format!("sparko_graphql::types::ReversePageInfo"),
-                SelectionFieldType::PageOf(wrapped) => format!("sparko_graphql::types::PageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
-                SelectionFieldType::ForwardPageOf(wrapped) => format!("sparko_graphql::types::ForwardPageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
-                SelectionFieldType::ReversePageOf(wrapped) => format!("sparko_graphql::types::ReversePageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
+                SelectionFieldType::PageOf(wrapped) => format!("sparko_graphql::types::PageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, true)),
+                SelectionFieldType::ForwardPageOf(wrapped) => format!("sparko_graphql::types::ForwardPageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, true)),
+                SelectionFieldType::ReversePageOf(wrapped) => format!("sparko_graphql::types::ReversePageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, true)),
             }
         }
 
         if let SelectionFieldType::Array(wrapped) = self {
             println!("rust_type Array({:?}, nonnull={}, nonnull_once={})", wrapped, nonnull, nonnull_once);
+            nonnull_once = true; // Force nonnull so we don't generate Option<Vec<foo>>
+        }
+        // if let SelectionFieldType::EdgeOf(wrapped, params) = self {
+        //     println!("rust_type EdgeOf({:?}, nonnull={}, nonnull_once={})", wrapped, nonnull, nonnull_once);
+        //     nonnull_once = true; // Force nonnull so we don't generate Option<Vec<foo>>
+        // }
+        if let SelectionFieldType::PageOf(wrapped) = self {
+            println!("rust_type PageOf({:?}, nonnull={}, nonnull_once={})", wrapped, nonnull, nonnull_once);
             nonnull_once = true; // Force nonnull so we don't generate Option<Vec<foo>>
         }
 
@@ -1127,10 +1149,10 @@ impl Type {
         };
 
         if let Optionality::Optional = new_optionality {
-            format!("Option<{}>", do_rust_type(new_type, optionality))
+            format!("Option<{}>", do_rust_type(new_type, optionality.nested()))
         }
         else {
-            do_rust_type(new_type, optionality)
+            do_rust_type(new_type, optionality.nested())
         }
     }
     
@@ -2733,7 +2755,7 @@ use sparko_graphql::{{GraphQLResponse, GraphQLQuery, GraphQLQueryBuilder}};
                 writeln!(out, "pub struct {}Builder {{", self.parsed.operation)?;
         
                 for field in self.variables.values() {
-                    writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Optional))?;
+                    writeln!(out, "/* Bruce 1 */    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Optional))?;
                 }
             
                 writeln!(out, "}}")?;
