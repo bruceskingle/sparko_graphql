@@ -31,6 +31,9 @@ pub use date_range::DateRange;
 pub mod datetime;
 pub use datetime::DateTime;
 
+pub mod currency;
+pub use currency::Currency;
+
 pub mod boolean;
 pub use boolean::Boolean;
 

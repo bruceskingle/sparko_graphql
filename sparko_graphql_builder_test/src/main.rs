@@ -33,3 +33,43 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use sparko_graphql::types::Currency;
+
+    use super::example::example::get_example::get_luke::Response;
+
+    #[test]
+    fn test_currency_field() {
+        let response: Response = serde_json::from_str(r#"{
+            "oneOfEverything": {
+                "string": "s",
+                "optionalAmount": null,
+                "optionalString": null,
+                "currency": "GBP",
+                "optionalCurrency": null
+            }
+        }"#).unwrap();
+        let one_of_everything = response.one_of_everything_.unwrap();
+
+        assert_eq!(one_of_everything.currency_, "GBP".parse::<Currency>().unwrap());
+        assert_eq!(one_of_everything.currency_.symbol(), "£");
+        assert_eq!(one_of_everything.optional_currency_, None);
+
+        let serialized = serde_json::to_string(&one_of_everything).unwrap();
+        assert!(serialized.contains(r#""currency":"GBP""#), "{}", serialized);
+    }
+
+    #[test]
+    fn test_invalid_currency_field() {
+        let result: Result<Response, serde_json::Error> = serde_json::from_str(r#"{
+            "oneOfEverything": {
+                "string": "s",
+                "currency": "Pounds"
+            }
+        }"#);
+
+        assert!(result.is_err());
+    }
+}

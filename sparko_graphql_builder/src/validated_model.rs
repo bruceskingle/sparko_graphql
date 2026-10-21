@@ -588,6 +588,7 @@ impl SelectionBuilder {
 #[derive(Debug)]
 pub enum SelectionFieldType {
     BuiltinType(BuiltinType),
+    Currency,
     Scalar(Name),
     Enum(Name),
     Selection(usize),
@@ -608,6 +609,14 @@ impl Isomorphic for SelectionFieldType {
             SelectionFieldType::BuiltinType(builtin_type) => {
                 if let SelectionFieldType::BuiltinType(other_type) = other {
                     builtin_type == other_type
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::Currency => {
+                if let SelectionFieldType::Currency = other {
+                    true
                 }
                 else {
                     false
@@ -717,6 +726,7 @@ impl Display for SelectionFieldType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SelectionFieldType::BuiltinType(content) => content.fmt(f),
+            SelectionFieldType::Currency => write!(f, "Currency"),
             SelectionFieldType::Scalar(content) => content.fmt(f),
             SelectionFieldType::Enum(content) => content.fmt(f),
             SelectionFieldType::Selection(content) => content.fmt(f),
@@ -750,6 +760,7 @@ impl SelectionFieldType {
             println!("do_rust_type({:?}, nonnull={}", input, nonnull);
             match input {
                 SelectionFieldType::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
+                SelectionFieldType::Currency => "sparko_graphql::types::Currency".to_string(),
                 SelectionFieldType::Scalar(name) => schema.defined_types.get(name).unwrap().rust_name().to_string(),
                 SelectionFieldType::Enum(name) => schema.defined_types.get(name).unwrap().rust_name().to_string(),
                 SelectionFieldType::Selection(id) => {
@@ -810,6 +821,7 @@ impl SelectionFieldType {
             SelectionFieldType::ForwardPageInfo => true,
             SelectionFieldType::ReversePageInfo => true,
             SelectionFieldType::BuiltinType(_) => false,
+            SelectionFieldType::Currency => false,
             SelectionFieldType::Scalar(_) => false,
             SelectionFieldType::Enum(_) => false,
             SelectionFieldType::Selection(_) => false,
@@ -2363,6 +2375,10 @@ impl GenericOperation {
                     let field_name  = if let Some(alias) = &selection_field.alias { alias } else {&selection_field.name};
                     println!("!!     field {:?}", field_name);
                     if let Some(field) = get_field(schema, fields, &selection_field.name) {
+                        if selection_field.currency && *field.ty.get_scalar() != ScalarType::BuiltinType(BuiltinType::String) {
+                            err.error(BuildError::TypeMismatchError(selection_field.position.clone(),
+                                format!("@ms_currency can only be applied to a String field but {} is {}", selection_field.name, field.ty)));
+                        }
                         selection_builder.with_field(&optional_type_conditions,  &field_name, 
                             Self::wrap_type(&field.ty, 
                                 match field.ty.get_scalar() {
@@ -2453,7 +2469,13 @@ impl GenericOperation {
 
                                     SelectionField {
                                         name: field_name.clone(), 
-                                        selection_type: Rc::new(SelectionFieldType::BuiltinType(builtin_type.clone())),
+                                        selection_type: Rc::new(
+                                            if selection_field.currency && *builtin_type == BuiltinType::String {
+                                                SelectionFieldType::Currency
+                                            }
+                                            else {
+                                                SelectionFieldType::BuiltinType(builtin_type.clone())
+                                            }),
                                         force_nonnull: selection_field.force_nonnull,
                                     }
                                 }
