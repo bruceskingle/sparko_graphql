@@ -1,0 +1,4 @@
+query RootPageInfo {
+  endCursor: cursor
+  hasNextPage: more
+}

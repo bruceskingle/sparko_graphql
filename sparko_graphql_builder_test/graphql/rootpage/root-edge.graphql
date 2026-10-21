@@ -1,0 +1,7 @@
+query RootEdge {
+  cursor
+  node {
+    id
+    name
+  }
+}

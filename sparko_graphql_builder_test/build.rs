@@ -54,6 +54,13 @@ mod create_info {{
         .with_query("graphql/swapi/fragment.graphql", "fragment")
         .build()?;
 
+    sparko_graphql_builder::builder("rootpage")
+        .with_schema("graphql/rootpage/schema.graphql")
+        .with_query("graphql/rootpage/root-edge.graphql", "root-edge")
+        .with_query("graphql/rootpage/root-page.graphql", "root-page")
+        .with_query("graphql/rootpage/root-page-info.graphql", "root-page-info")
+        .build()?;
+
     sparko_graphql_builder::builder("octopus")
         .with_type("Date", "sparko_graphql::types::Date")
         .with_type("DateTime", "sparko_graphql::types::DateTime")

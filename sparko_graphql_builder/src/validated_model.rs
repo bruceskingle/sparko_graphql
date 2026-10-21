@@ -377,10 +377,11 @@ pub struct SelectionBuilder {
     pub fields: IndexMap<Name, SelectionField>,
     pub variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>,
     pub implemented_by: Option<Vec<Name>>,
+    pub detect_pagination: bool,
 }
 
 impl SelectionBuilder {
-    pub fn new(graphql_type_name: Name, preferred_type_name: Name, implemented_by: &Option<Vec<Name>>) -> SelectionBuilder {
+    pub fn new(graphql_type_name: Name, preferred_type_name: Name, implemented_by: &Option<Vec<Name>>, detect_pagination: bool) -> SelectionBuilder {
         // println!("SelectionBuilder new");
         SelectionBuilder {
             graphql_type_name,
@@ -388,6 +389,7 @@ impl SelectionBuilder {
             fields: IndexMap::new(),
             variants: IndexMap::new(),
             implemented_by: implemented_by.clone(),
+            detect_pagination,
         }
     }
 
@@ -442,8 +444,36 @@ impl SelectionBuilder {
         //     println!("fields {:?}", self.fields);
         //     println!("variants {:?}", self.variants);
         // }
-        // Recognise pagination
+        if self.detect_pagination {
+            if let Some(pagination_type) = self.pagination_type() {
+                return pagination_type;
+            }
+        }
 
+        // check for unused pagination types:
+
+        for field in self.fields.values() {
+            if field.selection_type.is_pagination_internal() {
+                println!("\n\nUNUSED    {}", &field.name);
+            }
+           
+        }
+
+        for (_cond, variant) in self.variants.values() {
+            for field in variant.values() {
+                if field.selection_type.is_pagination_internal() {
+                    println!("\n\nUNUSED    {}", &field.name);
+                }
+            }
+        }
+
+        let index = manager.insert(self.graphql_type_name, self.preferred_type_name, self.fields, self.variants, self.implemented_by);
+
+        SelectionFieldType::Selection(index)
+    }
+
+    // Recognise Relay style pagination types (EdgeOf, PageInfo, PageOf etc)
+    fn pagination_type(&self) -> Option<SelectionFieldType> {
         let mut has_cursor = false;
         let mut cantbe_page_of = false;
         let mut cantbe_edge_of = false;
@@ -515,20 +545,20 @@ impl SelectionBuilder {
 
         if cantbe_page_of==false && page_of_type.is_some() {
             if let Some(page_type) =  page_of_type {
-                if let SelectionFieldType::EdgeOf(selection_field_type, _) = page_type.as_ref() {
+                if let SelectionFieldType::EdgeOf(selection_field_type) = page_type.as_ref() {
                     if let Some(page_info) = page_info_type {
                         match page_info.as_ref() {
                             SelectionFieldType::PageInfo => {
                                 println!("!! Its PageOf<{:?}>", &selection_field_type);
-                                return SelectionFieldType::PageOf(selection_field_type.clone())
+                                return Some(SelectionFieldType::PageOf(selection_field_type.clone()))
                             },
                             SelectionFieldType::ForwardPageInfo => {
                                 println!("!! Its ForwardPageOf<{:?}>", &selection_field_type);
-                                return SelectionFieldType::ForwardPageOf(selection_field_type.clone())
+                                return Some(SelectionFieldType::ForwardPageOf(selection_field_type.clone()))
                             },
                             SelectionFieldType::ReversePageInfo => {
                                 println!("!! Its ReversePageOf<{:?}>", &selection_field_type);
-                                return SelectionFieldType::ReversePageOf(selection_field_type.clone())
+                                return Some(SelectionFieldType::ReversePageOf(selection_field_type.clone()))
                             },
                             _ => {}
                         }
@@ -545,43 +575,24 @@ impl SelectionBuilder {
 
             if maybe_forward_page && maybe_reverse_page {
                 println!("!! Its PageInfo");
-                return SelectionFieldType::PageInfo;
+                return Some(SelectionFieldType::PageInfo);
             }
             else if maybe_forward_page {
                 println!("!! Its ForwardPageInfo");
-                return SelectionFieldType::ForwardPageInfo;
+                return Some(SelectionFieldType::ForwardPageInfo);
             }
             else if maybe_reverse_page {
                 println!("!! Its ReversePageInfo");
-                return SelectionFieldType::ReversePageInfo;
+                return Some(SelectionFieldType::ReversePageInfo);
             }
         }
 
         if cantbe_edge_of==false && has_cursor && edge_of_type.is_some() {
             println!("!! ItsEdgeOf<{:?}>", edge_of_type.as_ref());
-            return SelectionFieldType::EdgeOf(edge_of_type.unwrap(), SelectionCreationParams::new(self.graphql_type_name, self.preferred_type_name, self.fields, self.variants, self.implemented_by))
+            return Some(SelectionFieldType::EdgeOf(edge_of_type.unwrap()))
         }
 
-        // check for unused pagination types:
-
-        for field in self.fields.values() {
-            if field.selection_type.is_pagination_internal() {
-                println!("\n\nUNUSED    {}", &field.name);
-            }
-           
-        }
-
-        for (_cond, variant) in self.variants.values() {
-            for field in variant.values() {
-                if field.selection_type.is_pagination_internal() {
-                    println!("\n\nUNUSED    {}", &field.name);
-                }
-            }
-        }
-
-        let index = manager.insert(self.graphql_type_name, self.preferred_type_name, self.fields, self.variants, self.implemented_by);
-
-        SelectionFieldType::Selection(index)
+        None
     }
 }
 
@@ -594,7 +605,7 @@ pub enum SelectionFieldType {
     Selection(usize),
     Required(Rc<SelectionFieldType>),
     Array(Rc<SelectionFieldType>),
-    EdgeOf(Rc<SelectionFieldType>, SelectionCreationParams),
+    EdgeOf(Rc<SelectionFieldType>),
     PageInfo,
     ForwardPageInfo,
     ReversePageInfo,
@@ -662,8 +673,8 @@ impl Isomorphic for SelectionFieldType {
                     false
                 }
             },
-            SelectionFieldType::EdgeOf(selection_field_type, _selection_creation_params) => {
-                if let SelectionFieldType::EdgeOf(other_field_type, _other_creation_params) = other {
+            SelectionFieldType::EdgeOf(selection_field_type) => {
+                if let SelectionFieldType::EdgeOf(other_field_type) = other {
                     selection_field_type.is_isomorphic(other_field_type)
                 }
                 else {
@@ -732,7 +743,7 @@ impl Display for SelectionFieldType {
             SelectionFieldType::Selection(content) => content.fmt(f),
             SelectionFieldType::Required(wrapped) => write!(f, "{}!", wrapped),
             SelectionFieldType::Array(wrapped) => write!(f, "[{}]", wrapped),
-            SelectionFieldType::EdgeOf(wrapped, _) => write!(f, "EdgeOf<{}>", wrapped),
+            SelectionFieldType::EdgeOf(wrapped) => write!(f, "EdgeOf<{}>", wrapped),
             SelectionFieldType::PageInfo => write!(f, "PageInfo"),
             SelectionFieldType::ForwardPageInfo => write!(f, "ForwardPageInfo"),
             SelectionFieldType::ReversePageInfo => write!(f, "ReversePageInfo"),
@@ -770,7 +781,7 @@ impl SelectionFieldType {
                 },
                 SelectionFieldType::Required(_) => unreachable!(),
                 SelectionFieldType::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(selection_manager, schema, nonnull, true)), // Force nonnull so we dobt generate Vec<Option<foo>>
-                SelectionFieldType::EdgeOf(wrapped, _) => format!("sparko_graphql::types::EdgeOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
+                SelectionFieldType::EdgeOf(wrapped) => format!("sparko_graphql::types::EdgeOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
                 SelectionFieldType::PageInfo => format!("sparko_graphql::types::PageInfo"),
                 SelectionFieldType::ForwardPageInfo => format!("sparko_graphql::types::ForwardPageInfo"),
                 SelectionFieldType::ReversePageInfo => format!("sparko_graphql::types::ReversePageInfo"),
@@ -816,7 +827,7 @@ impl SelectionFieldType {
     
     fn is_pagination_internal(&self) -> bool {
         match self {
-            SelectionFieldType::EdgeOf(_,_) => true,
+            SelectionFieldType::EdgeOf(_) => true,
             SelectionFieldType::PageInfo => true,
             SelectionFieldType::ForwardPageInfo => true,
             SelectionFieldType::ReversePageInfo => true,
@@ -2249,14 +2260,9 @@ impl GenericOperation {
 
         let fields = Self::get_fields(err, &parsed.operation, &parsed.name, &parsed.position, schema)?;
         let name = registry.intern_str("Response");
-        let response = Self::create_selection(err, registry, selection_manager, schema, fragments, 
-            name.clone(), name, &parsed.selections, fields, &None)?;
-
-        if response.is_pagination_internal() {
-            println!("\n\n UNUSED RESPONSE");
-
-            selection_manager.materialize_unused_pagination_response(response);
-        }
+        // The Response is never treated as a pagination type, even if its fields look like one, because nothing would absorb it.
+        Self::create_selection(err, registry, selection_manager, schema, fragments, 
+            name.clone(), name, &parsed.selections, fields, &None, false)?;
 
         err.ok(GenericOperation {
                 parsed: parsed.clone(),
@@ -2283,10 +2289,10 @@ impl GenericOperation {
     }
     
     fn create_selection(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
-        preferred_type_name: Name, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap, implemented_by: &Option<Vec<Name>>) -> Result<SelectionFieldType, Error>
+        preferred_type_name: Name, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap, implemented_by: &Option<Vec<Name>>, detect_pagination: bool) -> Result<SelectionFieldType, Error>
     {
         println!("!! create_selection {} gather dependencies", &graphql_type_name);
-        let mut selection_builder = SelectionBuilder::new(graphql_type_name, preferred_type_name, implemented_by);
+        let mut selection_builder = SelectionBuilder::new(graphql_type_name, preferred_type_name, implemented_by, detect_pagination);
 
         Self::gather_dependencies(err, registry, selection_manager, selections, schema, fragments, None, fields, &mut selection_builder)?;
 
@@ -2296,7 +2302,7 @@ impl GenericOperation {
     fn create_selection_field(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
         field_name: Name, preferred_type_name: Name, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, force_nonnull: bool, fields: &FieldMap, implemented_by: &Option<Vec<Name>>) -> Result<SelectionField, Error>
     {
-        let selection_type = Rc::new(Self::create_selection(err, registry, selection_manager, schema, fragments, preferred_type_name, graphql_type_name, selections, fields, implemented_by)?);
+        let selection_type = Rc::new(Self::create_selection(err, registry, selection_manager, schema, fragments, preferred_type_name, graphql_type_name, selections, fields, implemented_by, true)?);
    
         Ok(SelectionField {
             name: field_name,
@@ -3367,40 +3373,6 @@ impl NameSpaceManager {
         }
         else {
             panic!("Cant find selection {}", id);
-        }
-    }
-    
-    // A top level Response which was detected as a pagination type will never be absorbed by an enclosing
-    // PageOf, so insert it as a regular selection using the saved creation params.
-    fn materialize_unused_pagination_response(&mut self, response: SelectionFieldType) {
-        if let Some((wrapped, selection_creation_params)) = match response {
-            SelectionFieldType::EdgeOf(selection_field_type, selection_creation_params) => Some((selection_field_type, selection_creation_params)),
-            // SelectionFieldType::PageInfo => todo!(),
-            // SelectionFieldType::ForwardPageInfo => todo!(),
-            // SelectionFieldType::ReversePageInfo => todo!(),
-            _ => None,
-        } {
-            if let SelectionFieldType::Selection(index) = SelectionFieldType::remove_wrapper(&wrapped).as_ref() {
-                println!("\n\n UNUSED RESPONSE insert {}", index);
-                self.insert(selection_creation_params.graphql_type_name, selection_creation_params.name, selection_creation_params.fields, selection_creation_params.p_variants, selection_creation_params.implemented_by);
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SelectionCreationParams {
-    graphql_type_name: Name, name: Name, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, implemented_by: Option<Vec<Name>>,
-}
-
-impl SelectionCreationParams {
-    fn new(graphql_type_name: Name, name: Name, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, implemented_by: Option<Vec<Name>>,) -> SelectionCreationParams {
-        SelectionCreationParams{
-            graphql_type_name,
-            name,
-            fields,
-            p_variants,
-            implemented_by
         }
     }
 }
