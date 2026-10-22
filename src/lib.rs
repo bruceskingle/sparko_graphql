@@ -8,7 +8,7 @@ pub use error::{Error, GraphQLJsonError};
 
 pub mod types;
 mod traits;
-pub use traits::{ParamBuffer,GraphQLQueryParams,GraphQLType,TokenManager, GraphQLCaller, GraphQL, NoParams};
+pub use traits::{ParamBuffer,GraphQLQueryParams,GraphQLType,TokenManager, GraphQLCaller, ProgressMonitor, NoProgress, GraphQL, NoParams};
 
 mod request_manager;
 pub use request_manager::RequestManager;

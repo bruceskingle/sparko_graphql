@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{Error, GraphQLCaller, GraphQLQuery, GraphQLResponse, TokenManager};
+use crate::{Error, GraphQLCaller, GraphQLQuery, GraphQLResponse, ProgressMonitor, TokenManager};
 
 use crate::RequestManager;
 
@@ -25,15 +25,18 @@ impl<M: TokenManager, C: GraphQLCaller> AuthenticatedRequestManager<M, C> {
 
 impl<M: TokenManager, C: GraphQLCaller> GraphQLCaller for AuthenticatedRequestManager<M, C> {
     /// A token passed in is used as given, otherwise one is obtained from the token manager.
-    fn call2<Q: GraphQLQuery<R>, R: GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>)
+    fn call3<Q: GraphQLQuery<R>, R: GraphQLResponse, P: ProgressMonitor + ?Sized>(&self, query: &Q, token: Option<&Arc<String>>, progress: &P)
         -> impl std::future::Future<Output = Result<R, Error>> {
         async move {
             let token = match token {
                 Some(token) => token.clone(),
-                None => self.token_manager.get_authenticator(false).await?,
+                None => {
+                    progress.progress(String::from("Authenticating"));
+                    self.token_manager.get_authenticator(false).await?
+                },
             };
 
-            self.request_manager.call2(query, Some(&token)).await
+            self.request_manager.call3(query, Some(&token), progress).await
         }
     }
 }

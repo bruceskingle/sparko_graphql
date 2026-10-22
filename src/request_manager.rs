@@ -5,7 +5,7 @@ use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
 use serde::Serialize;
 
-use crate::{Error, GraphQLCaller, GraphQLResponseStructure, GraphQLQuery, GraphQLResponse};
+use crate::{Error, GraphQLCaller, GraphQLResponseStructure, GraphQLQuery, GraphQLResponse, ProgressMonitor};
 
 pub const DASHES: &str = "=======================================================================================================================";
 
@@ -56,7 +56,8 @@ impl RequestManager {
         println!("\n\n\n{} {}", message, DASHES);
     }
 
-    pub async fn call2<Q: GraphQLQuery<R>, R: GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>)
+    /// Called through GraphQLCaller::call3.
+    async fn execute<Q: GraphQLQuery<R>, R: GraphQLResponse, P: ProgressMonitor + ?Sized>(&self, query: &Q, token: Option<&Arc<String>>, progress: &P)
     -> Result<R, Error> {
 
         // println!("NEW query {}", &query);
@@ -87,6 +88,8 @@ impl RequestManager {
             request = request.header(reqwest::header::AUTHORIZATION, Self::header(token)?);
         }
 
+        progress.progress(format!("Sending {} request", payload.operation_name));
+
         let response = request
             .body(serde_json::to_string(&payload).unwrap())
             .send().await?;
@@ -113,7 +116,11 @@ impl RequestManager {
             return Err(Error::HttpError(status));
         }
 
+        progress.progress(format!("Reading {} response", payload.operation_name));
+
         let response_json: serde_json::Value = response.json().await?;
+
+        progress.progress(format!("Decoding {} response", payload.operation_name));
 
         if self.verbose {
             println!("\n{}\rResponse ", DASHES);
@@ -165,8 +172,8 @@ impl RequestManager {
 
 /// call is unauthenticated, wrap the RequestManager in an AuthenticatedRequestManager for authenticated calls.
 impl GraphQLCaller for RequestManager {
-    fn call2<Q: GraphQLQuery<R>, R: GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>)
+    fn call3<Q: GraphQLQuery<R>, R: GraphQLResponse, P: ProgressMonitor + ?Sized>(&self, query: &Q, token: Option<&Arc<String>>, progress: &P)
         -> impl std::future::Future<Output = Result<R, Error>> {
-        RequestManager::call2(self, query, token)
+        self.execute(query, token, progress)
     }
 }

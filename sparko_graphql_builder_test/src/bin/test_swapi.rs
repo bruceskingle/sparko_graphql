@@ -1,5 +1,5 @@
 use std::error::Error;
-use sparko_graphql::{GraphQLQuery, GraphQLResponse, RequestManager};
+use sparko_graphql::{GraphQLCaller, GraphQLQuery, GraphQLResponse, RequestManager};
 
 
 include!(concat!(env!("OUT_DIR"), "/swapi.rs"));
