@@ -112,10 +112,14 @@ impl RequestManager {
                 let redacted_payload = NewRequest { variables: redacted_json(&payload.variables), ..payload };
                 println!("{}",  &serde_json::to_string(&redacted_payload).unwrap());
 
-                let text = &(response).text().await;
-                println!("ERROR {}", text.as_ref().expect("No Response Body"));
             }
-            return Err(Error::HttpError(status));
+
+            // The body often explains the error, e.g. a CDN's page saying the request was blocked.
+            let text = response.text().await.unwrap_or_default();
+            if self.verbose {
+                println!("ERROR {}", text);
+            }
+            return Err(Error::HttpError(status, crate::error::response_summary(&text)));
         }
 
         progress.progress(format!("Reading {} response", payload.operation_name));
