@@ -5,6 +5,7 @@ use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
 use serde::Serialize;
 
+use crate::redact::{redact_secrets, redacted_json};
 use crate::{Error, GraphQLCaller, GraphQLResponseStructure, GraphQLQuery, GraphQLResponse, ProgressMonitor};
 
 pub const DASHES: &str = "=======================================================================================================================";
@@ -72,7 +73,7 @@ impl RequestManager {
             println!("\n{}\rQuery ", DASHES);
             println!("{}", &payload.query);
             println!("\n{}\rVariables ", DASHES);
-            println!("{}", &payload.variables);
+            println!("{}", redacted_json(&payload.variables));
             println!("{}", DASHES);
         }
         // let serialized = serde_json::to_string(&payload).unwrap();
@@ -105,10 +106,11 @@ impl RequestManager {
                 println!("{}", &query.get_query());
                 
                 Self::report_error("Variables");
-                println!("{}", query.get_variables()?);
+                println!("{}", redacted_json(&payload.variables));
                 
                 Self::report_error("Payload");
-                println!("{}",  &serde_json::to_string(&payload).unwrap());
+                let redacted_payload = NewRequest { variables: redacted_json(&payload.variables), ..payload };
+                println!("{}",  &serde_json::to_string(&redacted_payload).unwrap());
 
                 let text = &(response).text().await;
                 println!("ERROR {}", text.as_ref().expect("No Response Body"));
@@ -124,7 +126,9 @@ impl RequestManager {
 
         if self.verbose {
             println!("\n{}\rResponse ", DASHES);
-            println!("{}", serde_json::to_string_pretty(&response_json)?);
+            let mut redacted_response = response_json.clone();
+            redact_secrets(&mut redacted_response);
+            println!("{}", serde_json::to_string_pretty(&redacted_response)?);
             println!("{}", DASHES);
         }
 

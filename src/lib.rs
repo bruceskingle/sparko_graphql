@@ -10,6 +10,7 @@ pub mod types;
 mod traits;
 pub use traits::{ParamBuffer,GraphQLQueryParams,GraphQLType,TokenManager, GraphQLCaller, ProgressMonitor, NoProgress, GraphQL, NoParams};
 
+pub mod redact;
 mod request_manager;
 pub use request_manager::RequestManager;
 mod authenticated_request_manager;
