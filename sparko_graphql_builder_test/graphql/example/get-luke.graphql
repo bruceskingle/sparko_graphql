@@ -3,5 +3,7 @@ query GetLuke {
   	string
     optionalAmount @ms_optional
     optionalString
+    currency @ms_currency
+    optionalCurrency @ms_currency
   }
 }

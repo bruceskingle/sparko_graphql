@@ -89,6 +89,12 @@ type OneOfEverything {
     # Required String
     string: String!,
 
+    # Required currency code
+    currency: String!,
+
+    # Optional currency code
+    optionalCurrency: String,
+
     # Required Int
     amount: Int!,
 

@@ -956,6 +956,48 @@ r#"query GetPerson {
         panic!("Expected MissingFieldError");
     }
 
+    const CURRENCY_SCHEMA: &str = r#"
+schema {
+    query: Query
+}
+type Query {
+    price: Price
+}
+type Price {
+    amount: Int!
+    currency: String!
+}
+"#;
+
+    #[test]
+    fn test_currency() {
+        let out = test_query(CURRENCY_SCHEMA, 
+r#"query GetPrice {
+  price {
+    amount
+    currency @ms_currency
+  }
+}"#);
+        out.expect_ok();
+    }
+
+    #[test]
+    fn test_currency_non_string() {
+        let out = test_query(CURRENCY_SCHEMA, 
+r#"query GetPrice {
+  price {
+    amount @ms_currency
+    currency
+  }
+}"#);
+        
+        if let Some(BuildError::TypeMismatchError(..)) = out.expect_one_error() {
+            return;
+        }
+       out.report_errors();
+        panic!("Expected TypeMismatchError");
+    }
+
 
 
 

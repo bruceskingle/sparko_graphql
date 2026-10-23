@@ -1,5 +1,5 @@
 use std::error::Error;
-use sparko_graphql::{GraphQLQuery, GraphQLResponse, RequestManager};
+use sparko_graphql::{GraphQLCaller, GraphQLQuery, GraphQLResponse, RequestManager};
 
 
 include!(concat!(env!("OUT_DIR"), "/swapi.rs"));
@@ -16,7 +16,7 @@ async fn test<Q: GraphQLQuery<R>, R: GraphQLResponse>(query: &Q, request_manager
         // );
 
         if let Some(request_manager) = request_manager {
-            let response = request_manager.call(query, None).await?;
+            let response = request_manager.call2(query, None).await?;
             println!("Result {}", serde_json::to_string_pretty(&response)?);
         }
 
@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if let Some(request_manager) = request_manager {
         {
             let query = swapi::pagination::get_fim_people::Query::new();
-            let response = request_manager.call(&query, None).await?;
+            let response = request_manager.call2(&query, None).await?;
             println!("Result {}", serde_json::to_string_pretty(&response)?);
 
             for edge in &response.all_films_.edges_ {
@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         {
             let query = swapi::pagination::get_pagable_fim_people::Query::new();
-            let response = request_manager.call(&query, None).await?;
+            let response = request_manager.call2(&query, None).await?;
             println!("Result {}", serde_json::to_string_pretty(&response)?);
 
             for film in &response.all_films_ {

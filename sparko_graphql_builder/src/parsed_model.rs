@@ -18,6 +18,7 @@ use crate::TYPE_NAME;
 const MS_OPTIONAL: &str = "ms_optional";
 const MS_REQUIRED: &str = "ms_required";
 const MS_REQUIRED_BY_DEFAULT: &str = "ms_required_by_default";
+const MS_CURRENCY: &str = "ms_currency";
 
 pub type FieldMap = IndexMap<Name, Rc<Field>>;
 
@@ -958,6 +959,7 @@ pub struct SelectionField {
     pub alias: Option<Name>,
     pub position: Pos,
     pub force_nonnull: bool,
+    pub currency: bool,
     pub arguments: Vec<Rc<Argument>>,
     pub selections: Rc<SelectionList>,
 }
@@ -969,6 +971,7 @@ impl SelectionField {
 
         let mut force_nonnull = required_by_default;
         let mut new_required_by_default = required_by_default;
+        let mut currency = false;
         // println!("!! check {} directives", field.directives.len());
         for directive in field.directives {
             // println!("!! directive name = '{}' test '{}'", directive.name, MS_OPTIONAL);
@@ -985,6 +988,9 @@ impl SelectionField {
                     // println!("!! ITS MS_REQUIRED_BY_DEFAULT");
                     new_required_by_default = true;
                 },
+                MS_CURRENCY => {
+                    currency = true;
+                },
                 _ => {
                     err.warning(BuildWarning::UnsupportedDirective(directive.position, directive.name));
                 }
@@ -997,6 +1003,7 @@ impl SelectionField {
             alias: registry.intern_option(field.alias),
             position: field.position,
             force_nonnull,
+            currency,
             arguments: build_arguments(err, registry, field.arguments, field.position),
             selections: build_selections(err, registry, field.selection_set, new_required_by_default),
         }))
@@ -1010,6 +1017,7 @@ impl SelectionField {
             writeln!(out, "name:      {}", self.name)?;
             writeln!(out, "position:  {}", self.position)?;
             writeln!(out, "optional:  {}", self.force_nonnull)?;
+            writeln!(out, "currency:  {}", self.currency)?;
             writeln!(out, "arguments {{")?;
             {
                 let mut out = out.indent();

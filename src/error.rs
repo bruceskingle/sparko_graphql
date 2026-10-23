@@ -90,6 +90,12 @@ impl From<time::error::Parse> for Error {
     }
 }
 
+impl From<iso_currency::ParseCurrencyError> for Error {
+    fn from(err: iso_currency::ParseCurrencyError) -> Error {
+        Error::InvalidInputError(Arc::new(Box::new(err)))
+    }
+}
+
 impl From<reqwest::Error> for Error {
     fn from(err: reqwest::Error) -> Error {
         Error::IOError(Arc::new(err))

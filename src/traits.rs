@@ -146,3 +146,47 @@ help: you can alternatively desugar to a normal `fn` that returns `impl Future` 
     // // async fn authenticate(&mut self) -> Result<Arc<String>, Box<dyn StdError>>;
     // fn authenticate(&self) -> impl std::future::Future<Output = Result<Arc<String>, Error>> + Send;
 }
+
+/// Receives human readable messages describing the progress of a long running operation, such as a request.
+pub trait ProgressMonitor {
+    fn progress(&self, message: String);
+}
+
+/// A ProgressMonitor which ignores all progress messages.
+pub struct NoProgress;
+
+impl ProgressMonitor for NoProgress {
+    fn progress(&self, _message: String) {}
+}
+
+/// Any closure taking a String can be used as a ProgressMonitor.
+impl<F: Fn(String)> ProgressMonitor for F {
+    fn progress(&self, message: String) {
+        self(message)
+    }
+}
+
+/// Something which can execute a GraphQL query, so that code which makes queries does not depend on how requests are
+/// made or authenticated, and can be given a fake in tests.
+///
+/// The returned futures are not required to be Send, because that would require every query type to be Sync.
+pub trait GraphQLCaller {
+    /// Execute a query with an optional bearer token, reporting progress to the given monitor. A caller which
+    /// provides its own token, such as AuthenticatedRequestManager, uses that in place of None.
+    ///
+    /// The monitor is generic rather than dyn so that the returned future is Send whenever the monitor is.
+    fn call3<Q: crate::GraphQLQuery<R>, R: crate::GraphQLResponse, P: ProgressMonitor + ?Sized>(&self, query: &Q, token: Option<&Arc<String>>, progress: &P)
+        -> impl std::future::Future<Output = Result<R, crate::Error>>;
+
+    /// Execute a query with an optional bearer token.
+    fn call2<Q: crate::GraphQLQuery<R>, R: crate::GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>)
+        -> impl std::future::Future<Output = Result<R, crate::Error>> {
+        self.call3(query, token, &NoProgress)
+    }
+
+    /// Execute a query, with whatever authentication this caller provides.
+    fn call<Q: crate::GraphQLQuery<R>, R: crate::GraphQLResponse>(&self, query: &Q)
+        -> impl std::future::Future<Output = Result<R, crate::Error>> {
+        self.call2(query, None)
+    }
+}

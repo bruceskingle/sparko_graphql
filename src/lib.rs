@@ -8,13 +8,17 @@ pub use error::{Error, GraphQLJsonError};
 
 pub mod types;
 mod traits;
-pub use traits::{ParamBuffer,GraphQLQueryParams,GraphQLType,TokenManager, GraphQL, NoParams};
+pub use traits::{ParamBuffer,GraphQLQueryParams,GraphQLType,TokenManager, GraphQLCaller, ProgressMonitor, NoProgress, GraphQL, NoParams};
 
+pub mod redact;
 mod request_manager;
 pub use request_manager::RequestManager;
 mod authenticated_request_manager;
 pub use authenticated_request_manager::AuthenticatedRequestManager;
 
+pub trait GraphQLQueryBuilder<Q: GraphQLQuery<R>, R: GraphQLResponse> {
+    fn build(self) -> Result<Q, error::Error>;
+}
 pub trait GraphQLQuery<R: GraphQLResponse> {
     fn get_query(&self) -> String;
     fn get_request_name() -> &'static str;

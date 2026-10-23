@@ -10,7 +10,8 @@ use once_cell::sync::Lazy;
 
 use crate::Error;
 
-use time_tz::OffsetDateTimeExt;
+use time::OffsetDateTime;
+use time_tz::{Tz,OffsetDateTimeExt};
 use super::DateTime;
 
 static FORMAT: Lazy<Vec<format_description::FormatItem>> = 
@@ -18,10 +19,14 @@ static FORMAT: Lazy<Vec<format_description::FormatItem>> =
 
 
 /// A GraphQL Date value
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Date(time::Date);
 
 impl Date {
+    pub fn today(tz: &'static Tz) -> Self {
+      Date(OffsetDateTime::now_utc().to_timezone(tz).date())
+    }
+
     pub fn from_calendar_date(year: i32, month: time::Month, day: u8) -> Result<Date, Error> {
         Ok(Date(time::Date::from_calendar_date(year, month, day)?))
     }
@@ -36,7 +41,25 @@ impl Date {
       }
       else {
         // This is the corner case where the date is the last day of the rust universe, don't worry about the details, just enjoy the view.....
-        DateTime::from_date_time(self.0, time::Time::from_hms_nano(23, 59, 59, 999999999).unwrap())
+        DateTime::from_date_and_time(self.0, time::Time::from_hms_nano(23, 59, 59, 999999999).unwrap())
+      }
+    }
+
+    pub fn next_day(&self) -> Date {
+      if let Some(next) = self.0.next_day() {
+        Date(next)
+      }
+      else {
+        panic!("This is the end of the universe!")
+      }
+    }
+
+    pub fn previous_day(&self) -> Date {
+      if let Some(prev) = self.0.previous_day() {
+        Date(prev)
+      }
+      else {
+        panic!("This is the start of the universe!")
       }
     }
 }

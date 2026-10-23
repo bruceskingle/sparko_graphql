@@ -1,0 +1,30 @@
+# A schema whose Query root has fields which look like Relay pagination types
+
+schema {
+    query: Query
+}
+
+type Query {
+    cursor: String!
+    node: Item
+    edges: [ItemEdge]
+    pageInfo: PageInfo!
+    more: Boolean!
+}
+
+type Item {
+    id: ID!
+    name: String!
+}
+
+type ItemEdge {
+    cursor: String!
+    node: Item
+}
+
+type PageInfo {
+    startCursor: String
+    endCursor: String
+    hasNextPage: Boolean!
+    hasPreviousPage: Boolean!
+}

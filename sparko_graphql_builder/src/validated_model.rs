@@ -26,11 +26,19 @@ impl Optionality {
         }
     }
 
-
     pub fn optional_by_default(&self) -> Optionality {
         match self {
             Optionality::Optional => Optionality::Optional,
             Optionality::Default => Optionality::Optional,
+            Optionality::Required => Optionality::Required,
+        }
+    }
+
+    // called for array types when resolvingthe wrapped type
+    pub fn nested(&self) -> Optionality {
+        match self {
+            Optionality::Optional => Optionality::Default,
+            Optionality::Default => Optionality::Default,
             Optionality::Required => Optionality::Required,
         }
     }
@@ -164,7 +172,7 @@ impl Selection {
             None => {
                 writeln!(out, "/* No variants */")?;
                 
-                writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
                 if *name != self.graphql_type_name {
                     writeln!(out, "#[serde(rename = \"{}\")]", self.graphql_type_name)?;
                 }
@@ -189,7 +197,7 @@ impl Selection {
                 if self.variants.len() < 2 && implemented_by.len() < 2 {
                     writeln!(out, "/* <2 variant */")?;
                     
-                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
                     if *name != self.graphql_type_name {
                         writeln!(out, "#[serde(rename = \"{}\")]", self.graphql_type_name)?;
                     }
@@ -217,7 +225,7 @@ impl Selection {
                     let abstract_name = Rc::new(format!("Abstract{}", name));
                     let base_type_name = to_pascal_case(name);
                     let base_member_name = to_snake_case(name);
-                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
                     writeln!(out, "#[serde(tag = \"{}\")]", TYPE_NAME)?;
                     writeln!(out, "pub enum {} {{", base_type_name)?;
 
@@ -280,7 +288,7 @@ impl Selection {
                         writeln!(out, "")?;
                     }
         
-                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
                     writeln!(out, "pub struct {} {{", abstract_name)?;
             
                     {
@@ -312,7 +320,7 @@ impl Selection {
                         let rust_variant_name = to_pascal_case(&variant_name);
         
                         writeln!(out, "// Variant names {:?}", variant.name)?;
-                        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+                        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
                         writeln!(out, "#[serde(rename = \"{}\")]", variant_name)?;
                         writeln!(out, "pub struct {} {{", rust_variant_name)?;
                 
@@ -369,10 +377,11 @@ pub struct SelectionBuilder {
     pub fields: IndexMap<Name, SelectionField>,
     pub variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>,
     pub implemented_by: Option<Vec<Name>>,
+    pub detect_pagination: bool,
 }
 
 impl SelectionBuilder {
-    pub fn new(graphql_type_name: Name, preferred_type_name: Name, implemented_by: &Option<Vec<Name>>) -> SelectionBuilder {
+    pub fn new(graphql_type_name: Name, preferred_type_name: Name, implemented_by: &Option<Vec<Name>>, detect_pagination: bool) -> SelectionBuilder {
         // println!("SelectionBuilder new");
         SelectionBuilder {
             graphql_type_name,
@@ -380,6 +389,7 @@ impl SelectionBuilder {
             fields: IndexMap::new(),
             variants: IndexMap::new(),
             implemented_by: implemented_by.clone(),
+            detect_pagination,
         }
     }
 
@@ -434,8 +444,36 @@ impl SelectionBuilder {
         //     println!("fields {:?}", self.fields);
         //     println!("variants {:?}", self.variants);
         // }
-        // Recognise pagination
+        if self.detect_pagination {
+            if let Some(pagination_type) = self.pagination_type() {
+                return pagination_type;
+            }
+        }
 
+        // check for unused pagination types:
+
+        for field in self.fields.values() {
+            if field.selection_type.is_pagination_internal() {
+                println!("\n\nUNUSED    {}", &field.name);
+            }
+           
+        }
+
+        for (_cond, variant) in self.variants.values() {
+            for field in variant.values() {
+                if field.selection_type.is_pagination_internal() {
+                    println!("\n\nUNUSED    {}", &field.name);
+                }
+            }
+        }
+
+        let index = manager.insert(self.graphql_type_name, self.preferred_type_name, self.fields, self.variants, self.implemented_by);
+
+        SelectionFieldType::Selection(index)
+    }
+
+    // Recognise Relay style pagination types (EdgeOf, PageInfo, PageOf etc)
+    fn pagination_type(&self) -> Option<SelectionFieldType> {
         let mut has_cursor = false;
         let mut cantbe_page_of = false;
         let mut cantbe_edge_of = false;
@@ -449,6 +487,12 @@ impl SelectionBuilder {
         //     let (a,b) = self.variants.values().next().unwrap();
         //     b.keys()
         // };
+
+        println!("BRUCE1: {}", self.graphql_type_name);
+
+        if &*self.graphql_type_name == "MeasurementEdge" {
+            println!("BRUCE2");
+        }
 
         let mut meta_map = Vec::new();
 
@@ -501,20 +545,20 @@ impl SelectionBuilder {
 
         if cantbe_page_of==false && page_of_type.is_some() {
             if let Some(page_type) =  page_of_type {
-                if let SelectionFieldType::EdgeOf(selection_field_type, _) = page_type.as_ref() {
+                if let SelectionFieldType::EdgeOf(selection_field_type) = page_type.as_ref() {
                     if let Some(page_info) = page_info_type {
                         match page_info.as_ref() {
                             SelectionFieldType::PageInfo => {
                                 println!("!! Its PageOf<{:?}>", &selection_field_type);
-                                return SelectionFieldType::PageOf(selection_field_type.clone())
+                                return Some(SelectionFieldType::PageOf(selection_field_type.clone()))
                             },
                             SelectionFieldType::ForwardPageInfo => {
                                 println!("!! Its ForwardPageOf<{:?}>", &selection_field_type);
-                                return SelectionFieldType::ForwardPageOf(selection_field_type.clone())
+                                return Some(SelectionFieldType::ForwardPageOf(selection_field_type.clone()))
                             },
                             SelectionFieldType::ReversePageInfo => {
                                 println!("!! Its ReversePageOf<{:?}>", &selection_field_type);
-                                return SelectionFieldType::ReversePageOf(selection_field_type.clone())
+                                return Some(SelectionFieldType::ReversePageOf(selection_field_type.clone()))
                             },
                             _ => {}
                         }
@@ -531,55 +575,37 @@ impl SelectionBuilder {
 
             if maybe_forward_page && maybe_reverse_page {
                 println!("!! Its PageInfo");
-                return SelectionFieldType::PageInfo;
+                return Some(SelectionFieldType::PageInfo);
             }
             else if maybe_forward_page {
                 println!("!! Its ForwardPageInfo");
-                return SelectionFieldType::ForwardPageInfo;
+                return Some(SelectionFieldType::ForwardPageInfo);
             }
             else if maybe_reverse_page {
                 println!("!! Its ReversePageInfo");
-                return SelectionFieldType::ReversePageInfo;
+                return Some(SelectionFieldType::ReversePageInfo);
             }
         }
 
         if cantbe_edge_of==false && has_cursor && edge_of_type.is_some() {
             println!("!! ItsEdgeOf<{:?}>", edge_of_type.as_ref());
-            return SelectionFieldType::EdgeOf(edge_of_type.unwrap(), SelectionCreationParams::new(self.graphql_type_name, self.preferred_type_name, self.fields, self.variants, self.implemented_by))
+            return Some(SelectionFieldType::EdgeOf(edge_of_type.unwrap()))
         }
 
-        // check for unused pagination types:
-
-        for field in self.fields.values() {
-            if field.selection_type.is_pagination_internal() {
-                println!("\n\nUNUSED    {}", &field.name);
-            }
-           
-        }
-
-        for (_cond, variant) in self.variants.values() {
-            for field in variant.values() {
-                if field.selection_type.is_pagination_internal() {
-                    println!("\n\nUNUSED    {}", &field.name);
-                }
-            }
-        }
-
-        let index = manager.insert(self.graphql_type_name, self.preferred_type_name, self.fields, self.variants, self.implemented_by);
-
-        SelectionFieldType::Selection(index)
+        None
     }
 }
 
 #[derive(Debug)]
 pub enum SelectionFieldType {
     BuiltinType(BuiltinType),
+    Currency,
     Scalar(Name),
     Enum(Name),
     Selection(usize),
     Required(Rc<SelectionFieldType>),
     Array(Rc<SelectionFieldType>),
-    EdgeOf(Rc<SelectionFieldType>, SelectionCreationParams),
+    EdgeOf(Rc<SelectionFieldType>),
     PageInfo,
     ForwardPageInfo,
     ReversePageInfo,
@@ -594,6 +620,14 @@ impl Isomorphic for SelectionFieldType {
             SelectionFieldType::BuiltinType(builtin_type) => {
                 if let SelectionFieldType::BuiltinType(other_type) = other {
                     builtin_type == other_type
+                }
+                else {
+                    false
+                }
+            },
+            SelectionFieldType::Currency => {
+                if let SelectionFieldType::Currency = other {
+                    true
                 }
                 else {
                     false
@@ -639,8 +673,8 @@ impl Isomorphic for SelectionFieldType {
                     false
                 }
             },
-            SelectionFieldType::EdgeOf(selection_field_type, _selection_creation_params) => {
-                if let SelectionFieldType::EdgeOf(other_field_type, _other_creation_params) = other {
+            SelectionFieldType::EdgeOf(selection_field_type) => {
+                if let SelectionFieldType::EdgeOf(other_field_type) = other {
                     selection_field_type.is_isomorphic(other_field_type)
                 }
                 else {
@@ -703,12 +737,13 @@ impl Display for SelectionFieldType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SelectionFieldType::BuiltinType(content) => content.fmt(f),
+            SelectionFieldType::Currency => write!(f, "Currency"),
             SelectionFieldType::Scalar(content) => content.fmt(f),
             SelectionFieldType::Enum(content) => content.fmt(f),
             SelectionFieldType::Selection(content) => content.fmt(f),
             SelectionFieldType::Required(wrapped) => write!(f, "{}!", wrapped),
             SelectionFieldType::Array(wrapped) => write!(f, "[{}]", wrapped),
-            SelectionFieldType::EdgeOf(wrapped, _) => write!(f, "EdgeOf<{}>", wrapped),
+            SelectionFieldType::EdgeOf(wrapped) => write!(f, "EdgeOf<{}>", wrapped),
             SelectionFieldType::PageInfo => write!(f, "PageInfo"),
             SelectionFieldType::ForwardPageInfo => write!(f, "ForwardPageInfo"),
             SelectionFieldType::ReversePageInfo => write!(f, "ReversePageInfo"),
@@ -736,6 +771,7 @@ impl SelectionFieldType {
             println!("do_rust_type({:?}, nonnull={}", input, nonnull);
             match input {
                 SelectionFieldType::BuiltinType(builtin_type) => builtin_type.rust_type().to_string(),
+                SelectionFieldType::Currency => "sparko_graphql::types::Currency".to_string(),
                 SelectionFieldType::Scalar(name) => schema.defined_types.get(name).unwrap().rust_name().to_string(),
                 SelectionFieldType::Enum(name) => schema.defined_types.get(name).unwrap().rust_name().to_string(),
                 SelectionFieldType::Selection(id) => {
@@ -745,18 +781,26 @@ impl SelectionFieldType {
                 },
                 SelectionFieldType::Required(_) => unreachable!(),
                 SelectionFieldType::Array(wrapped) => format!("Vec<{}>", wrapped.rust_type(selection_manager, schema, nonnull, true)), // Force nonnull so we dobt generate Vec<Option<foo>>
-                SelectionFieldType::EdgeOf(wrapped, _) => format!("sparko_graphql::types::EdgeOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
+                SelectionFieldType::EdgeOf(wrapped) => format!("sparko_graphql::types::EdgeOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
                 SelectionFieldType::PageInfo => format!("sparko_graphql::types::PageInfo"),
                 SelectionFieldType::ForwardPageInfo => format!("sparko_graphql::types::ForwardPageInfo"),
                 SelectionFieldType::ReversePageInfo => format!("sparko_graphql::types::ReversePageInfo"),
-                SelectionFieldType::PageOf(wrapped) => format!("sparko_graphql::types::PageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
-                SelectionFieldType::ForwardPageOf(wrapped) => format!("sparko_graphql::types::ForwardPageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
-                SelectionFieldType::ReversePageOf(wrapped) => format!("sparko_graphql::types::ReversePageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, false)),
+                SelectionFieldType::PageOf(wrapped) => format!("sparko_graphql::types::PageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, true)),
+                SelectionFieldType::ForwardPageOf(wrapped) => format!("sparko_graphql::types::ForwardPageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, true)),
+                SelectionFieldType::ReversePageOf(wrapped) => format!("sparko_graphql::types::ReversePageOf<{}>", wrapped.rust_type(selection_manager, schema, nonnull, true)),
             }
         }
 
         if let SelectionFieldType::Array(wrapped) = self {
             println!("rust_type Array({:?}, nonnull={}, nonnull_once={})", wrapped, nonnull, nonnull_once);
+            nonnull_once = true; // Force nonnull so we don't generate Option<Vec<foo>>
+        }
+        // if let SelectionFieldType::EdgeOf(wrapped, params) = self {
+        //     println!("rust_type EdgeOf({:?}, nonnull={}, nonnull_once={})", wrapped, nonnull, nonnull_once);
+        //     nonnull_once = true; // Force nonnull so we don't generate Option<Vec<foo>>
+        // }
+        if let SelectionFieldType::PageOf(wrapped) | SelectionFieldType::ForwardPageOf(wrapped) | SelectionFieldType::ReversePageOf(wrapped) = self {
+            println!("rust_type PageOf({:?}, nonnull={}, nonnull_once={})", wrapped, nonnull, nonnull_once);
             nonnull_once = true; // Force nonnull so we don't generate Option<Vec<foo>>
         }
 
@@ -783,11 +827,12 @@ impl SelectionFieldType {
     
     fn is_pagination_internal(&self) -> bool {
         match self {
-            SelectionFieldType::EdgeOf(_,_) => true,
+            SelectionFieldType::EdgeOf(_) => true,
             SelectionFieldType::PageInfo => true,
             SelectionFieldType::ForwardPageInfo => true,
             SelectionFieldType::ReversePageInfo => true,
             SelectionFieldType::BuiltinType(_) => false,
+            SelectionFieldType::Currency => false,
             SelectionFieldType::Scalar(_) => false,
             SelectionFieldType::Enum(_) => false,
             SelectionFieldType::Selection(_) => false,
@@ -1127,10 +1172,10 @@ impl Type {
         };
 
         if let Optionality::Optional = new_optionality {
-            format!("Option<{}>", do_rust_type(new_type, optionality))
+            format!("Option<{}>", do_rust_type(new_type, optionality.nested()))
         }
         else {
-            do_rust_type(new_type, optionality)
+            do_rust_type(new_type, optionality.nested())
         }
     }
     
@@ -1352,11 +1397,11 @@ impl Object {
 fn generate_struct(out: &mut Output<'_>, name: &Name, rust_name: &Name, context: &dyn Context, is_input: bool) -> Result<(), Error> {
    
 
-    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+    writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Clone)]")?;
     if name != rust_name {
         writeln!(out, "#[serde(rename = \"{}\")]", name)?;
     }
-    writeln!(out, "/* BRUCE */ pub struct {} {{", rust_name)?;
+    writeln!(out, "pub struct {} {{", rust_name)?;
 
     for field in context.fields().values() {
         writeln!(out, "    #[serde(rename = \"{}\")]", &field.parsed.name)?;
@@ -1604,7 +1649,7 @@ impl Enum {
     }
     
     fn generate(&self, out: &mut Output<'_>) -> Result<(), Error> {
-        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty)]")?;
+        writeln!(out, "#[derive(Serialize, Deserialize, Debug, DisplayAsJsonPretty, Eq, PartialEq, Clone)]")?;
         if self.parsed.name != self.rust_name {
             writeln!(out, "#[serde(rename = \"{}\")]", self.parsed.name)?;
         }
@@ -2215,14 +2260,9 @@ impl GenericOperation {
 
         let fields = Self::get_fields(err, &parsed.operation, &parsed.name, &parsed.position, schema)?;
         let name = registry.intern_str("Response");
-        let response = Self::create_selection(err, registry, selection_manager, schema, fragments, 
-            name.clone(), name, &parsed.selections, fields, &None)?;
-
-        if response.is_pagination_internal() {
-            println!("\n\n UNUSED RESPONSE");
-
-            selection_manager.bruce(response);
-        }
+        // The Response is never treated as a pagination type, even if its fields look like one, because nothing would absorb it.
+        Self::create_selection(err, registry, selection_manager, schema, fragments, 
+            name.clone(), name, &parsed.selections, fields, &None, false)?;
 
         err.ok(GenericOperation {
                 parsed: parsed.clone(),
@@ -2249,10 +2289,10 @@ impl GenericOperation {
     }
     
     fn create_selection(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
-        preferred_type_name: Name, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap, implemented_by: &Option<Vec<Name>>) -> Result<SelectionFieldType, Error>
+        preferred_type_name: Name, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, fields: &FieldMap, implemented_by: &Option<Vec<Name>>, detect_pagination: bool) -> Result<SelectionFieldType, Error>
     {
         println!("!! create_selection {} gather dependencies", &graphql_type_name);
-        let mut selection_builder = SelectionBuilder::new(graphql_type_name, preferred_type_name, implemented_by);
+        let mut selection_builder = SelectionBuilder::new(graphql_type_name, preferred_type_name, implemented_by, detect_pagination);
 
         Self::gather_dependencies(err, registry, selection_manager, selections, schema, fragments, None, fields, &mut selection_builder)?;
 
@@ -2262,7 +2302,7 @@ impl GenericOperation {
     fn create_selection_field(err: &mut ErrorCollector, registry: &mut NameRegistry, selection_manager: &mut NameSpaceManager, schema: &Rc<Schema>, fragments: &IndexMap<Name, Rc<parsed_model::FragmentDefinition>>,
         field_name: Name, preferred_type_name: Name, graphql_type_name: Name, selections: &Rc<parsed_model::SelectionList>, force_nonnull: bool, fields: &FieldMap, implemented_by: &Option<Vec<Name>>) -> Result<SelectionField, Error>
     {
-        let selection_type = Rc::new(Self::create_selection(err, registry, selection_manager, schema, fragments, preferred_type_name, graphql_type_name, selections, fields, implemented_by)?);
+        let selection_type = Rc::new(Self::create_selection(err, registry, selection_manager, schema, fragments, preferred_type_name, graphql_type_name, selections, fields, implemented_by, true)?);
    
         Ok(SelectionField {
             name: field_name,
@@ -2341,6 +2381,10 @@ impl GenericOperation {
                     let field_name  = if let Some(alias) = &selection_field.alias { alias } else {&selection_field.name};
                     println!("!!     field {:?}", field_name);
                     if let Some(field) = get_field(schema, fields, &selection_field.name) {
+                        if selection_field.currency && *field.ty.get_scalar() != ScalarType::BuiltinType(BuiltinType::String) {
+                            err.error(BuildError::TypeMismatchError(selection_field.position.clone(),
+                                format!("@ms_currency can only be applied to a String field but {} is {}", selection_field.name, field.ty)));
+                        }
                         selection_builder.with_field(&optional_type_conditions,  &field_name, 
                             Self::wrap_type(&field.ty, 
                                 match field.ty.get_scalar() {
@@ -2431,7 +2475,13 @@ impl GenericOperation {
 
                                     SelectionField {
                                         name: field_name.clone(), 
-                                        selection_type: Rc::new(SelectionFieldType::BuiltinType(builtin_type.clone())),
+                                        selection_type: Rc::new(
+                                            if selection_field.currency && *builtin_type == BuiltinType::String {
+                                                SelectionFieldType::Currency
+                                            }
+                                            else {
+                                                SelectionFieldType::BuiltinType(builtin_type.clone())
+                                            }),
                                         force_nonnull: selection_field.force_nonnull,
                                     }
                                 }
@@ -2469,12 +2519,13 @@ impl GenericOperation {
                 parsed_model::Selection::InlineFragment(inline_fragment_spread) => {
 
                     if let Some(type_condition) = &inline_fragment_spread.type_condition {
-                        let object = schema.get_object(type_condition)?;
+                        // let object = schema.get_object(type_condition)?;
+                        let fields = schema.get_object_or_interface_fields(type_condition)?;
 
                         Self::gather_dependencies(err, registry, selection_manager, &inline_fragment_spread.selections, schema, fragments, 
                             // Some((type_condition.clone(), type_condition.clone())),
                             Some(Self::get_type_conditions(type_condition, type_condition, &selection_builder.implemented_by, schema)?), 
-                            &object.fields, selection_builder)?;
+                            &fields, selection_builder)?;
                     }
                     else {
                         // anonymous inline spread is essentially a no op nesting
@@ -2521,7 +2572,7 @@ impl GenericOperation {
             writeln!(out, r#"
 use display_json::DisplayAsJsonPretty;
 use serde::{{Deserialize, Serialize}};
-use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
+use sparko_graphql::{{GraphQLResponse, GraphQLQuery, GraphQLQueryBuilder}};
 "#
             )?;
 
@@ -2732,7 +2783,7 @@ use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
                 writeln!(out, "pub struct {}Builder {{", self.parsed.operation)?;
         
                 for field in self.variables.values() {
-                    writeln!(out, "    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Optional))?;
+                    writeln!(out, "/* Bruce 1 */    {}_: {},", to_snake_case(&field.parsed.name), field.ty.rust_type(Optionality::Optional))?;
                 }
             
                 writeln!(out, "}}")?;
@@ -2753,7 +2804,21 @@ use sparko_graphql::{{GraphQLResponse, GraphQLQuery}};
                         writeln!(out, "}}")?;
                         writeln!(out, "")?;
                     }
-                    writeln!(out, "pub fn build(self) -> Result<{}, sparko_graphql::error::Error> {{", self.parsed.operation)?;
+                }
+
+                writeln!(out, "}}")?;
+                writeln!(out, "")?;
+
+                writeln!(out, "//Site 1")?;
+                writeln!(out, "impl GraphQLQueryBuilder<{}, Response> for {}Builder {{", self.parsed.operation, self.parsed.operation)?;
+
+
+                {
+                    let mut out = out.indent();
+
+
+
+                    writeln!(out, "fn build(self) -> Result<{}, sparko_graphql::error::Error> {{", self.parsed.operation)?;
                     {
                         let mut out = out.indent();
         
@@ -3308,46 +3373,6 @@ impl NameSpaceManager {
         }
         else {
             panic!("Cant find selection {}", id);
-        }
-    }
-    
-    fn bruce(&mut self, response: SelectionFieldType) {
-        if response.is_pagination_internal() {
-            if let Some((wrapped, selection_creation_params)) = match response {
-                SelectionFieldType::EdgeOf(selection_field_type, selection_creation_params) => Some((selection_field_type, selection_creation_params)),
-                // SelectionFieldType::PageInfo => todo!(),
-                // SelectionFieldType::ForwardPageInfo => todo!(),
-                // SelectionFieldType::ReversePageInfo => todo!(),
-                _ => None,
-            } {
-                if let SelectionFieldType::Selection(index) = SelectionFieldType::remove_wrapper(&wrapped).as_ref() {
-                    println!("\n\n UNUSED RESPONSE insert {}", index);
-                    self.insert(selection_creation_params.graphql_type_name, selection_creation_params.name, selection_creation_params.fields, selection_creation_params.p_variants, selection_creation_params.implemented_by);
-
-
-
-                    // self.items.push( NameSpaceItem::Selection(content));
-                    // self.get_context_mut().imports.insert(index.clone());
-                }
-            }
-            
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SelectionCreationParams {
-    graphql_type_name: Name, name: Name, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, implemented_by: Option<Vec<Name>>,
-}
-
-impl SelectionCreationParams {
-    fn new(graphql_type_name: Name, name: Name, fields: IndexMap<Name, SelectionField>, p_variants: IndexMap<Name, (Name, IndexMap<Name, SelectionField>)>, implemented_by: Option<Vec<Name>>,) -> SelectionCreationParams {
-        SelectionCreationParams{
-            graphql_type_name,
-            name,
-            fields,
-            p_variants,
-            implemented_by
         }
     }
 }

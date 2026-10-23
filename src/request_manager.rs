@@ -5,7 +5,8 @@ use display_json::DisplayAsJsonPretty;
 use reqwest::StatusCode;
 use serde::Serialize;
 
-use crate::{Error, GraphQLResponseStructure, GraphQLQuery, GraphQLResponse};
+use crate::redact::{redact_secrets, redacted_json};
+use crate::{Error, GraphQLCaller, GraphQLResponseStructure, GraphQLQuery, GraphQLResponse, ProgressMonitor};
 
 pub const DASHES: &str = "=======================================================================================================================";
 
@@ -56,7 +57,8 @@ impl RequestManager {
         println!("\n\n\n{} {}", message, DASHES);
     }
 
-    pub async fn call<Q: GraphQLQuery<R>, R: GraphQLResponse>(&self, query: &Q, token: Option<&Arc<String>>) 
+    /// Called through GraphQLCaller::call3.
+    async fn execute<Q: GraphQLQuery<R>, R: GraphQLResponse, P: ProgressMonitor + ?Sized>(&self, query: &Q, token: Option<&Arc<String>>, progress: &P)
     -> Result<R, Error> {
 
         // println!("NEW query {}", &query);
@@ -71,7 +73,7 @@ impl RequestManager {
             println!("\n{}\rQuery ", DASHES);
             println!("{}", &payload.query);
             println!("\n{}\rVariables ", DASHES);
-            println!("{}", &payload.variables);
+            println!("{}", redacted_json(&payload.variables));
             println!("{}", DASHES);
         }
         // let serialized = serde_json::to_string(&payload).unwrap();
@@ -86,6 +88,8 @@ impl RequestManager {
         if let Some(token) = token {
             request = request.header(reqwest::header::AUTHORIZATION, Self::header(token)?);
         }
+
+        progress.progress(format!("Sending {} request", payload.operation_name));
 
         let response = request
             .body(serde_json::to_string(&payload).unwrap())
@@ -102,10 +106,11 @@ impl RequestManager {
                 println!("{}", &query.get_query());
                 
                 Self::report_error("Variables");
-                println!("{}", query.get_variables()?);
+                println!("{}", redacted_json(&payload.variables));
                 
                 Self::report_error("Payload");
-                println!("{}",  &serde_json::to_string(&payload).unwrap());
+                let redacted_payload = NewRequest { variables: redacted_json(&payload.variables), ..payload };
+                println!("{}",  &serde_json::to_string(&redacted_payload).unwrap());
 
                 let text = &(response).text().await;
                 println!("ERROR {}", text.as_ref().expect("No Response Body"));
@@ -113,11 +118,17 @@ impl RequestManager {
             return Err(Error::HttpError(status));
         }
 
+        progress.progress(format!("Reading {} response", payload.operation_name));
+
         let response_json: serde_json::Value = response.json().await?;
+
+        progress.progress(format!("Decoding {} response", payload.operation_name));
 
         if self.verbose {
             println!("\n{}\rResponse ", DASHES);
-            println!("{}", serde_json::to_string_pretty(&response_json)?);
+            let mut redacted_response = response_json.clone();
+            redact_secrets(&mut redacted_response);
+            println!("{}", serde_json::to_string_pretty(&redacted_response)?);
             println!("{}", DASHES);
         }
 
@@ -160,5 +171,13 @@ impl RequestManager {
         // }
 
 
+    }
+}
+
+/// call is unauthenticated, wrap the RequestManager in an AuthenticatedRequestManager for authenticated calls.
+impl GraphQLCaller for RequestManager {
+    fn call3<Q: GraphQLQuery<R>, R: GraphQLResponse, P: ProgressMonitor + ?Sized>(&self, query: &Q, token: Option<&Arc<String>>, progress: &P)
+        -> impl std::future::Future<Output = Result<R, Error>> {
+        self.execute(query, token, progress)
     }
 }

@@ -1,0 +1,15 @@
+query RootPage {
+  edges {
+    cursor
+    node {
+      id
+      name
+    }
+  }
+  pageInfo {
+    startCursor
+    endCursor
+    hasNextPage
+    hasPreviousPage
+  }
+}
