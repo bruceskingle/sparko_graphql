@@ -180,13 +180,26 @@ pub struct ValidationError {
 #[serde(rename_all = "camelCase")]
 pub struct GraphQLJsonError {
     pub message: Option<String>,
+    #[serde(default)]
     pub locations: Vec<Location>,
-    pub path: Vec<String>,
+    /// The field the error is for, as names and list indexes, e.g. ["account", "properties", 0, "measurements"].
+    #[serde(default)]
+    pub path: Vec<serde_json::Value>,
+    #[serde(default)]
     pub extensions: IndexMap<String, serde_json::Value>,
 }
 #[cfg(test)]
 mod tests {
     use super::response_summary;
+
+    #[test]
+    fn errors_with_list_indexes_in_their_path_are_read() {
+        let json = r#"{"message": "Unauthorized.", "path": ["account", "properties", 0, "measurements"],
+            "extensions": {"errorCode": "KT-CT-4717"}}"#;
+        let error: super::GraphQLJsonError = serde_json::from_str(json).unwrap();
+        assert_eq!(error.path[2], 0);
+        assert!(error.locations.is_empty());
+    }
 
     #[test]
     fn html_error_pages_are_reduced_to_their_text() {

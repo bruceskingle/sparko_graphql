@@ -870,6 +870,16 @@ impl SelectionField {
             let field_name = to_snake_case(&self.name);
 
             writeln!(out, "#[serde(rename = \"{}\")]", &self.name)?;
+            // Lists are a Vec of values, not an Option<Vec> of Options, so a null list is read as an empty one and
+            // nulls in a list are left out.
+            let is_list = match self.selection_type.as_ref() {
+                SelectionFieldType::Array(_) => true,
+                SelectionFieldType::Required(wrapped) => matches!(wrapped.as_ref(), SelectionFieldType::Array(_)),
+                _ => false,
+            };
+            if is_list {
+                writeln!(out, "#[serde(default, deserialize_with = \"sparko_graphql::types::list_without_nulls\")]")?;
+            }
 
             // if self.selection_type.is_array() {
             //     writeln!(out, "#[serde(skip_serializing)]")?;
